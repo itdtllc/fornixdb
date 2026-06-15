@@ -1,0 +1,20 @@
+# The memory store is PERSONAL DATA — never commit or publish it.
+store/
+*.db
+*.db-wal
+*.db-shm
+
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+*.egg-info/
+
+# Personal design transcripts & docs — keep local, do not publish
+Design/
+
+# Owner-personal verification guide — keep local, do not publish
+VERIFICATION.md
+
+# Stray logo experiments — the published logo lives in assets/
+Logo/

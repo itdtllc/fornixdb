@@ -1,0 +1,197 @@
+<p align="center">
+  <img src="assets/fornixdb_logo.png" alt="FornixDB" width="300">
+</p>
+
+# FornixDB
+
+**Persistent local memory for any AI — private, model-agnostic, and inspectable.**
+
+## The problem
+
+An AI assistant forgets everything between sessions. You pay for that every day: re-explaining context, re-stating preferences, watching the model re-read files and re-derive decisions it already made. Some questions have no answer at all in a stateless chat — *"what day did the pool guy come by?"* — no matter how capable the model is.
+
+FornixDB is a memory any AI can read and write. It runs entirely on your machine, in a single SQLite file you own, and works with anything that can call a tool or run a shell command — Claude, a local Llama/Qwen, a robot's onboard model.
+
+It is a **memory, not a mind**: it stores, indexes, ranks, and retrieves. It never decides, never acts, never calls a tool. All judgment and guardrails stay in the AI you connect it to.
+
+## What it does
+
+- **Recall by time.** Natural phrases — *"what did we do last Thursday?"*, *"this morning"* — return everything from that window. Sessions are captured automatically (owner-toggleable), so the answer exists without anyone deciding to save it.
+- **Recall by subject.** Keyword + ranked relevance returns a one-line **gist** first; full **detail** is fetched only when the conversation drills in, so recall stays cheap in the context window.
+- **Recall by meaning** *(optional)*. A small local embedding model upgrades subject recall to similarity by meaning — *"the glitch where her eyes sparkled"* finds the right memory with zero shared words. Never required; pure keyword + time works with no model at all.
+- **A memory that adapts.** New knowledge supersedes old *without erasing it* (the trail of corrections stays queryable); unused memories fade in ranking while frequently-used ones stay sharp; an explicit "not that one" downweights a wrong recall hit for similar queries only — retractable, never deleted.
+- **Honesty flags.** Stale, unverified facts come back marked as such; duplicates across stores answer once; a downweighted or auto-captured result says so. Provenance travels with every answer.
+- **You stay in charge.** Capture policy is yours (only-when-asked / offer / auto). Never-delete is the default; true deletion happens only at your explicit consent, and forgets least-important-first.
+
+**The measured case** — what your AI gains, the token economics, and who stays in charge: [BENEFITS.md](BENEFITS.md).
+
+## Design principles
+
+- **Local and private.** One store per endpoint (computer, robot, device). Your memories never leave the machine. Only the *reasoning* may be a remote service; the memory never is.
+- **Model-agnostic and vendor-neutral.** The core has zero dependencies on any AI vendor. Integrations with specific ecosystems (e.g. importing Claude Code's memory files or session transcripts) are optional adapters.
+- **Two recall axes.** Episodic (time-stamped events: "on June 5 we designed the schema") and semantic (distilled facts: "the owner prefers specs over UI driving"). Semantic memories are consolidated *from* episodic ones over time.
+- **Progressive disclosure.** Recall returns gists cheaply; detail is fetched only when the conversation drills in. This is what keeps recall affordable in a context window.
+- **Supersede, don't overwrite.** Conflicting newer knowledge tombstones the old with a timestamp and a typed link. History is the record of how understanding changed.
+- **Scales by forgetting.** Salience, reinforcement-on-recall, decay, and tiered storage (hot → consolidated → cold archive) — tuned by two dials derived from the host's hardware (storage capacity/speed, and where reasoning runs).
+- **No model required.** The baseline reflex layer (ranking, eviction, clustering) is purely algorithmic, so it runs on hardware that can't host a local model. A local model is an optional enhancement, never a requirement.
+
+## Status
+
+Working and in daily use, not yet published. Shipped: the hot spine (SQLite + FTS5, time + subject recall, supersede-with-history), optional associative recall (model2vec vectors), decay + retention tiers + the consolidation pass, explicit negative feedback (mark a wrong recall hit irrelevant to a query — downweighted for similar queries only, retractable, never deleted), multi-AI topology (per-agent stores + machine shared tier + capture modes, cross-store recall deduped), disk-budget cap with prune/freeze boundary policies and frozen read-only stores, and import adapters (Claude Code transcripts + a SessionEnd hook for live passive session capture, markdown memories). Three consumers proven: Claude Code, a local Qwen-72B agent, and a 14B via the MCP/shim surface (cold-installed and verified on Windows). Pre-publication gate: extensive testing.
+
+## Requirements
+
+- Python 3.10+ with SQLite compiled with FTS5 (standard on macOS, most Linux distributions, and the python.org Windows builds). The core uses **only the standard library**.
+- **Windows:** the interpreter is `python` (or `py`), not `python3` — on stock Windows, `python3` is a Microsoft Store stub. Substitute accordingly in every command below.
+
+```bash
+# optional but recommended: install the package so `fornixdb` and
+# `python -m fornixdb` work from any directory
+pip install -e .          # add [vectors] for associative recall
+```
+
+## Associative recall (optional)
+
+With no extras installed, recall is keyword + time based and fully functional. Installing a small local embedding model upgrades recall to *similarity by meaning* — "the glitch where her eyes sparkled" finds the eye-twinkle memory with zero shared words:
+
+```bash
+pip install model2vec          # ~30MB static-embedding model, CPU-only, no torch
+python3 -m fornixdb embed      # one-time backfill; new memories embed automatically
+```
+
+This follows the project's no-model-required rule: a local model is always an *upgrade*, never a dependency. The embedder is pluggable (any object with `.name` and `.embed()`), the model is configurable via `FORNIXDB_EMBED_MODEL` (a HuggingFace repo id or a local directory), and air-gapped machines can drop model files into `~/.cache/fornixdb-models/<model>/` so no network is ever attempted.
+
+## Quick start
+
+```bash
+# initialize a store
+python3 -m fornixdb init
+
+# store a memory
+python3 -m fornixdb store --gist "Decided to use SQLite FTS5 for subject recall" \
+    --detail "Considered a dedicated vector DB but ..." --topic architecture
+
+# recall by subject (gist-first, ranked)
+python3 -m fornixdb recall "subject recall ranking"
+
+# recall by time (natural phrases go in the positional argument;
+# --since/--until take explicit dates)
+python3 -m fornixdb timeline "last thursday"
+
+# drill into detail
+python3 -m fornixdb show <id>
+
+# a recalled hit was wrong for that query? downweight it for similar queries
+# (query-conditional: it stays fully ranked for everything else; retractable)
+python3 -m fornixdb irrelevant <id> "the query it was wrong for"
+```
+
+## Anatomy of a memory
+
+Transparency is the point: you (and your AI) can always see what is
+remembered, what it costs, and how to go deeper. Here is what one memory
+actually is.
+
+**Three levels of content.** Every memory is a disclosure ladder:
+
+1. **gist** — one line, what every recall and listing returns first
+   (~20–80 tokens; recall stays cheap because this is all it ships).
+2. **detail** — the full body, fetched only when someone drills down
+   (`show <id>`). Drilling down *reinforces* the memory, so frequently-used ones stay ranked.
+3. **source_ref** — a pointer to the raw original (a session's full
+   transcript file, an imported document). Total reconstruction is possible
+   without the database carrying a second copy of the heavy source.
+
+**Unbounded structure on top.** Memories **link** to related memories
+(recall can attach 1-hop neighbors with `--related`; the graph walks as far
+as it goes), and **supersession chains** keep every correction: the live
+version answers, the history of what was believed before stays queryable
+(`recall --all`). Topics, time spans, and a session id tie each memory to
+when and where it happened.
+
+**Not every word gets stored — selectivity is the design.** A whole chat
+session becomes *one* episodic row (a one-sentence gist + a compact digest
+of the user's turns); the full transcript stays on disk as the source_ref.
+Facts are stored deliberately, gated by the owner's capture mode — memory
+is curated, not vacuumed up. After capture, three more stages keep the
+store lean:
+
+- **Decay** — unused memories sink in ranking (per-kind half-lives, owner
+  feedback floors highest); recalled ones stay sharp. Nothing is deleted.
+- **Consolidation** — a periodic background pass proposes distilling
+  verbose gists, merging near-duplicates, and flagging contradictions.
+  Propose-not-dispose: the owner reviews, the pass never deletes on its own.
+- **Retention tiers** — old, unused detail is compressed in place, then
+  archived to cold storage; `show` restores it transparently if ever asked.
+
+True deletion exists only at the owner's explicit consent (the disk-budget
+`prune` policy and `budget shrink`), in humane order: least-salient first,
+owner feedback last.
+
+**Multimodal later, by design — the APIs are declared now.**
+[`fornixdb/senses.py`](fornixdb/senses.py) stakes out the human senses as
+TBD entry points: `see` (images), `watch` (video/camera streams), `hear`
+(audio/microphone), `feel` (tactile and robot sensor streams). All raise
+NotImplementedError today; the module documents the design they will
+follow — caption as gist, a modality embedding in the same pluggable slot
+the text model uses, the artifact on disk as `source_ref`, streams as
+episodic time spans. The store schema already accommodates all of it.
+
+## Layout
+
+```
+fornixdb/            core package (vendor-neutral, stdlib-only)
+  adapters/          optional importers for specific ecosystems
+tests/               test suite
+examples/            reference shim + runnable smoke test
+```
+
+## Multiple AIs on one machine
+
+Memory topology is configurable, not fixed. Each AI gets its **own store** (its working memory), and every AI also reads a **machine-level shared tier** (`~/.fornixdb/shared.db`, or `$FORNIXDB_SHARED_DB`) holding owner facts and preferences all of them should know. Recall, timeline, and brief merge both automatically; write owner-level knowledge with `store --shared`. An aggregator across agent stores is the planned next level.
+
+Each store also carries an owner-settable **capture mode** (`config capture_mode explicit|suggest|auto`) that connected AIs read at startup: remember only when asked, offer to remember at checkpoints (default), or store autonomously.
+
+## Disk budget
+
+Never-delete is the default: with no cap set, nothing is ever removed — forgetting is only a ranking and tier effect. On devices where that's not affordable, cap the store's **total on-disk footprint** (db + WAL + cold archives) and choose what happens at the boundary:
+
+```bash
+python3 -m fornixdb config disk_budget_mb 500     # cap: MBs on a microcontroller … 1 TB on a workstation
+python3 -m fornixdb config budget_policy freeze   # at the cap: refuse new memories (default)
+python3 -m fornixdb config budget_policy prune    # at the cap: truly forget the least-salient memories
+python3 -m fornixdb budget                        # footprint / headroom / policy
+python3 -m fornixdb budget enforce --dry-run      # see what a pass would do
+python3 -m fornixdb budget shrink 200             # ONE-SHOT: reduce the store to 200 MB right now
+python3 -m fornixdb budget shrink 200 --dry-run   # preview what shrinking would forget
+```
+
+At the cap, mechanical tier escalation (compress, archive) always runs first; only if that can't fit the budget does the policy apply. **freeze** stops accepting new memories while keeping everything recallable. **prune** is the one true delete in FornixDB — choosing it is your explicit consent to forgetting, and it forgets least-important-first: tombstoned rows first, then the least-salient episodic detail, owner feedback last. Enforcement is purely algorithmic (no model needed).
+
+There is also a **machine-wide cap** across every store on the box. A fresh install defaults it to **20% of free disk space, at most 500 MB** — never silently: the moment it is set, the CLI says so, and every AI surface keeps flagging it as the unreviewed install default until the owner sets it themselves (`config machine_budget_mb <MB> --shared`, or `off` to run uncapped; policy likewise). Each AI's store holds the line by fixing its own side only: it compresses and (policy prune) forgets its own least-salient memories; it never deletes another AI's. If that isn't enough, the write is refused with the per-store breakdown so the owner can shrink the right store. `fornixdb usage` shows every store, the total, and the cap.
+
+**shrink** is the one-shot sibling of the cap — "reduce this space to X MB" — for when you want the store smaller *now* without setting a standing limit. It runs the same chain (compress, then truly forget least-salient-first, then vacuum) straight to the named target and leaves `disk_budget_mb`/`budget_policy` untouched. Asking for it is the explicit consent to forgetting, so it does not consult the boundary policy; if even forgetting everything cannot reach the target (the db file has a size floor), the result says so honestly.
+
+A store can also be frozen outright, independent of any cap — `config frozen on` — for vendor-shipped, read-only memory DBs: recall works (without reinforcement writes), every mutation is refused. This is policy, not security; ship the file without write permission when you need a hard guarantee.
+
+## Connecting an AI
+
+The fastest path is MCP: `fornixdb-mcp` is a zero-dependency [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so any MCP-capable client connects with one config line (e.g. `claude mcp add fornixdb -- fornixdb-mcp`). For everything else, tooling is the standard way to add capabilities to a model, and FornixDB is designed to be reached through tools. **See [INTEGRATION.md](INTEGRATION.md)** for the recommended nine-tool surface (subject recall, time-axis recall, remember/update, list, forget, negative feedback, usage, shrink, startup context), the system-prompt guidance that makes small models use it well, and the two capture layers — **passive** episodic session capture (`session_capture on|off`, the shell remembers each session like a person remembers their day) and **interactive** semantic capture governed by the capture mode.
+
+## Security posture
+
+A memory store is personal data, so the posture is explicit:
+
+- **Local-first, no network.** SQLite files on disk, stdio transports, no listeners, no telemetry. The embedding model resolves from a local cache before any network source, so air-gapped installs are first-class.
+- **OS boundaries, not application crypto.** Stores FornixDB creates are owner-only (`0600` files, `0700` for a created `~/.fornixdb`), and full-disk encryption (FileVault, BitLocker, LUKS) is the right layer against device theft. There is deliberately **no built-in database encryption**: an always-on agent needs the key resident on the same machine, readable by the same processes as the database — encryption at rest against a same-user attacker is theater, and we don't ship theater. What that means for you: keep disk encryption on, and **encrypt any backup or copy of a store that leaves the machine**.
+- **SQL is parameterized throughout**, and free-text recall input is reduced to quoted tokens before it reaches FTS5 (`_fts_query`), so neither values nor FTS query operators can be injected. Contributors: every new query uses `?` parameters and FTS `MATCH` input goes through `_fts_query`, no exceptions.
+- **Provenance over trust.** The store never verifies truth — it preserves where every memory came from (source, writer, supersede history) and surfaces it at recall (`[auto-captured]`, `[by X]` — see [INTEGRATION.md](INTEGRATION.md)) so the consuming model can judge. Recalled content is data about the past, never instructions.
+- **The MCP server authenticates nothing itself.** It is a local stdio process: whoever can start it against a store file has that store's access. File permissions are the boundary; the MCP client's tool-approval prompt is the write gate.
+
+## The name
+
+The *fornix* is the brain's memory tract — the fiber bundle that carries what the hippocampus has stored out to the rest of the brain. FornixDB plays that role for an AI: the store that holds memories and the path the model reaches them through — never the thinker.
+
+## License
+
+MIT — see LICENSE.
