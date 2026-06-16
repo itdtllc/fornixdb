@@ -92,7 +92,14 @@ def import_directory(
             continue
         mtype = (meta.get("metadata") or {}).get("type", "") if isinstance(meta.get("metadata"), dict) else ""
         kind = TYPE_TO_KIND.get(mtype, "semantic")
-        gist = meta.get("description") or body.strip().splitlines()[0][:200] if body.strip() else name
+        # description always wins when present; fall back to first body line,
+        # then the name (so a description survives an empty-body memory file).
+        if meta.get("description"):
+            gist = meta["description"]
+        elif body.strip():
+            gist = body.strip().splitlines()[0][:200]
+        else:
+            gist = name
         mtime = datetime.fromtimestamp(path.stat().st_mtime).replace(microsecond=0)
         mem_id = store.store(
             gist,

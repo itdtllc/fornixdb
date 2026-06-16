@@ -307,6 +307,31 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("topics", help="list topics with counts")
     sub.add_parser("stats", help="store statistics")
 
+    mp = sub.add_parser("import-markdown",
+                        help="import Markdown: a doc chunked by heading into "
+                             "section memories (default), or --frontmatter for a "
+                             "directory of memory files")
+    mp.add_argument("path", help="a .md file or a directory of .md files")
+    mp.add_argument("--frontmatter", action="store_true",
+                    help="treat PATH as a directory of frontmatter memory files "
+                         "(name/description/[[wikilinks]]), one file -> one row, "
+                         "instead of heading-chunking an arbitrary document")
+    mp.add_argument("--project")
+    mp.add_argument("--shared", action="store_true",
+                    help="write into the machine-level shared tier")
+
+    xp = sub.add_parser("export-markdown",
+                        help="export memories to a directory of human-readable "
+                             "Markdown files (+ MEMORY.md index); round-trips "
+                             "with `import-markdown --frontmatter`")
+    xp.add_argument("out_dir", help="output directory (created if missing)")
+    xp.add_argument("--project", help="only memories in this project")
+    xp.add_argument("--kind", choices=KINDS, help="only this kind")
+    xp.add_argument("--include-superseded", action="store_true",
+                    help="also export tombstoned (superseded) memories")
+    xp.add_argument("--shared", action="store_true",
+                    help="export the machine-level shared tier instead")
+
     args = p.parse_args(argv)
     store = MemoryStore(db_path=args.db)
     stores = open_stores(store, shared=not args.no_shared)
@@ -735,6 +760,35 @@ def _dispatch(p, args, store, stores) -> int:
 
     elif args.cmd == "stats":
         print(json.dumps(store.stats(), indent=2, default=str))
+
+    elif args.cmd == "import-markdown":
+        target = stores[-1][1] if (args.shared and len(stores) > 1) else store
+        try:
+            if args.frontmatter:
+                from .adapters.markdown_import import import_directory
+                result = import_directory(target, args.path, project=args.project)
+            else:
+                from .adapters.markdown_doc import import_path
+                result = import_path(target, args.path, project=args.project)
+        except FrozenStoreError as e:
+            print(f"refused: {e}", file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"imported {result['imported']}, skipped {result['skipped']}, "
+                  f"links {result['links']}")
+
+    elif args.cmd == "export-markdown":
+        target = stores[-1][1] if (args.shared and len(stores) > 1) else store
+        from .adapters.markdown_export import export_directory
+        result = export_directory(
+            target, args.out_dir, project=args.project, kind=args.kind,
+            include_superseded=args.include_superseded)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"exported {result['exported']} memories to {result['dir']}")
 
     return 0
 

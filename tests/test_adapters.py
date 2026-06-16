@@ -6,6 +6,8 @@ from pathlib import Path
 
 from fornixdb.adapters.claude_code_transcripts import import_project_dir, summarize_session
 from fornixdb.adapters.markdown_import import import_directory, parse_frontmatter
+from fornixdb.adapters.markdown_doc import import_document, slugify
+from fornixdb.adapters.markdown_export import export_directory
 from fornixdb.core import MemoryStore
 from fornixdb.db import connect
 
@@ -62,6 +64,131 @@ class TestMarkdownImport(unittest.TestCase):
             r2 = import_directory(s, d)
         self.assertEqual(r2["imported"], 0)
         self.assertEqual(s.stats()["memories"], 1)
+
+
+DOC = """---
+title: My Design Doc
+---
+
+Intro paragraph before any heading. See [[Goals]].
+
+# Overview
+
+Top-level overview text.
+
+## Goals
+
+The goals section body.
+
+```python
+# this is code, not a heading
+x = 1
+```
+
+## Non-Goals
+
+What we will not do.
+
+# Appendix
+
+Closing notes.
+"""
+
+
+class TestMarkdownDocImport(unittest.TestCase):
+    def _import(self, text):
+        s = mem_store()
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, "doc.md")
+            p.write_text(text)
+            r = import_document(s, p)
+        return s, r
+
+    def test_chunks_by_heading_plus_root(self):
+        s, r = self._import(DOC)
+        # preamble root + Overview + Goals + Non-Goals + Appendix = 5
+        self.assertEqual(r["imported"], 5)
+        gists = {m["gist"] for m in s.recall("goals overview appendix", limit=20)}
+        self.assertIn("Goals", gists)
+        self.assertIn("Appendix", gists)
+
+    def test_code_fence_hash_not_a_heading(self):
+        s, _ = self._import(DOC)
+        # "# this is code, not a heading" must NOT become its own memory
+        self.assertFalse(
+            s.conn.execute(
+                "SELECT 1 FROM memory WHERE gist LIKE '%this is code%'"
+            ).fetchone()
+        )
+        goals = s.show("my-design-doc#goals", reinforce=False)
+        self.assertIn("this is code", goals["detail"])
+
+    def test_hierarchy_refines_links(self):
+        s, _ = self._import(DOC)
+        goals = s.show("my-design-doc#goals", reinforce=False)
+        rels = {(l["relation"], l["related_gist"]) for l in goals["links"]}
+        # Goals (##) refines Overview (#)
+        self.assertIn(("refines", "Overview"), rels)
+
+    def test_wikilink_resolves_within_doc(self):
+        s, _ = self._import(DOC)
+        root = s.show("my-design-doc", reinforce=False)
+        rels = {(l["relation"], l["related_gist"]) for l in root["links"]}
+        self.assertIn(("relates", "Goals"), rels)
+
+    def test_idempotent(self):
+        s = mem_store()
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, "doc.md")
+            p.write_text(DOC)
+            import_document(s, p)
+            r2 = import_document(s, p)
+        self.assertEqual(r2["imported"], 0)
+        self.assertEqual(r2["skipped"], 5)
+
+
+class TestMarkdownExport(unittest.TestCase):
+    def test_writes_files_and_index(self):
+        s = mem_store()
+        a = s.store("First fact", "Detail of first.", kind="feedback", name="first-fact")
+        s.store("Second fact", "Detail two with [[first-fact]].", name="second-fact")
+        with tempfile.TemporaryDirectory() as d:
+            r = export_directory(s, d)
+            files = {p.name for p in Path(d).glob("*.md")}
+            index = Path(d, "MEMORY.md").read_text()
+            first = Path(d, "first-fact.md").read_text()
+        self.assertEqual(r["exported"], 2)
+        self.assertEqual(files, {"first-fact.md", "second-fact.md", "MEMORY.md"})
+        self.assertIn("(first-fact.md)", index)         # index links the file
+        self.assertIn("type: feedback", first)          # kind -> metadata.type
+        self.assertIn("Detail of first.", first)
+        _ = a
+
+    def test_roundtrip_through_frontmatter_import(self):
+        s = mem_store()
+        s.store("Keep me", "Body text.", kind="reference", name="keep-me")
+        with tempfile.TemporaryDirectory() as d:
+            export_directory(s, d)
+            s2 = mem_store()
+            r = import_directory(s2, d)        # MEMORY.md skipped by importer
+            m = s2.show("keep-me", reinforce=False)
+        self.assertEqual(r["imported"], 1)
+        self.assertEqual(m["kind"], "reference")
+        self.assertEqual(m["gist"], "Keep me")
+        self.assertIn("Body text.", m["detail"])
+
+    def test_excludes_superseded_by_default(self):
+        s = mem_store()
+        old = s.store("Old", "old", name="old")
+        new = s.store("New", "new", name="new")
+        s.supersede(old, new)
+        with tempfile.TemporaryDirectory() as d:
+            r = export_directory(s, d)
+            names = {p.stem for p in Path(d).glob("*.md")} - {"MEMORY"}
+            r_all = export_directory(s, d, include_superseded=True)
+        self.assertEqual(r["exported"], 1)
+        self.assertEqual(names, {"new"})
+        self.assertEqual(r_all["exported"], 2)
 
 
 def _transcript_line(type_, ts, content=None, **kw):

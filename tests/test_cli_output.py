@@ -57,5 +57,62 @@ class TestCliMaxChars(unittest.TestCase):
         self.assertIn("more — raise --max-chars", capped)
 
 
+DOC = """# Top
+
+Top body.
+
+## Child
+
+Child body.
+"""
+
+
+class TestImportMarkdownCli(unittest.TestCase):
+    def _run(self, *argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = main(list(argv))
+        self.assertEqual(rc, 0)
+        return buf.getvalue()
+
+    def test_doc_mode_chunks_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = str(Path(d) / "m.db")
+            doc = Path(d) / "doc.md"
+            doc.write_text(DOC)
+            out = self._run("--db", db, "--no-shared", "import-markdown", str(doc))
+            again = self._run("--db", db, "--no-shared", "import-markdown", str(doc))
+            recall = self._run("--db", db, "--no-shared", "recall", "child")
+        self.assertIn("imported 2", out)         # Top + Child
+        self.assertIn("imported 0", again)       # idempotent re-run
+        self.assertIn("skipped 2", again)
+        self.assertIn("Child", recall)
+
+    def test_frontmatter_mode(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = str(Path(d) / "m.db")
+            Path(d, "fact.md").write_text(
+                "---\nname: a-fact\ndescription: a one liner\n---\nbody\n")
+            out = self._run("--db", db, "--no-shared",
+                            "import-markdown", d, "--frontmatter")
+        self.assertIn("imported 1", out)
+
+    def test_export_then_reimport_roundtrip(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = str(Path(d) / "m.db")
+            out_dir = str(Path(d) / "export")
+            self._run("--db", db, "--no-shared", "store",
+                      "--gist", "a fact to export", "--name", "exported-fact")
+            out = self._run("--db", db, "--no-shared", "export-markdown", out_dir)
+            self.assertTrue((Path(out_dir) / "exported-fact.md").exists())
+            self.assertTrue((Path(out_dir) / "MEMORY.md").exists())
+            db2 = str(Path(d) / "m2.db")
+            self._run("--db", db2, "--no-shared",
+                      "import-markdown", out_dir, "--frontmatter")
+            recall = self._run("--db", db2, "--no-shared", "recall", "fact to export")
+        self.assertIn("exported 1", out)
+        self.assertIn("a fact to export", recall)
+
+
 if __name__ == "__main__":
     unittest.main()

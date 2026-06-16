@@ -134,6 +134,23 @@ TOOLS = [
          "old": {"type": "string", "description": "id or name of the stale memory"},
          "new": {"type": "string", "description": "id or name that replaces it"}},
          "required": ["old", "new"]}},
+    {"name": "import_markdown",
+     "description": "Import Markdown: a doc chunked by heading into memories, or "
+                    "frontmatter=true for a directory of memory files.",
+     "inputSchema": {"type": "object", "properties": {
+         "path": {"type": "string", "description": "a .md file or directory"},
+         "frontmatter": {"type": "boolean", "default": False},
+         "project": {"type": "string"}},
+         "required": ["path"]}},
+    {"name": "export_markdown",
+     "description": "Export memories to a directory of Markdown files + MEMORY.md "
+                    "index; round-trips with import_markdown frontmatter=true.",
+     "inputSchema": {"type": "object", "properties": {
+         "out_dir": {"type": "string", "description": "output directory"},
+         "project": {"type": "string"},
+         "kind": {"type": "string", "enum": ["semantic", "feedback", "reference", "episodic"]},
+         "include_superseded": {"type": "boolean", "default": False}},
+         "required": ["out_dir"]}},
 ]
 
 
@@ -371,6 +388,25 @@ class FornixMCP:
             return f"no memory: {old if o is None else new}"
         self.store.supersede(o["id"], n["id"])  # FrozenStoreError if read-only
         return f"#{o['id']} superseded by #{n['id']} — old kept as history."
+
+    def import_markdown(self, path: str, frontmatter: bool = False,
+                        project: str | None = None) -> str:
+        if frontmatter:
+            from .markdown_import import import_directory
+            r = import_directory(self.store, path, project=project)
+        else:
+            from .markdown_doc import import_path
+            r = import_path(self.store, path, project=project)
+        return (f"imported {r['imported']}, skipped {r['skipped']}, "
+                f"links {r['links']}")
+
+    def export_markdown(self, out_dir: str, project: str | None = None,
+                        kind: str | None = None,
+                        include_superseded: bool = False) -> str:
+        from .markdown_export import export_directory
+        r = export_directory(self.store, out_dir, project=project, kind=kind,
+                             include_superseded=bool(include_superseded))
+        return f"exported {r['exported']} memories to {r['dir']}"
 
     # ---------------------------------------------------------- protocol
 

@@ -55,7 +55,8 @@ not load-bearing. A capable model needs neither crutch.
    `mcpServers` config at the `fornixdb-mcp` command; `--db`/`$FORNIXDB_DB`
    selects the store). The server speaks newline-delimited JSON-RPC over
    stdio with zero dependencies, exposes the nine contracts plus `show_memory`
-   for the gist→detail drill-down, and ships the system-prompt guidance below
+   for the gist→detail drill-down, the Sleep/Dream tools (`dream`, `supersede`),
+   the Markdown-bridge tools (`import_markdown`, `export_markdown`), and ships the system-prompt guidance below
    as MCP `instructions` so clients get the behavioral rules automatically.
    The MCP client's own tool-approval prompt serves as the shell-side write
    gate. See `fornixdb/adapters/mcp_server.py`. **After updating FornixDB while
@@ -81,6 +82,17 @@ contracts are the point.
 | `memory_usage()` | Disk space of this AI's store (db + archives, cap, count) PLUS the machine-wide rollup: every store on the box by label, and the total. | `budget status` |
 | `shrink_memory(target_mb)` | **Owner-consented true deletion.** "Reduce this space to X MB" — shrink once to the named size (compress, then forget least-salient-first, feedback last, vacuum). Only on the owner's explicit request; never changes the standing cap. | `budget shrink` |
 | *(startup, not a tool)* `startup_context()` | Injected as a system message once per session: the memory how-to, the current listing, and the capture-policy instruction read from the store. | `brief` or listing + `capture_mode` |
+
+### Markdown bridge tools (optional)
+
+Two further tools bridge the store to Markdown — the format the AI ecosystem works in (Obsidian, design docs, a consumer's own memory files). They sit *beside* the turn-to-turn recall loop, not in it; expose them where document interchange matters, and treat them as write tools under the same shell gate.
+
+| Tool | Contract | Maps to |
+|---|---|---|
+| `import_markdown(path, frontmatter?)` | Import Markdown into the store. **Default:** an arbitrary document is chunked by heading into one memory per section (gist = heading, detail = section text; heading hierarchy → `refines` links, `[[wikilinks]]` → `relates`). **`frontmatter=true`:** a directory of frontmatter memory files, one file → one memory. Idempotent — a re-import skips memories already present by name. | `import-markdown` |
+| `export_markdown(out_dir, project?, kind?, include_superseded?)` | Export memories to a directory of human-readable `.md` files (frontmatter + detail + a `## Related` footer of `[[wikilinks]]`) plus a `MEMORY.md` index. Round-trips with `import_markdown frontmatter=true`. | `export-markdown` |
+
+Why chunk a document instead of storing it whole: recall returns — and the model re-prefills — only the relevant section, not the entire doc. The measured win and a guided walkthrough are in the README ("Markdown in, Markdown out") and `examples/markdown_bridge_demo.py`; the benefit is regression-guarded by `tests/test_markdown_benefit.py`.
 
 **Why two recall tools instead of one:** subject search cannot grip time
 words. "What did we do last night?" contains zero content terms — keyword and

@@ -37,7 +37,7 @@ It is a **memory, not a mind**: it stores, indexes, ranks, and retrieves. It nev
 
 ## Status
 
-Published (MIT) and in daily use. Shipped: the hot spine (SQLite + FTS5, time + subject recall, supersede-with-history), optional associative recall (model2vec vectors), decay + retention tiers + the consolidation pass, explicit negative feedback (mark a wrong recall hit irrelevant to a query — downweighted for similar queries only, retractable, never deleted), multi-AI topology (per-agent stores + machine shared tier + capture modes, cross-store recall deduped), disk-budget cap with prune/freeze boundary policies and frozen read-only stores, and import adapters (Claude Code transcripts + a SessionEnd hook for live passive session capture, markdown memories). Three consumers proven: Claude Code, a local Qwen-72B agent, and a 14B via the MCP/shim surface (cold-installed and verified on Windows). Extensively tested.
+Published (MIT) and in daily use. Shipped: the hot spine (SQLite + FTS5, time + subject recall, supersede-with-history), optional associative recall (model2vec vectors), decay + retention tiers + the consolidation pass, explicit negative feedback (mark a wrong recall hit irrelevant to a query — downweighted for similar queries only, retractable, never deleted), multi-AI topology (per-agent stores + machine shared tier + capture modes, cross-store recall deduped), disk-budget cap with prune/freeze boundary policies and frozen read-only stores, import adapters (Claude Code transcripts + a SessionEnd hook for live passive session capture), and a bidirectional Markdown bridge (heading-chunked import of arbitrary documents, plus Markdown export of the store). Three consumers proven: Claude Code, a local Qwen-72B agent, and a 14B via the MCP/shim surface (cold-installed and verified on Windows). Extensively tested.
 
 ## Requirements
 
@@ -177,6 +177,33 @@ A store can also be frozen outright, independent of any cap — `config frozen o
 ## Connecting an AI
 
 The fastest path is MCP: `fornixdb-mcp` is a zero-dependency [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so any MCP-capable client connects with one config line (e.g. `claude mcp add fornixdb -- fornixdb-mcp`). For everything else, tooling is the standard way to add capabilities to a model, and FornixDB is designed to be reached through tools. **See [INTEGRATION.md](INTEGRATION.md)** for the recommended nine-tool surface (subject recall, time-axis recall, remember/update, list, forget, negative feedback, usage, shrink, startup context), the system-prompt guidance that makes small models use it well, and the two capture layers — **passive** episodic session capture (`session_capture on|off`, the shell remembers each session like a person remembers their day) and **interactive** semantic capture governed by the capture mode.
+
+## Markdown in, Markdown out
+
+FornixDB reads and writes Markdown — the format the AI ecosystem already lives in (Obsidian vaults, design docs, READMEs, Claude Code's own memory files).
+
+**Import — a document becomes recallable by section.** `import-markdown` splits a Markdown file along its headings into one memory per section (gist = the heading, detail = that section's text), preserving the heading hierarchy as `refines` links and `[[wikilinks]]` as `relates` links. Point it at one file or a folder:
+
+```bash
+python3 -m fornixdb import-markdown notes/homelab.md        # an arbitrary doc, chunked by heading
+python3 -m fornixdb import-markdown ./memory --frontmatter  # a folder of frontmatter memory files (one file = one memory)
+```
+
+Why chunk instead of storing the whole document? Because an AI re-reads whatever recall returns *on every turn*. A question whose answer lives in one section ("when does the backup run?") then comes back as that one small section instead of the entire document — measurably cheaper and more precise. The bundled walkthrough makes this concrete (no network, nothing written outside a temp folder):
+
+```bash
+python3 -m examples.markdown_bridge_demo   # ingest → recall → measured benefit → export
+```
+
+On the sample note it returns the right section ranked first every time and costs **~7.6× fewer tokens to answer** than the whole-document baseline; the ratio grows with document size. The benefit is guarded by `tests/test_markdown_benefit.py`, so it cannot silently regress.
+
+**Export — your memory as readable, git-diffable files.** `export-markdown` writes one `.md` per memory (frontmatter + detail + a `## Related` links footer) plus a `MEMORY.md` index:
+
+```bash
+python3 -m fornixdb export-markdown ./memory-export
+```
+
+These are ordinary Markdown files: read or edit them in any editor, commit the folder to track how memory changed over time, or edit one and re-import with `import-markdown --frontmatter` to feed the changes back. Export round-trips with `import-markdown --frontmatter`. Both directions are also exposed as MCP tools (`import_markdown`, `export_markdown`) for clients that drive FornixDB through MCP rather than the shell.
 
 ## Security posture
 

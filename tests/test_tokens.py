@@ -21,7 +21,7 @@ class TestTokens(unittest.TestCase):
         r = report(self.s)
         fixed = r["fixed_per_session"]
         self.assertGreater(fixed["mcp_tool_schemas"]["tokens"], 100)
-        self.assertEqual(fixed["mcp_tool_schemas"]["tools"], 12)
+        self.assertEqual(fixed["mcp_tool_schemas"]["tools"], 14)
         self.assertEqual(fixed["total_tokens"],
                          fixed["mcp_tool_schemas"]["tokens"]
                          + fixed["mcp_instructions"]["tokens"]
@@ -45,10 +45,13 @@ class TestTokens(unittest.TestCase):
         # tools `dream` (11th) and `supersede` (12th, so a shell-less consumer
         # can apply the pass's healing); 12 tools, still far under the 4096
         # ceiling and the ~16-lean-tools guideline.
+        # Raised 2026-06-16: 1050 -> 1280 — deliberate, for the Markdown-bridge
+        # tools `import_markdown` (13th) and `export_markdown` (14th); 14 tools,
+        # still under the 4096 ceiling and the ~16-lean-tools guideline.
         import json
 
         from fornixdb.adapters.mcp_server import INSTRUCTIONS, TOOLS
-        SCHEMA_TOKEN_BUDGET = 1050
+        SCHEMA_TOKEN_BUDGET = 1280
         INSTRUCTIONS_TOKEN_BUDGET = 260
 
         schema_tokens = estimate_tokens(json.dumps(TOOLS))

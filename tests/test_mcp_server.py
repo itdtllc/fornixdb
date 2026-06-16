@@ -39,7 +39,7 @@ class TestProtocol(unittest.TestCase):
         self.assertIn("recall_timeline", r["instructions"])
         tools = self.srv.handle(req(2, "tools/list"))["result"]["tools"]
         self.assertEqual({t["name"] for t in tools}, {t["name"] for t in TOOLS})
-        self.assertEqual(len(tools), 12)
+        self.assertEqual(len(tools), 14)
 
     def test_remember_recall_show_forget_cycle(self):
         out = self._call("remember", title="gpu-rule",
@@ -84,6 +84,17 @@ class TestProtocol(unittest.TestCase):
         # already-under target is a stated no-op
         out = self._call("shrink_memory", target_mb=10_000)["content"][0]["text"]
         self.assertIn("nothing was deleted", out)
+
+    def test_markdown_import_export_roundtrip(self):
+        with tempfile.TemporaryDirectory() as d:
+            doc = Path(d) / "doc.md"
+            doc.write_text("# Title\n\nIntro.\n\n## Section A\n\nBody A.\n")
+            out = self._call("import_markdown", path=str(doc))["content"][0]["text"]
+            self.assertIn("imported 2", out)            # Title + Section A
+            out_dir = str(Path(d) / "out")
+            exp = self._call("export_markdown", out_dir=out_dir)["content"][0]["text"]
+            self.assertIn("exported 2", exp)
+            self.assertTrue((Path(out_dir) / "MEMORY.md").exists())
 
     def test_mark_irrelevant(self):
         self._call("remember", title="pie", content="apple pie recipe steps")
