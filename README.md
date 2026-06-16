@@ -54,7 +54,7 @@ pip install -e .          # includes model2vec; semantic recall on by default
 
 ## Semantic recall (on by default)
 
-Recall ranks by keyword + time, blended with *similarity by meaning* from a small local embedding model — "the glitch where her eyes sparkled" finds the eye-twinkle memory with zero shared words. The model ships by default and is tiny (~30MB static embeddings, CPU-only, no torch); on a fresh store, memories embed automatically from the first write (an existing store backfills once with `python3 -m fornixdb embed`).
+Recall ranks by keyword + time, blended with *similarity by meaning* from a small local embedding model — "the glitch where her eyes sparkled" finds the eye-twinkle memory with zero shared words. The model ships by default and is tiny (~30MB static embeddings, CPU-only, no torch); a fresh store embeds memories automatically from the first write, and an existing store from before vectors backfills itself the first time it's used (no manual step). `python3 -m fornixdb embed` still forces a backfill on demand.
 
 The embedder is pluggable (any object with `.name` and `.embed()`), the model is configurable via `FORNIXDB_EMBED_MODEL` (a HuggingFace repo id or a local directory), and air-gapped machines can drop model files into `~/.cache/fornixdb-models/<model>/` so no network is ever attempted.
 

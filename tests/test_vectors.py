@@ -255,6 +255,21 @@ class TestVectorsDefaultOn(unittest.TestCase):
         mid = s.store("a vehicle on the road")
         self.assertGreater(self._emb(s, mid), 0)
 
+    def test_existing_store_auto_backfills_on_first_use(self):
+        # simulate a pre-vectors store: memories present, no embeddings, and no
+        # embedder resolvable yet (model "absent").
+        self._V.get_default_embedder = lambda: None
+        s = mem_store()
+        a = s.store("the automobile stalled")
+        b = s.store("her eyes sparkled")
+        self.assertEqual(self._emb(s, a), 0)     # nothing embedded yet
+        # now a model becomes available and the store is used → auto-backfill
+        del s._auto_embedder                     # force re-resolve
+        self._V.get_default_embedder = lambda: FakeEmbedder()
+        s.recall("vehicle")                      # first real vector use
+        self.assertGreater(self._emb(s, a), 0)   # old memories embedded
+        self.assertGreater(self._emb(s, b), 0)
+
     def test_env_switch_off_disables(self):
         os.environ["FORNIXDB_VECTORS"] = "off"
         s = mem_store()

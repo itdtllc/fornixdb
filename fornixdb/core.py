@@ -440,7 +440,31 @@ class MemoryStore:
             return embedder
         if not hasattr(self, "_auto_embedder"):
             self._auto_embedder = self._auto_resolve_embedder()
+            if self._auto_embedder is not None:
+                self._maybe_backfill_vectors(self._auto_embedder)
         return self._auto_embedder
+
+    def _maybe_backfill_vectors(self, emb):
+        """One-time, on first real vector use: a store that predates vectors
+        (memories present, NO embeddings) gets embedded so semantic recall finds
+        its old memories too — no manual `embed` needed after enabling vectors.
+        No-op the moment any embedding exists (embed-on-write maintains it from
+        there), and on incapable/keyword-only stores. Never blocks or raises;
+        it triggers on store()/recall(), not on bare open or admin commands."""
+        try:
+            if self.conn.execute("SELECT 1 FROM embedding LIMIT 1").fetchone():
+                return  # already a vector store — nothing to upgrade
+            if not self.conn.execute("SELECT 1 FROM memory LIMIT 1").fetchone():
+                return  # fresh/empty store — nothing to backfill
+            from .vectors import backfill
+            n = backfill(self, emb)
+            if n:
+                import sys
+                print(f"FornixDB: embedded {n} existing memories for semantic "
+                      f"recall ({emb.name}) — one-time after enabling vectors.",
+                      file=sys.stderr)
+        except Exception:
+            pass  # backfill is best-effort; never break a store/recall over it
 
     def _auto_resolve_embedder(self):
         """Vectors are on by default: load the bundled model so a fresh store
