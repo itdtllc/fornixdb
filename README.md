@@ -61,6 +61,14 @@ python3 -m fornixdb embed      # one-time backfill; new memories embed automatic
 
 This follows the project's no-model-required rule: a local model is always an *upgrade*, never a dependency. The embedder is pluggable (any object with `.name` and `.embed()`), the model is configurable via `FORNIXDB_EMBED_MODEL` (a HuggingFace repo id or a local directory), and air-gapped machines can drop model files into `~/.cache/fornixdb-models/<model>/` so no network is ever attempted.
 
+**Capability, reconciled — many machines can't (or shouldn't) run a model, and that's fine.** Vectors are a layer *on top of* a fully-working keyword + time core, and capability is detected at runtime, so the same store works everywhere and degrades gracefully in both directions:
+
+- **No model** (not installed, or hardware too small — a microcontroller, a small robot): recall is keyword + time, `store()` embeds nothing, and the model is never even imported. Everything else (time recall, supersede, decay, budget, links) is pure SQLite and unaffected.
+- **A vector-built store opened on a model-less machine:** the embeddings sit unused on disk; recall silently falls back to keyword. Nothing breaks.
+- **Model present:** recall blends similarity and new writes embed automatically.
+
+Two things to know: (1) vectors are **opt-in, not auto-enabled on install** — even on a capable machine you install the extra and run `embed` once to bootstrap (after that, new memories embed on write); (2) the tradeoff is *quality, not function* — keyword-only ranks the single best hit less often than hybrid, but still finds memories and answers time questions nothing else can. Use `embed`/`--keyword-only` to choose per machine.
+
 ## Quick start
 
 ```bash
