@@ -1,7 +1,10 @@
 """Disk budget + boundary policy (Design §13.2) and the standalone freeze."""
 
+import os
 import tempfile
 import unittest
+
+os.environ["FORNIXDB_VECTORS"] = "off"  # deterministic: no ambient-model auto-embed
 from datetime import datetime, timedelta
 from pathlib import Path
 

@@ -90,8 +90,10 @@ the way down — see "Anatomy of a memory" in the README.
 
 ## Engineering posture
 
-- Core is dependency-free Python (SQLite + FTS5); associative recall is an
-  optional ~30 MB CPU embedding model — no GPU, no torch, no network.
+- Keyword + time recall is dependency-free Python (SQLite + FTS5); associative
+  recall ships by default as a ~30 MB CPU embedding model (no GPU, no torch, no
+  network) and switches off (`FORNIXDB_VECTORS=off`) for lean or incapable
+  hardware, falling back to keyword + time.
 - One config line connects any MCP client; a six-line shim connects anything
   else.
 - Recall quality is eval-fenced: a golden-query suite scores every ranking

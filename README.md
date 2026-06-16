@@ -18,7 +18,7 @@ It is a **memory, not a mind**: it stores, indexes, ranks, and retrieves. It nev
 
 - **Recall by time.** Natural phrases — *"what did we do last Thursday?"*, *"this morning"* — return everything from that window. Sessions are captured automatically (owner-toggleable), so the answer exists without anyone deciding to save it.
 - **Recall by subject.** Keyword + ranked relevance returns a one-line **gist** first; full **detail** is fetched only when the conversation drills in, so recall stays cheap in the context window.
-- **Recall by meaning** *(optional)*. A small local embedding model upgrades subject recall to similarity by meaning — *"the glitch where her eyes sparkled"* finds the right memory with zero shared words. Never required; pure keyword + time works with no model at all.
+- **Recall by meaning** *(on by default, never required)*. A small local embedding model adds similarity by meaning — *"the glitch where her eyes sparkled"* finds the right memory with zero shared words. It ships by default but is never required: switch it off (`FORNIXDB_VECTORS=off`) or run on hardware that can't load it, and pure keyword + time still works.
 - **A memory that adapts.** New knowledge supersedes old *without erasing it* (the trail of corrections stays queryable); unused memories fade in ranking while frequently-used ones stay sharp; an explicit "not that one" downweights a wrong recall hit for similar queries only — retractable, never deleted.
 - **Honesty flags.** Stale, unverified facts come back marked as such; duplicates across stores answer once; a downweighted or auto-captured result says so. Provenance travels with every answer.
 - **You stay in charge.** Capture policy is yours (only-when-asked / offer / auto). Never-delete is the default; true deletion happens only at your explicit consent, and forgets least-important-first.
@@ -37,37 +37,34 @@ It is a **memory, not a mind**: it stores, indexes, ranks, and retrieves. It nev
 
 ## Status
 
-Published (MIT) and in daily use. Shipped: the hot spine (SQLite + FTS5, time + subject recall, supersede-with-history), optional associative recall (model2vec vectors), decay + retention tiers + the consolidation pass, explicit negative feedback (mark a wrong recall hit irrelevant to a query — downweighted for similar queries only, retractable, never deleted), multi-AI topology (per-agent stores + machine shared tier + capture modes, cross-store recall deduped), disk-budget cap with prune/freeze boundary policies and frozen read-only stores, import adapters (Claude Code transcripts + a SessionEnd hook for live passive session capture), and a bidirectional Markdown bridge (heading-chunked import of arbitrary documents, plus Markdown export of the store). Three consumers proven: Claude Code, a local Qwen-72B agent, and a 14B via the MCP/shim surface (cold-installed and verified on Windows). Extensively tested.
+Published (MIT) and in daily use. Shipped: the hot spine (SQLite + FTS5, time + subject recall, supersede-with-history), associative recall on by default (model2vec vectors, switchable off), decay + retention tiers + the consolidation pass, explicit negative feedback (mark a wrong recall hit irrelevant to a query — downweighted for similar queries only, retractable, never deleted), multi-AI topology (per-agent stores + machine shared tier + capture modes, cross-store recall deduped), disk-budget cap with prune/freeze boundary policies and frozen read-only stores, import adapters (Claude Code transcripts + a SessionEnd hook for live passive session capture), and a bidirectional Markdown bridge (heading-chunked import of arbitrary documents, plus Markdown export of the store). Three consumers proven: Claude Code, a local Qwen-72B agent, and a 14B via the MCP/shim surface (cold-installed and verified on Windows). Extensively tested.
 
 ## Requirements
 
-- Python 3.10+ with SQLite compiled with FTS5 (standard on macOS, most Linux distributions, and the python.org Windows builds). The core uses **only the standard library**.
+- Python 3.10+ with SQLite compiled with FTS5 (standard on macOS, most Linux distributions, and the python.org Windows builds). The keyword + time core runs on **only the standard library**; the default install also pulls a small embedding model (model2vec) so semantic recall works out of the box.
+- **No SQLite is installed or bundled.** FornixDB uses Python's built-in `sqlite3` module, so it relies on whatever SQLite your Python already links — it can't touch or conflict with a system SQLite.
+- **model2vec is unpinned**, so pip accepts any version already on the machine and never overrides or downgrades a model2vec another project is using; if it's missing or too old to load, FornixDB falls back to keyword-only.
 - **Windows:** the interpreter is `python` (or `py`), not `python3` — on stock Windows, `python3` is a Microsoft Store stub. Substitute accordingly in every command below.
 
 ```bash
 # optional but recommended: install the package so `fornixdb` and
 # `python -m fornixdb` work from any directory
-pip install -e .          # add [vectors] for associative recall
+pip install -e .          # includes model2vec; semantic recall on by default
 ```
 
-## Associative recall (optional)
+## Semantic recall (on by default)
 
-With no extras installed, recall is keyword + time based and fully functional. Installing a small local embedding model upgrades recall to *similarity by meaning* — "the glitch where her eyes sparkled" finds the eye-twinkle memory with zero shared words:
+Recall ranks by keyword + time, blended with *similarity by meaning* from a small local embedding model — "the glitch where her eyes sparkled" finds the eye-twinkle memory with zero shared words. The model ships by default and is tiny (~30MB static embeddings, CPU-only, no torch); on a fresh store, memories embed automatically from the first write (an existing store backfills once with `python3 -m fornixdb embed`).
 
-```bash
-pip install model2vec          # ~30MB static-embedding model, CPU-only, no torch
-python3 -m fornixdb embed      # one-time backfill; new memories embed automatically
-```
+The embedder is pluggable (any object with `.name` and `.embed()`), the model is configurable via `FORNIXDB_EMBED_MODEL` (a HuggingFace repo id or a local directory), and air-gapped machines can drop model files into `~/.cache/fornixdb-models/<model>/` so no network is ever attempted.
 
-This follows the project's no-model-required rule: a local model is always an *upgrade*, never a dependency. The embedder is pluggable (any object with `.name` and `.embed()`), the model is configurable via `FORNIXDB_EMBED_MODEL` (a HuggingFace repo id or a local directory), and air-gapped machines can drop model files into `~/.cache/fornixdb-models/<model>/` so no network is ever attempted.
+**Capability, reconciled — many machines can't (or shouldn't) run a model, and that's fine.** Vectors are a layer *on top of* a fully-working keyword + time core, capability is detected at runtime, and the same store works everywhere — degrading gracefully in both directions:
 
-**Capability, reconciled — many machines can't (or shouldn't) run a model, and that's fine.** Vectors are a layer *on top of* a fully-working keyword + time core, and capability is detected at runtime, so the same store works everywhere and degrades gracefully in both directions:
+- **No model** (hardware too small to load it — a microcontroller, a small robot): the model import fails, recall falls back to keyword + time, `store()` embeds nothing. Everything else (time recall, supersede, decay, budget, links) is pure SQLite and unaffected.
+- **A vector-built store opened on a model-less machine:** the embeddings sit unused on disk; recall falls back to keyword. Nothing breaks.
+- **Model present (the default):** recall blends similarity and new writes embed automatically.
 
-- **No model** (not installed, or hardware too small — a microcontroller, a small robot): recall is keyword + time, `store()` embeds nothing, and the model is never even imported. Everything else (time recall, supersede, decay, budget, links) is pure SQLite and unaffected.
-- **A vector-built store opened on a model-less machine:** the embeddings sit unused on disk; recall silently falls back to keyword. Nothing breaks.
-- **Model present:** recall blends similarity and new writes embed automatically.
-
-Two things to know: (1) vectors are **opt-in, not auto-enabled on install** — even on a capable machine you install the extra and run `embed` once to bootstrap (after that, new memories embed on write); (2) the tradeoff is *quality, not function* — keyword-only ranks the single best hit less often than hybrid, but still finds memories and answers time questions nothing else can. Use `embed`/`--keyword-only` to choose per machine.
+Two things to know: (1) vectors are **on by default but easy to switch off** for a deliberately lean deployment — set `FORNIXDB_VECTORS=off` (machine-wide) or `fornixdb config vectors off` (one store), or pass `--keyword-only` on a single recall; (2) the tradeoff is *quality, not function* — keyword-only ranks the single best hit less often than hybrid, but still finds memories and answers time questions nothing else can.
 
 ## Quick start
 

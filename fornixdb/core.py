@@ -439,16 +439,29 @@ class MemoryStore:
         if embedder is not None:
             return embedder
         if not hasattr(self, "_auto_embedder"):
-            # Only auto-load a model if this store actually uses vectors —
-            # a vector-free deployment never pays the import.
-            has_vectors = self.conn.execute(
-                "SELECT 1 FROM embedding LIMIT 1").fetchone()
-            if has_vectors:
-                from .vectors import get_default_embedder
-                self._auto_embedder = get_default_embedder()
-            else:
-                self._auto_embedder = None
+            self._auto_embedder = self._auto_resolve_embedder()
         return self._auto_embedder
+
+    def _auto_resolve_embedder(self):
+        """Vectors are on by default: load the bundled model so a fresh store
+        embeds from its first write. Three ways it stays off: a machine-wide
+        env switch (`FORNIXDB_VECTORS=off`), a per-store opt-out
+        (`config vectors off`), and incapable hardware where the model can't
+        import/load — get_default_embedder() returns None there, so recall and
+        writes fall back to keyword + time and nothing breaks."""
+        import os
+        _OFF = ("off", "0", "false", "no")
+        env = os.environ.get("FORNIXDB_VECTORS")
+        if env is not None:
+            if env.strip().lower() in _OFF:        # env is the machine-wide override
+                return None
+        else:
+            row = self.conn.execute(
+                "SELECT value FROM meta WHERE key = 'vectors'").fetchone()
+            if row and str(row["value"]).strip().lower() in _OFF:
+                return None
+        from .vectors import get_default_embedder
+        return get_default_embedder()
 
     def _blend_vectors(self, fts_rows, query, emb, limit, kind, project,
                        include_superseded, since=None, until=None):

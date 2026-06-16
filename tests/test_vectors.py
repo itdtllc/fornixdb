@@ -1,5 +1,12 @@
+import os
 import unittest
 import zlib
+
+# Vectors are a default dependency now, so a real model would auto-embed and
+# perturb keyword-only expectations. Force the auto path OFF for deterministic
+# tests; cases that exercise vectors pass an explicit embedder or flip this
+# back locally (the env switch only gates the auto path, not explicit embedders).
+os.environ["FORNIXDB_VECTORS"] = "off"
 
 from fornixdb.core import MemoryStore
 from fornixdb.db import connect
@@ -118,9 +125,11 @@ class TestHybridRecall(unittest.TestCase):
         self.assertEqual(rows[0]["id"], self.twinkle)
         self.assertIn(also, [r["id"] for r in rows])
 
-    def test_auto_embedder_skipped_when_no_vectors(self):
+    def test_auto_path_off_falls_back_to_keyword(self):
+        # with the auto path off (env, set at module top), recall still works —
+        # keyword + time — and no model is resolved.
         s2 = mem_store()
-        s2.store("plain store, no vectors anywhere")
+        s2.store("plain store, keyword only")
         rows = s2.recall("plain store")  # embedder=None auto path
         self.assertTrue(rows)
         self.assertIsNone(s2._auto_embedder)
@@ -214,6 +223,52 @@ class TestEmbedOnWrite(unittest.TestCase):
         self.assertTrue(self.s.conn.execute(
             "SELECT 1 FROM memory WHERE id = ?", (mid,)).fetchone())  # write held
         self.assertEqual(self._emb_count(mid), 0)
+
+
+class TestVectorsDefaultOn(unittest.TestCase):
+    """Vectors are ON by default (model2vec ships as a dependency): a fresh
+    store bootstraps embeddings on first write. It only stays off via the env
+    switch, the per-store config, or incapable hardware (model won't load).
+    Each test simulates a capable machine by stubbing the default embedder."""
+
+    def setUp(self):
+        from fornixdb import vectors as V
+        self._V = V
+        self._orig_gde = V.get_default_embedder
+        self._orig_env = os.environ.get("FORNIXDB_VECTORS")
+        os.environ.pop("FORNIXDB_VECTORS", None)          # clear the suite-wide off
+        V.get_default_embedder = lambda: FakeEmbedder()   # a capable machine
+
+    def tearDown(self):
+        self._V.get_default_embedder = self._orig_gde
+        if self._orig_env is None:
+            os.environ.pop("FORNIXDB_VECTORS", None)
+        else:
+            os.environ["FORNIXDB_VECTORS"] = self._orig_env
+
+    def _emb(self, s, mid):
+        return s.conn.execute(
+            "SELECT count(*) FROM embedding WHERE memory_id = ?", (mid,)).fetchone()[0]
+
+    def test_fresh_store_bootstraps_on_first_write(self):
+        s = mem_store()                          # brand-new, zero embeddings
+        mid = s.store("a vehicle on the road")
+        self.assertGreater(self._emb(s, mid), 0)
+
+    def test_env_switch_off_disables(self):
+        os.environ["FORNIXDB_VECTORS"] = "off"
+        s = mem_store()
+        mid = s.store("a vehicle on the road")
+        self.assertEqual(self._emb(s, mid), 0)
+        self.assertIsNone(s._auto_embedder)
+
+    def test_config_vectors_off_disables(self):
+        s = mem_store()
+        s.conn.execute("INSERT OR REPLACE INTO meta VALUES ('vectors', 'off')")
+        s.conn.commit()
+        mid = s.store("a vehicle on the road")
+        self.assertEqual(self._emb(s, mid), 0)
+        self.assertIsNone(s._auto_embedder)
 
 
 if __name__ == "__main__":

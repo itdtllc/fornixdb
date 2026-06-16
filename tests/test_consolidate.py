@@ -1,7 +1,10 @@
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+
+os.environ["FORNIXDB_VECTORS"] = "off"  # deterministic: no ambient-model auto-embed
 
 from fornixdb.consolidate import (_dream_narrative, _gist_problem, dream,
                                   propose, status, supersede_suggestion)

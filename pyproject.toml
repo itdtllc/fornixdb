@@ -9,10 +9,16 @@ description = "A persistent, human-like memory for any AI - local, private, mode
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-# the core is stdlib-only by design; vectors are an optional upgrade
-dependencies = []
+# Keyword + time recall is stdlib-only at runtime. model2vec ships by default
+# so semantic recall is on out of the box, but it is UNPINNED on purpose: pip
+# accepts any already-installed version and never overrides/downgrades a
+# model2vec another project is using. If it is missing or too old to import,
+# get_default_embedder() falls back to keyword-only — vectors never break a run.
+dependencies = ["model2vec"]
 
 [project.optional-dependencies]
+# kept for back-compat with `pip install fornixdb[vectors]`; now a no-op since
+# model2vec is a default dependency.
 vectors = ["model2vec"]
 
 [project.scripts]
