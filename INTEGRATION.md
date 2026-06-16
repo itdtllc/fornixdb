@@ -261,6 +261,33 @@ AI at startup via `startup_context`):
 Because the instruction is read from the store at session start, the owner
 changes policy with one CLI command — no prompt edits, no model rebuild.
 
+### Following a host AI's native memory (additive, never a takeover)
+
+A host like Claude Code has its **own** file memory that auto-injects into
+context. FornixDB **follows** that memory downstream — it never owns the
+directory, generates those files, or sits in the write path. The host's
+mechanism stays authoritative and free to evolve; remove FornixDB and native
+memory is untouched. The flow is strictly **native → FornixDB**:
+
+- `fornixdb ingest --dir <native-memory-dir>` points the store at the directory;
+  the markdown-import adapter pulls it in (idempotent by name, with content
+  dedup so the same fact re-slugged isn't double-stored), tagging rows
+  `claude-code-native`. The benefit: write **once** to native memory, and
+  FornixDB adds the time/episodic axis + ranked recall on top.
+
+**`ingest_mode` — the user's one background switch, always surfaced in
+`startup_context`:**
+
+| mode | what runs in the background |
+|---|---|
+| `explicit` | **nothing** — no auto-ingest, no passive session capture; FornixDB acts only on deliberate `remember`/`recall`/`ingest --run`. The "leave my background alone" setting. |
+| `passive` (default) | native auto-ingest (if a `native_dir` is set) + passive session capture, on the session-end hook |
+| `both` | background automation runs **and** the AI is encouraged to capture/recall explicitly too |
+
+The default `passive` preserves the existing session-capture behavior; native
+auto-ingest is still opt-in because it also needs a configured directory. Set it
+with `fornixdb ingest --mode <explicit|passive|both>`.
+
 ## Sleep/Dream consolidation (the maintenance pass)
 
 Capture and recall keep memory current turn-to-turn; a periodic **consolidation

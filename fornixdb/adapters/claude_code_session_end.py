@@ -56,6 +56,9 @@ def capture_session(store: MemoryStore, transcript_path: str | Path,
                     session_id: str | None = None) -> str:
     """Store (or refresh) the episodic row for one session transcript.
     Returns a short status string for the hook log."""
+    from .native_memory import ingest_mode
+    if ingest_mode(store) == "explicit":  # the user's "no background" switch
+        return "ingest_mode=explicit — background capture off"
     if get_config(store, "session_capture", "on") in ("off", "0", "false"):
         return "session_capture off — skipped"
     path = Path(transcript_path).expanduser()
@@ -128,6 +131,14 @@ def main(argv=None) -> int:
             print(f"fornixdb session-end: "
                   f"{capture_session(store, transcript, session_id)}",
                   file=sys.stderr)
+            # passive/both + a configured native dir: follow native memory
+            # downstream (additive, never a takeover). explicit mode skips this.
+            from .native_memory import auto_background_enabled, ingest, native_dir
+            if auto_background_enabled(store) and native_dir(store):
+                r = ingest(store)
+                if r.get("ok"):
+                    print(f"fornixdb session-end: native ingest — imported "
+                          f"{r['imported']}, skipped {r['skipped']}", file=sys.stderr)
     except Exception as e:  # never make ending a session look like an error
         print(f"fornixdb session-end: error: {e}", file=sys.stderr)
     return 0

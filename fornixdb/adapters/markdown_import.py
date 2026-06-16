@@ -75,6 +75,7 @@ def import_directory(
     project: str | None = None,
     source: str = "markdown-import",
     skip_names: tuple[str, ...] = ("MEMORY.md", "README.md"),
+    dedup_gist: bool = False,
 ) -> dict:
     directory = Path(directory).expanduser()
     imported, skipped, links_made = [], 0, 0
@@ -100,6 +101,15 @@ def import_directory(
             gist = body.strip().splitlines()[0][:200]
         else:
             gist = name
+        # content-level dedup (opt-in): the same fact can arrive under a fresh
+        # name slug (renamed file, or a different path). When asked, skip a file
+        # whose gist already exists live so a downstream mirror (e.g. native
+        # auto-ingest) doesn't double-store it under two names.
+        if dedup_gist and store.conn.execute(
+                "SELECT 1 FROM memory WHERE gist = ? AND superseded_time IS NULL",
+                (gist,)).fetchone():
+            skipped += 1
+            continue
         mtime = datetime.fromtimestamp(path.stat().st_mtime).replace(microsecond=0)
         mem_id = store.store(
             gist,

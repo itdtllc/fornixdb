@@ -450,6 +450,23 @@ class FornixMCP:
                     "per recall (details: `fornixdb tokens`).")
         except Exception:
             pass
+        # transparency: always say what (if anything) runs in the background, so
+        # the user is never unaware of automatic activity (owner directive).
+        try:
+            from .native_memory import auto_background_enabled, ingest_mode, native_dir
+            mode = ingest_mode(self.store)
+            if mode == "explicit":
+                out += ("\nMode: EXPLICIT — no background memory activity; "
+                        "FornixDB acts only on deliberate remember/recall.")
+            else:
+                nd = native_dir(self.store)
+                runs = "passive session capture" + (
+                    f" + auto-ingest of native memory ({nd})" if
+                    (auto_background_enabled(self.store) and nd) else "")
+                out += (f"\nMode: {mode.upper()} — background running: {runs}. "
+                        "`fornixdb ingest --mode explicit` to stop all background.")
+        except Exception:
+            pass
         return out
 
     def shrink_memory(self, target_mb: float) -> str:

@@ -308,6 +308,14 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("value", nargs="?")
     cp.add_argument("--shared", action="store_true", help="apply to the shared tier")
 
+    ng = sub.add_parser("ingest", help="follow a host AI's native memory dir "
+                                       "(additive); set ingest_mode / native_dir")
+    ng.add_argument("--mode", choices=["explicit", "passive", "both"],
+                    help="explicit = no background automation; passive/both = "
+                         "auto-ingest + session capture run on the hook")
+    ng.add_argument("--dir", help="native memory directory to follow")
+    ng.add_argument("--run", action="store_true", help="ingest now (any mode)")
+
     sub.add_parser("usage", help="disk usage of EVERY FornixDB store on this "
                                  "machine (per AI + total)")
     sub.add_parser("tokens", help="estimated prompt-token footprint of this "
@@ -677,6 +685,33 @@ def _dispatch(p, args, store, stores) -> int:
             set_config(target, args.key, args.value)
             hint = CAPTURE_MODE_HELP.get(args.value, "")
             print(f"{args.key} = {args.value}" + (f"  ({hint})" if hint else ""))
+
+    elif args.cmd == "ingest":
+        from .adapters.native_memory import (auto_background_enabled, ingest,
+                                             ingest_mode, native_dir,
+                                             set_ingest_mode, set_native_dir)
+        if args.mode:
+            print(set_ingest_mode(store, args.mode))
+        if args.dir:
+            print(set_native_dir(store, args.dir))
+        if args.run:
+            r = ingest(store)
+            print(f"ingested from {r['dir']} — imported {r['imported']}, "
+                  f"skipped {r['skipped']}, links {r['links']}" if r.get("ok")
+                  else r["reason"])
+        mode = ingest_mode(store)
+        d = native_dir(store) or "(unset)"
+        bg = "ON" if (auto_background_enabled(store) and native_dir(store)) else "off"
+        print(f"\ningest_mode = {mode}  |  native_dir = {d}  |  "
+              f"background native ingest: {bg}")
+        if mode == "explicit":
+            print("explicit: NO background automation (no auto-ingest, no passive "
+                  "session capture). FornixDB runs only on deliberate "
+                  "remember/recall/`ingest --run`.")
+        else:
+            print(f"{mode}: native ingest + passive session capture run on the "
+                  "session-end hook. `ingest --mode explicit` turns ALL background "
+                  "off; set a directory with `ingest --dir <path>`.")
 
     elif args.cmd == "embed":
         from .vectors import backfill, get_default_embedder
