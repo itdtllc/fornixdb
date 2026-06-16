@@ -428,11 +428,12 @@ class TestMachineCap(unittest.TestCase):
 
     def test_usage_reports_cap(self):
         from fornixdb.budget import machine_usage
+        from fornixdb.db import DEFAULT_MACHINE_CAP_MAX_MB
         # a FRESH shared tier (created in setUp) carries the install default:
-        # min(20% of free disk, 500 MB), flagged for review
+        # min(20% of free disk, the ceiling constant), flagged for review
         u = machine_usage()
         self.assertIsNotNone(u["machine_budget_mb"])
-        self.assertLessEqual(u["machine_budget_mb"], 500)
+        self.assertLessEqual(u["machine_budget_mb"], DEFAULT_MACHINE_CAP_MAX_MB)
         self.assertGreater(u["machine_budget_mb"], 0)
         self.assertTrue(u["machine_budget_defaulted"])
         # the owner touching the cap IS the review — the flag clears

@@ -740,7 +740,7 @@ def _dispatch(p, args, store, stores) -> int:
             print(f"{'TOTAL':<24} {u['total_mb']:>8.3f} MB{cap}")
             if u.get("machine_budget_defaulted"):
                 print("note: the machine cap is the INSTALL DEFAULT (20% of "
-                      "free disk, max 500 MB) — review it: "
+                      "free disk, max 2 GB) — review it: "
                       "`config machine_budget_mb <MB> --shared` (or 'off')")
 
     elif args.cmd == "tokens":

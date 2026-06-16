@@ -178,10 +178,12 @@ DEFAULT_REGISTRY = "~/.fornixdb/stores.json"
 SHARED_ENV = "FORNIXDB_SHARED_DB"          # canonical here; multistore re-exports
 DEFAULT_SHARED_PATH = "~/.fornixdb/shared.db"
 
-# Install-time machine cap default (owner decision 2026-06-12): a fresh
-# machine gets a cap of 20% of free disk, at most 500 MB — never silently:
-# it is marked as a default and announced until the owner reviews it.
-DEFAULT_MACHINE_CAP_MAX_MB = 500
+# Install-time machine cap default (owner decision 2026-06-12, ceiling raised
+# to 2 GB 2026-06-16): a fresh machine gets a cap of 20% of free disk, at most
+# 2 GB — never silently: it is marked as a default and announced until the
+# owner reviews it. The 2 GB is a CEILING; the 20%-of-free-disk rule still wins
+# on constrained devices, so small machines stay protected.
+DEFAULT_MACHINE_CAP_MAX_MB = 2000
 DEFAULT_MACHINE_CAP_DISK_FRACTION = 0.20
 
 
@@ -191,7 +193,7 @@ def shared_db_path() -> Path:
 
 def _maybe_default_machine_budget(conn: sqlite3.Connection, path: Path) -> None:
     """First creation of the SHARED tier = the machine-level install moment:
-    default the machine-wide cap to min(20% of free disk, 500 MB) and mark it
+    default the machine-wide cap to min(20% of free disk, 2 GB) and mark it
     `machine_budget_defaulted` so every surface tells the owner to review it
     (the marker clears when they set or clear the cap themselves)."""
     import shutil
@@ -213,7 +215,7 @@ def _maybe_default_machine_budget(conn: sqlite3.Connection, path: Path) -> None:
             "INSERT OR REPLACE INTO meta VALUES ('machine_budget_defaulted', '1')")
         conn.commit()
         print(f"FornixDB: machine-wide memory cap defaulted to {mb} MB "
-              f"(20% of free disk, max {DEFAULT_MACHINE_CAP_MAX_MB}). Review it: "
+              f"(20% of free disk, max {DEFAULT_MACHINE_CAP_MAX_MB} MB). Review it: "
               "`fornixdb config machine_budget_mb <MB> --shared` (or 'off').",
               file=sys.stderr)
     except Exception:

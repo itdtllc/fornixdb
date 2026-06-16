@@ -349,7 +349,7 @@ class FornixMCP:
         if defaulted and cap:
             out += (f"\nNOTE: a default machine-wide memory cap of "
                     f"{round(cap / 1e6)} MB was set at install (20% of free "
-                    "disk, max 500 MB). Tell the owner and ask how they want "
+                    "disk, max 2 GB). Tell the owner and ask how they want "
                     "it set; they review with `fornixdb config "
                     "machine_budget_mb <MB> --shared` (or 'off').")
         return out
