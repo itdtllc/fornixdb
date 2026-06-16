@@ -174,6 +174,7 @@ class MemoryStore:
         source_ref: str | None = None,
         recorded_time: str | None = None,
         writer: str | None = None,
+        embedder=None,  # None = auto (embed when this store uses vectors); False = skip
     ) -> int:
         if kind not in KINDS:
             raise ValueError(f"kind must be one of {KINDS}")
@@ -198,6 +199,19 @@ class MemoryStore:
         for topic in topics or []:
             self.tag(mem_id, topic)
         self.conn.commit()
+        # Embed on write so a vector-using store can recall this memory by
+        # meaning immediately. Auto-resolution only loads a model when the
+        # store already uses vectors (see _resolve_embedder), so keyword-only
+        # deployments never pay for it; pass embedder=False to skip explicitly.
+        # Embedding must never block a write, so a failure here is swallowed —
+        # `embed` backfill remains the safety net.
+        emb = self._resolve_embedder(embedder)
+        if emb is not None:
+            try:
+                from .vectors import embed_memory
+                embed_memory(self, emb, mem_id)
+            except Exception:
+                pass
         return mem_id
 
     def tag(self, memory_id: int, topic: str) -> None:

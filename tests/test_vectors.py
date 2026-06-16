@@ -172,5 +172,49 @@ class TestHybridRecall(unittest.TestCase):
         self.assertGreater(seen["keep"], 2)         # wider than `limit`
 
 
+class TestEmbedOnWrite(unittest.TestCase):
+    """store() embeds inline when the store uses vectors, so a memory written
+    via remember/store is recallable by meaning immediately — not only after a
+    manual `embed` backfill (the drift this closes)."""
+
+    def setUp(self):
+        self.s = mem_store()
+        self.emb = FakeEmbedder()
+
+    def _emb_count(self, mid):
+        return self.s.conn.execute(
+            "SELECT count(*) FROM embedding WHERE memory_id = ?", (mid,)).fetchone()[0]
+
+    def test_explicit_embedder_embeds_on_store(self):
+        mid = self.s.store("a car", "the automobile parked", embedder=self.emb)
+        self.assertGreater(self._emb_count(mid), 0)
+        # and it is recallable by meaning with zero keyword overlap
+        self.assertIn(mid, [m for m, _ in similar(self.s, self.emb, "vehicle")])
+
+    def test_auto_path_embeds_when_store_uses_vectors(self):
+        # a store "uses vectors" once a model is resolved; a subsequent plain
+        # store() (embedder=None) then auto-embeds via _resolve_embedder
+        self.s._auto_embedder = self.emb            # simulate a resolved model
+        mid = self.s.store("a vehicle", "shiny")    # no embedder argument
+        self.assertGreater(self._emb_count(mid), 0)
+
+    def test_keyword_only_store_does_not_embed(self):
+        # fresh store, no vectors yet, no model resolvable: stays keyword-only
+        mid = self.s.store("plain", "no vectors here")
+        self.assertEqual(self._emb_count(mid), 0)
+        self.assertIsNone(self.s._auto_embedder)
+
+    def test_embedder_false_skips(self):
+        self.s._auto_embedder = self.emb
+        mid = self.s.store("x", "y", embedder=False)
+        self.assertEqual(self._emb_count(mid), 0)
+
+    def test_embed_failure_never_blocks_write(self):
+        mid = self.s.store("still", "saved", embedder=FailingEmbedder())
+        self.assertTrue(self.s.conn.execute(
+            "SELECT 1 FROM memory WHERE id = ?", (mid,)).fetchone())  # write held
+        self.assertEqual(self._emb_count(mid), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
