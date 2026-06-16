@@ -89,6 +89,32 @@ TOOLS = [
          "kind": {"type": "string", "enum": ["semantic", "feedback", "reference",
                                              "episodic"], "default": "semantic"}},
          "required": ["title", "content"]}},
+    {"name": "remember_many",
+     "description": "Store several memories in one call (batch). Use when you "
+                    "accumulated multiple things to record, instead of many "
+                    "remember calls. Each item is {title, content, kind?}.",
+     "inputSchema": {"type": "object", "properties": {
+         "items": {"type": "array", "items": {"type": "object", "properties": {
+             "title": {"type": "string"},
+             "content": {"type": "string"},
+             "kind": {"type": "string", "enum": ["semantic", "feedback",
+                                                 "reference", "episodic"]}},
+             "required": ["content"]}}},
+         "required": ["items"]}},
+    {"name": "jot",
+     "description": "Stage a raw thought for later (cheap mid-work capture, no "
+                    "title needed). Not stored as a memory yet — review and "
+                    "promote jots with review_candidates at a checkpoint.",
+     "inputSchema": {"type": "object", "properties": {
+         "note": {"type": "string"}},
+         "required": ["note"]}},
+    {"name": "review_candidates",
+     "description": "List jotted candidates to promote into memories (via "
+                    "remember / remember_many) or drop. discard=[ids] removes "
+                    "some; clear=true drops all pending (after promoting keepers).",
+     "inputSchema": {"type": "object", "properties": {
+         "discard": {"type": "array", "items": {"type": "integer"}},
+         "clear": {"type": "boolean", "default": False}}}},
     {"name": "forget_memory",
      "description": "Retire a memory by title or id — gone from recall but "
                     "recoverable (never deleted).",
@@ -134,6 +160,14 @@ TOOLS = [
          "old": {"type": "string", "description": "id or name of the stale memory"},
          "new": {"type": "string", "description": "id or name that replaces it"}},
          "required": ["old", "new"]}},
+    {"name": "link",
+     "description": "Connect two related memories with a non-destructive 'relates' "
+                    "edge. Use after a near-duplicate note to tie a new memory to a "
+                    "related existing one. (Writing [[name]] in a memory auto-links.)",
+     "inputSchema": {"type": "object", "properties": {
+         "a": {"type": "string", "description": "id or name"},
+         "b": {"type": "string", "description": "id or name"}},
+         "required": ["a", "b"]}},
     {"name": "import_markdown",
      "description": "Import Markdown: a doc chunked by heading into memories, or "
                     "frontmatter=true for a directory of memory files.",
@@ -152,6 +186,55 @@ TOOLS = [
          "include_superseded": {"type": "boolean", "default": False}},
          "required": ["out_dir"]}},
 ]
+
+# Which tools may be turned off to shrink the per-turn prompt. CORE is the
+# irreducible remember + recall-by-subject + recall-by-time + session-brief
+# loop — FornixDB's reason to exist — and is always advertised. Everything else
+# is optional and ON BY DEFAULT (a capable consumer like Claude Code, with a
+# huge context window, is never restricted out of the box); a token-constrained
+# consumer (a small on-device model) can disable optional tools via
+# `fornixdb tools` to cut prefill. There is NO universal token ceiling — that is
+# a per-deployment concern (e.g. Apple on-device Foundation Models cap ~4096);
+# this knob just lets each deployment match its own limit, cost shown.
+CORE_TOOLS = frozenset({"recall_memory", "recall_timeline", "remember",
+                        "startup_context"})
+_TOOLS_DISABLED_KEY = "mcp_tools_disabled"
+
+
+def tool_tier(name: str) -> str:
+    return "core" if name in CORE_TOOLS else "optional"
+
+
+def tools_disabled(store) -> set:
+    """Names of optional tools the owner turned off for this store (default
+    none = all on). Core names are never honored as disabled."""
+    from ..multistore import get_config
+    raw = get_config(store, _TOOLS_DISABLED_KEY, "") or ""
+    return {n for n in (s.strip() for s in raw.split(",")) if n} - CORE_TOOLS
+
+
+def active_tools(store) -> list:
+    """TOOLS minus the disabled optional ones — what `tools/list` advertises."""
+    off = tools_disabled(store)
+    return [t for t in TOOLS if t["name"] not in off]
+
+
+def set_tool_enabled(store, name: str, enabled: bool) -> str:
+    """Enable/disable one optional tool. Refuses unknown names and core tools."""
+    from ..multistore import get_config, set_config
+    if name not in {t["name"] for t in TOOLS}:
+        return f"unknown tool: {name}"
+    if name in CORE_TOOLS:
+        return f"{name} is a core tool and is always enabled"
+    off = {n for n in (s.strip() for s in
+                       (get_config(store, _TOOLS_DISABLED_KEY, "") or "").split(","))
+           if n}
+    if enabled:
+        off.discard(name)
+    else:
+        off.add(name)
+    set_config(store, _TOOLS_DISABLED_KEY, ",".join(sorted(off)))
+    return f"{name} {'enabled' if enabled else 'disabled'}"
 
 
 def _line(m: dict) -> str:
@@ -246,21 +329,76 @@ class FornixMCP:
             "AND superseded_time IS NULL ORDER BY salience DESC LIMIT 50")
         return "\n".join(_line(dict(r)) for r in rows) or "(no standing memories)"
 
-    def remember(self, title: str, content: str, kind: str = "semantic") -> str:
+    def _remember_one(self, title: str, content: str, kind: str = "semantic") -> list[str]:
+        """Store one memory and return its report line(s). Shared by `remember`
+        (single) and `remember_many` (batch) so both honor the same update /
+        auto-link / near-duplicate behavior."""
         old = self.store.show(title, reinforce=False) if title else None
         new_id = self.store.store(content[:120], content, kind=kind,
                                   name=None if old else title or None,
                                   source="mcp")
         if old:
             self.store.supersede(old["id"], new_id)
-            return f"stored #{new_id} (supersedes #{old['id']}, history kept)"
+            return [f"stored #{new_id} (supersedes #{old['id']}, history kept)"]
+        out = [f"stored #{new_id}"]
+        linked = self.store.conn.execute(
+            "SELECT related_id FROM memory_link WHERE memory_id = ? "
+            "AND relation = 'relates'", (new_id,)).fetchall()
+        if linked:
+            out.append("linked " + ", ".join(f"#{r['related_id']}" for r in linked)
+                       + " (from [[wikilinks]])")
         from ..consolidate import supersede_suggestion
         sug = supersede_suggestion(self.store, new_id, content, kind)
         if sug:
-            return (f"stored #{new_id} — note: this closely matches #{sug['id']} "
-                    f"\"{sug['gist'][:60]}\" (cos {sug['cosine']}); if it UPDATES "
-                    f"that memory, remember it under that title to supersede it.")
-        return f"stored #{new_id}"
+            out.append(
+                f"near-duplicate of #{sug['id']} \"{sug['gist'][:50]}\" "
+                f"(cos {sug['cosine']}) — if it UPDATES that memory, re-remember "
+                f"under its title to supersede; if RELATED, link {new_id} {sug['id']}.")
+        return out
+
+    def remember(self, title: str, content: str, kind: str = "semantic") -> str:
+        return "\n".join(self._remember_one(title, content, kind))
+
+    def remember_many(self, items: list) -> str:
+        """Store several memories in one call — the friction-reducer for an
+        agent that accumulated multiple things to record (§15.2 #1). Each item
+        is {title, content, kind?}; same per-item behavior as `remember`
+        (update-by-title, auto-link, near-duplicate nudge)."""
+        if not items:
+            return "nothing to store (items was empty)"
+        lines = []
+        for n, it in enumerate(items, 1):
+            if not isinstance(it, dict) or not it.get("content"):
+                lines.append(f"{n}. skipped (needs at least content)")
+                continue
+            rep = self._remember_one(it.get("title", ""), it["content"],
+                                     it.get("kind", "semantic"))
+            lines.append(f"{n}. " + "; ".join(rep))
+        return "\n".join(lines)
+
+    def jot(self, note: str) -> str:
+        if not note or not note.strip():
+            return "nothing to jot (note was empty)"
+        cid = self.store.jot(note.strip())
+        pending = len(self.store.candidates())
+        return (f"jotted [{cid}] — {pending} pending. "
+                "review_candidates at a checkpoint to promote or drop.")
+
+    def review_candidates(self, discard: list | None = None,
+                          clear: bool = False) -> str:
+        msgs = []
+        if clear:
+            msgs.append(f"discarded all {self.store.discard_candidates()} pending")
+        elif discard:
+            msgs.append(f"discarded {self.store.discard_candidates(ids=discard)}")
+        rows = self.store.candidates()
+        if not rows:
+            return " — ".join(msgs) if msgs else "no pending candidates"
+        out = msgs + [f"{len(rows)} pending — promote keepers via remember / "
+                      "remember_many, then review_candidates clear=true to drop "
+                      "the rest:"]
+        out += [f"  [{r['id']}] {r['note'][:100]}" for r in rows]
+        return "\n".join(out)
 
     def forget_memory(self, ref: str) -> str:
         mem = self.store.show(ref, reinforce=False)
@@ -389,6 +527,16 @@ class FornixMCP:
         self.store.supersede(o["id"], n["id"])  # FrozenStoreError if read-only
         return f"#{o['id']} superseded by #{n['id']} — old kept as history."
 
+    def link(self, a: str, b: str) -> str:
+        ma = self.store.show(a, reinforce=False)
+        mb = self.store.show(b, reinforce=False)
+        if ma is None or mb is None:
+            return f"no memory: {a if ma is None else b}"
+        if ma["id"] == mb["id"]:
+            return "a memory cannot link to itself"
+        self.store.link(ma["id"], mb["id"], "relates")  # FrozenStoreError if read-only
+        return f"linked #{ma['id']} -> #{mb['id']} (relates)."
+
     def import_markdown(self, path: str, frontmatter: bool = False,
                         project: str | None = None) -> str:
         if frontmatter:
@@ -428,7 +576,10 @@ class FornixMCP:
         if method == "ping":
             return reply({})
         if method == "tools/list":
-            return reply({"tools": TOOLS})
+            # advertise only the active set (core + enabled optional); a
+            # disabled tool stays callable if a client already knows it, but it
+            # no longer rides in the prompt — that is the prefill saving.
+            return reply({"tools": active_tools(self.store)})
         if method == "tools/call":
             params = msg.get("params", {})
             name = params.get("name", "")
@@ -461,7 +612,12 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     server = FornixMCP(db_path=args.db, shared=not args.no_shared)
-    print(f"fornixdb-mcp ready (store: {args.db or 'default'})", file=sys.stderr)
+    n_active, n_all = len(active_tools(server.store)), len(TOOLS)
+    note = (f"fornixdb-mcp ready (store: {args.db or 'default'}) — "
+            f"{n_active}/{n_all} tools advertised")
+    if n_active == n_all:
+        note += "; `fornixdb tools` to trim if a device is token-limited"
+    print(note, file=sys.stderr)
     for raw in sys.stdin:
         raw = raw.strip()
         if not raw:

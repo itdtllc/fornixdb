@@ -151,6 +151,10 @@ class TestBudget(unittest.TestCase):
                               kind="feedback")          # feedback is pruned last
         for i in range(250):
             self.s.store(f"log line {i}", "x" * 3000, kind="episodic")
+        # settle the transient WAL (a write-ahead log that collapses into the db
+        # on checkpoint and auto-flushes in normal operation) so we assert on the
+        # PERSISTENT footprint the cap governs, not a mid-stream WAL+shm snapshot
+        self.s.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self.assertFalse(budget_status(self.s)["over_budget"])   # cap held throughout
         self.assertLessEqual(footprint_bytes(self.s)["total"], 0.4 * 1e6)
         # the high-value memory survived the forgetting; filler did not all fit

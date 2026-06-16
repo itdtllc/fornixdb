@@ -68,12 +68,16 @@ Either way, the integration must obey the binding rules at the bottom.
 
 ## The standard tool surface
 
-Nine tools cover what a person does with memory. Names are suggestions; the
+These tools cover what a person does with memory. Names are suggestions; the
 contracts are the point.
 
 | Tool | Contract | Maps to |
 |---|---|---|
-| `remember(title, content, kind)` | Save one idea under a short title. Same title = **update**: the old version is superseded (kept as history), never overwritten. | `store` + `supersede` |
+| `remember(title, content, kind)` | Save one idea under a short title. Same title = **update**: the old version is superseded (kept as history), never overwritten. Any `[[name]]` written in the content auto-links to that memory (`relates`); the return reports those links and, if the new memory closely matches an existing one, nudges you to supersede it (if it's an update) or `link` it (if related). | `store` + `supersede` |
+| `remember_many(items)` | Store several memories in **one call** — the friction-reducer when you accumulated multiple things to record. Each item is `{title, content, kind?}` with the same per-item behavior as `remember`. | `store` (×N) |
+| `jot(note)` | **Cheap mid-work capture.** Stage a raw thought with no title/kind needed — *not* a memory yet, never recalled. Lets you keep working without an interruption to structure a memory. | `jot` |
+| `review_candidates(discard?, clear?)` | At a checkpoint, list your jotted candidates; promote the keepers into real memories (`remember`/`remember_many`), `discard=[ids]` the rest, or `clear=true` to drop all pending after promoting. | `candidates` |
+| `link(a, b)` | Connect two related memories with a non-destructive `relates` edge — the actionable half of the near-duplicate nudge. (Writing `[[name]]` in a memory already auto-links, so this is for tying to a memory surfaced *after* the fact.) | `link` |
 | `recall_memory(query, when?)` | **Subject axis.** A few words about the *content*; returns the best match (gist first, detail on the winner). Optional `when` window combines subject with time ("that bug last month"). Rows may carry a `[stale Nd]` flag — surface it; it means verify before relying. The same fact duplicated across the agent store and the shared tier answers once (the kept row names its twin). Results honor a `max_chars` context budget (default 4000 on the MCP tools): whole hits best-first, then a `+N more` note. | `recall` / `multi_recall` |
 | `recall_timeline(when)` | **Time axis.** A natural time phrase — "last night", "yesterday", "june 5" — returns every memory in that window. | `timeline` / `multi_timeline` + `timeparse` |
 | `list_memories()` | Titles + one-line hooks of everything saved (exclude episodic session rows — see below). | live-rows query |
@@ -192,6 +196,33 @@ for small models, not defense in depth. The rule that follows:
 Two practical shim notes from the same test: dedupe repeated identical tool
 calls (small models loop on recall), and after the tool budget is spent,
 force one final no-tools turn so the model answers instead of looping.
+
+### Curating the tool surface (prefill cost)
+
+Every advertised tool's schema rides in the prompt the model re-prefills each
+turn — so on a token-tight consumer, *fewer tools = less prefill*. **All tools
+are enabled by default** (a large-context consumer like Claude Code is never
+restricted), but each store can trim its advertised set:
+
+```
+fornixdb tools                     # list every tool: tier, on/off, ~token cost, description
+fornixdb tools disable export_markdown
+fornixdb tools --profile minimal   # core tools only   (full = all back on)
+```
+
+The **core** tools — `recall_memory`, `recall_timeline`, `remember`,
+`startup_context` — are the irreducible recall+capture loop and cannot be
+disabled; everything else is **optional**. Disabling only removes a tool from
+`tools/list` (the prefill saving); a call a client already knows still works.
+Changes take effect on the next MCP session/restart.
+
+**There is no universal token ceiling.** Claude Code (~200K context) ignores
+this entirely; local models care about prefill *speed*, a soft tradeoff. The
+one hard ~4096 cap belongs to a *different* deployment — Apple on-device
+Foundation Models — and even that is just another per-deployment limit this
+knob lets you meet. On such a device, trimming optional tools may be
+**required**; `fornixdb tokens` shows the live footprint and `fornixdb tools`
+the per-tool cost.
 
 ## The two capture layers (passive vs interactive)
 

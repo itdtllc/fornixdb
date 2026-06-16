@@ -21,7 +21,7 @@ class TestTokens(unittest.TestCase):
         r = report(self.s)
         fixed = r["fixed_per_session"]
         self.assertGreater(fixed["mcp_tool_schemas"]["tokens"], 100)
-        self.assertEqual(fixed["mcp_tool_schemas"]["tools"], 14)
+        self.assertEqual(fixed["mcp_tool_schemas"]["tools"], 18)
         self.assertEqual(fixed["total_tokens"],
                          fixed["mcp_tool_schemas"]["tokens"]
                          + fixed["mcp_instructions"]["tokens"]
@@ -37,21 +37,25 @@ class TestTokens(unittest.TestCase):
     def test_fixed_footprint_within_budget(self):
         # Regression fence on the STATIC fixed per-session cost (FornixDB #185):
         # the tool schemas + instructions ride in every prompt and a local
-        # model re-prefills them each turn. These budgets are deliberate
-        # ceilings — raising one is a conscious act (a new tool must earn its
-        # tokens), not something a verbose description should do silently.
-        # Trimmed 2026-06-13: schemas 982 -> 807, instructions 231.
-        # Raised 2026-06-14: 850 -> 1050 — deliberate, for the Sleep/Dream MCP
-        # tools `dream` (11th) and `supersede` (12th, so a shell-less consumer
-        # can apply the pass's healing); 12 tools, still far under the 4096
-        # ceiling and the ~16-lean-tools guideline.
-        # Raised 2026-06-16: 1050 -> 1280 — deliberate, for the Markdown-bridge
-        # tools `import_markdown` (13th) and `export_markdown` (14th); 14 tools,
-        # still under the 4096 ceiling and the ~16-lean-tools guideline.
+        # model re-prefills them each turn. This budget is NOT a hard device
+        # limit — it is just a speed bump so tool schemas do not grow SILENTLY;
+        # raising it is a conscious act (a new tool must earn its tokens). There
+        # is no universal token ceiling: Claude Code has a ~200K context and is
+        # unaffected; local models (Elira 72B, a 14B) care about prefill *cost*,
+        # a soft gradient, not a wall; the only true ~4096 cap belongs to a
+        # DIFFERENT deployment (Apple on-device Foundation Models in the iOS AI
+        # Assistant), and per-deployment caps are handled by `fornixdb tools`
+        # curation, never hardcoded here. `tests/test_tools_config.py` covers it.
+        # History: 982->807 (trim) -> 1050 (dream+supersede) -> 1280 (markdown
+        # bridge) -> 1340 (link) -> 1480 (remember_many) -> 1650 (jot +
+        # review_candidates, §15.2 #1) — each a deliberate raise for named
+        # tools. This measures ALL defined tools; the live footprint is the
+        # smaller ADVERTISED set after `fornixdb tools` curation (jot/review,
+        # like every optional tool, ship ON but can be disabled per deployment).
         import json
 
         from fornixdb.adapters.mcp_server import INSTRUCTIONS, TOOLS
-        SCHEMA_TOKEN_BUDGET = 1280
+        SCHEMA_TOKEN_BUDGET = 1650
         INSTRUCTIONS_TOKEN_BUDGET = 260
 
         schema_tokens = estimate_tokens(json.dumps(TOOLS))
