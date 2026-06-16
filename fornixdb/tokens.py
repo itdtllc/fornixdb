@@ -27,13 +27,17 @@ def estimate_tokens(text: str) -> int:
 
 def report(store) -> dict:
     """Estimated prompt-token footprint of this store's integration surfaces."""
-    from .adapters.mcp_server import INSTRUCTIONS, TOOLS, FornixMCP
+    from .adapters.mcp_server import (INSTRUCTIONS, TOOLS, FornixMCP,
+                                      active_tools)
 
-    schemas = json.dumps(TOOLS)
+    # the real footprint is the ADVERTISED (configured) set, not every defined
+    # tool — `fornixdb tools` curates this
+    tools = active_tools(store)
+    schemas = json.dumps(tools)
     out = {
         "rule_of_thumb": f"1 token ≈ {EST_CHARS_PER_TOKEN} chars (±20%)",
         "fixed_per_session": {
-            "mcp_tool_schemas": {"tools": len(TOOLS),
+            "mcp_tool_schemas": {"tools": len(tools), "of_defined": len(TOOLS),
                                  "tokens": estimate_tokens(schemas)},
             "mcp_instructions": {"tokens": estimate_tokens(INSTRUCTIONS)},
         },
@@ -87,8 +91,10 @@ def format_report(r: dict) -> str:
         f"Estimated token footprint ({r['rule_of_thumb']})",
         "",
         "Fixed, once per session (in every prompt for most clients):",
-        f"  MCP tool schemas ({f['mcp_tool_schemas']['tools']} tools)"
-        f"   ~{f['mcp_tool_schemas']['tokens']:>5} tokens",
+        f"  MCP tool schemas ({f['mcp_tool_schemas']['tools']}"
+        f"/{f['mcp_tool_schemas'].get('of_defined', f['mcp_tool_schemas']['tools'])}"
+        f" tools)  ~{f['mcp_tool_schemas']['tokens']:>5} tokens"
+        "   (curate with `fornixdb tools`)",
         f"  MCP instructions          ~{f['mcp_instructions']['tokens']:>5}",
         f"  startup_context           ~{f['startup_context']['tokens']:>5}",
         f"  TOTAL fixed               ~{f['total_tokens']:>5}",

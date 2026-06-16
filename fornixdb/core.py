@@ -212,7 +212,34 @@ class MemoryStore:
                 embed_memory(self, emb, mem_id)
             except Exception:
                 pass
+        # Auto-link: [[name]] wikilinks in the content become real 'relates'
+        # edges so the graph the author already wrote in prose actually exists
+        # (the markdown directory-importer always did this; a plain store()
+        # used to drop them). Unresolved targets are left alone on purpose — a
+        # [[name]] to a not-yet-written memory marks intent, not an error.
+        self.link_wikilinks(mem_id, " ".join(t for t in (gist, detail) if t))
         return mem_id
+
+    _WIKILINK = re.compile(r"\[\[([^\[\]\n]+?)\]\]")
+
+    def link_wikilinks(self, memory_id: int, text: str) -> list[int]:
+        """Resolve [[name]] mentions in `text` to live memories by name and add
+        a 'relates' edge from `memory_id` to each. Skips self, unknown names,
+        and duplicates (link() is INSERT OR IGNORE). Returns the ids linked.
+        Reusable for back-filling stores written before auto-link existed."""
+        linked: list[int] = []
+        for name in dict.fromkeys(m.strip() for m in self._WIKILINK.findall(text)):
+            if not name:
+                continue
+            row = self.conn.execute(
+                "SELECT id FROM memory WHERE name = ? "
+                "ORDER BY superseded_time IS NULL DESC, recorded_time DESC LIMIT 1",
+                (name,)).fetchone()
+            if row is None or row["id"] == memory_id:
+                continue
+            self.link(memory_id, row["id"], "relates")
+            linked.append(row["id"])
+        return linked
 
     def tag(self, memory_id: int, topic: str) -> None:
         self._check_writable()
@@ -234,6 +261,48 @@ class MemoryStore:
             (memory_id, related_id, relation),
         )
         self.conn.commit()
+
+    # --------------------------------------------- candidate staging (§15.2 #1)
+
+    def jot(self, note: str, session_id: str | None = None) -> int:
+        """Stage a raw thought for later review — cheap mid-work capture with no
+        title/kind/embedding cost. Not a memory; never recalled until promoted."""
+        self._check_writable()
+        cur = self.conn.execute(
+            "INSERT INTO candidate(note, session_id, created) VALUES (?,?,?)",
+            (note, session_id, now_iso()))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def candidates(self, session_id: str | None = None) -> list[dict]:
+        """Pending (un-promoted) candidates, oldest first. `session_id` narrows
+        to one session's jots; None returns all pending."""
+        sql = ("SELECT id, note, session_id, created FROM candidate "
+               "WHERE promoted IS NULL")
+        args: tuple = ()
+        if session_id is not None:
+            sql += " AND session_id = ?"
+            args = (session_id,)
+        sql += " ORDER BY created"
+        return [dict(r) for r in self.conn.execute(sql, args)]
+
+    def discard_candidates(self, ids=None, session_id: str | None = None) -> int:
+        """Drop pending candidates: a list of ids, or all pending (optionally
+        scoped to a session). Returns how many were removed."""
+        self._check_writable()
+        if ids:
+            qs = ",".join("?" * len(ids))
+            cur = self.conn.execute(
+                f"DELETE FROM candidate WHERE promoted IS NULL AND id IN ({qs})",
+                tuple(ids))
+        elif session_id is not None:
+            cur = self.conn.execute(
+                "DELETE FROM candidate WHERE promoted IS NULL AND session_id = ?",
+                (session_id,))
+        else:
+            cur = self.conn.execute("DELETE FROM candidate WHERE promoted IS NULL")
+        self.conn.commit()
+        return cur.rowcount
 
     # ------------------------------------------------------------ supersede
 

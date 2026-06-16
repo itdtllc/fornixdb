@@ -139,6 +139,18 @@ CREATE TABLE IF NOT EXISTS embedding (
     vector    BLOB NOT NULL,
     PRIMARY KEY (memory_id, chunk)
 );
+
+-- Lower-friction capture (§15.2 #1): a cheap staging scratchpad. `jot` drops a
+-- raw thought here mid-work (no title/kind/embedding cost); at a checkpoint the
+-- AI reviews these and promotes the keepers into real memories, discarding the
+-- rest. NOT memories — never recalled — until promoted; this table stays small.
+CREATE TABLE IF NOT EXISTS candidate (
+    id         INTEGER PRIMARY KEY,
+    note       TEXT NOT NULL,
+    session_id TEXT,
+    created    TEXT NOT NULL,
+    promoted   TEXT             -- set when turned into a memory (kept as a trace)
+);
 """
 
 

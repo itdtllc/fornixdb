@@ -192,6 +192,14 @@ def main(argv: list[str] | None = None) -> int:
     lp.add_argument("related_id", type=int)
     lp.add_argument("--relation", choices=RELATIONS, default="relates")
 
+    jp = sub.add_parser("jot", help="stage a raw thought for later review (cheap "
+                                    "mid-work capture, not yet a memory)")
+    jp.add_argument("note")
+    kp = sub.add_parser("candidates", help="list/discard jotted candidates "
+                                           "(promote keepers with `store`)")
+    kp.add_argument("--discard", type=int, nargs="+", help="candidate ids to drop")
+    kp.add_argument("--clear", action="store_true", help="drop all pending")
+
     bp = sub.add_parser("brief", help="session-start context brief (recent + salient)")
     bp.add_argument("--project")
     bp.add_argument("--days", type=int, default=7)
@@ -304,6 +312,13 @@ def main(argv: list[str] | None = None) -> int:
                                  "machine (per AI + total)")
     sub.add_parser("tokens", help="estimated prompt-token footprint of this "
                                   "store's AI integration (cost vs savings)")
+    tlp = sub.add_parser("tools", help="list/enable/disable the MCP tools this "
+                                       "store advertises (all on by default)")
+    tlp.add_argument("action", nargs="?", default="list",
+                     choices=["list", "enable", "disable"])
+    tlp.add_argument("name", nargs="?", help="tool name for enable/disable")
+    tlp.add_argument("--profile", choices=["full", "minimal"],
+                     help="full = all tools on; minimal = core only")
     sub.add_parser("topics", help="list topics with counts")
     sub.add_parser("stats", help="store statistics")
 
@@ -368,13 +383,20 @@ def _dispatch(p, args, store, stores) -> int:
             return 1
         where = "shared:" if (args.shared and len(stores) > 1) else ""
         print(f"stored #{where}{mem_id}")
+        linked = target.conn.execute(
+            "SELECT related_id FROM memory_link WHERE memory_id = ? "
+            "AND relation = 'relates'", (mem_id,)).fetchall()
+        if linked:
+            print("  linked " + ", ".join(f"#{r['related_id']}" for r in linked)
+                  + " (from [[wikilinks]])")
         from .consolidate import supersede_suggestion
         sug = supersede_suggestion(target, mem_id, args.gist + " " + (args.detail or ""),
                                    args.kind)
         if sug:
             print(f"  note: closely matches #{sug['id']} \"{sug['gist'][:60]}\" "
                   f"(cos {sug['cosine']}) — if this updates it, "
-                  f"`supersede {sug['id']} {mem_id}`", file=sys.stderr)
+                  f"`supersede {sug['id']} {mem_id}`; if related, "
+                  f"`link {mem_id} {sug['id']}`", file=sys.stderr)
 
     elif args.cmd == "recall":
         since = until = None
@@ -724,6 +746,29 @@ def _dispatch(p, args, store, stores) -> int:
             return 1
         print(f"#{args.memory_id} {args.relation} #{args.related_id}")
 
+    elif args.cmd == "jot":
+        try:
+            cid = store.jot(args.note)
+        except FrozenStoreError as e:
+            print(f"refused: {e}", file=sys.stderr)
+            return 1
+        print(f"jotted [{cid}] — {len(store.candidates())} pending "
+              "(`fornixdb candidates` to review)")
+
+    elif args.cmd == "candidates":
+        if args.clear:
+            print(f"discarded all {store.discard_candidates()} pending")
+        elif args.discard:
+            print(f"discarded {store.discard_candidates(ids=args.discard)}")
+        rows = store.candidates()
+        if not rows:
+            print("no pending candidates")
+        else:
+            print(f"{len(rows)} pending (promote a keeper with `store`, then "
+                  "`candidates --discard <id>` or `--clear`):")
+            for r in rows:
+                print(f"  [{r['id']}] {r['note'][:100]}")
+
     elif args.cmd == "usage":
         from .budget import machine_usage
         u = machine_usage()
@@ -748,6 +793,49 @@ def _dispatch(p, args, store, stores) -> int:
         r = report(store)
         print(json.dumps(r, indent=2, default=str) if args.json
               else format_report(r))
+
+    elif args.cmd == "tools":
+        import json as _json
+
+        from .adapters.mcp_server import (TOOLS, active_tools, set_tool_enabled,
+                                          tool_tier, tools_disabled)
+        from .tokens import estimate_tokens
+        if args.profile == "full":
+            for t in TOOLS:
+                set_tool_enabled(store, t["name"], True)
+            print("profile 'full' — all tools enabled")
+        elif args.profile == "minimal":
+            for t in TOOLS:
+                set_tool_enabled(store, t["name"], False)  # core ignores disable
+            print("profile 'minimal' — core tools only")
+        elif args.action in ("enable", "disable"):
+            if not args.name:
+                p.error(f"`tools {args.action}` needs a tool name")
+            print(set_tool_enabled(store, args.name, args.action == "enable"))
+
+        off = tools_disabled(store)
+        active = active_tools(store)
+        active_tok = estimate_tokens(_json.dumps(active))
+        all_tok = estimate_tokens(_json.dumps(TOOLS))
+        print(f"\nMCP tools for this store — {len(active)}/{len(TOOLS)} advertised "
+              f"(~{active_tok} of ~{all_tok} tok):\n")
+        for t in TOOLS:
+            name = t["name"]
+            on = name not in off
+            tier = tool_tier(name)
+            cost = estimate_tokens(_json.dumps(t))
+            mark = "on " if on else "OFF"
+            lock = "core" if tier == "core" else "opt "
+            desc = (t["description"][:54] + "…") if len(t["description"]) > 55 \
+                else t["description"]
+            print(f"  [{mark}] {lock} ~{cost:>3}t  {name:<16} {desc}")
+        print("\nAll tools are ON by default. Disable optional ('opt') tools to "
+              "shrink the per-turn prompt:\n  fornixdb tools disable <name>   "
+              "(or: fornixdb tools --profile minimal)\nCore tools cannot be "
+              "disabled. There is no universal token limit — but some devices "
+              "(small on-device models) have little prompt space, so trimming "
+              "may be REQUIRED there. Changes take effect on the next MCP "
+              "session/restart.")
 
     elif args.cmd == "topics":
         rows = store.conn.execute(
