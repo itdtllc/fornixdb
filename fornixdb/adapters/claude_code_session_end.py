@@ -108,6 +108,16 @@ def capture_session(store: MemoryStore, transcript_path: str | Path,
 
 
 def main(argv=None) -> int:
+    # Claude Code writes the hook JSON (and the transcript) as UTF-8; Python's
+    # piped stdio defaults to the OS code page on Windows (cp1252), which would
+    # mangle a non-ASCII transcript_path or prompt; and the status lines this
+    # prints to stderr carry `—`, which mojibakes to `�` on cp1252. Force UTF-8
+    # on all three streams.
+    for _stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--db", help="store path (default: $FORNIXDB_DB or default)")
     ap.add_argument("--transcript", help="transcript path (otherwise read from "

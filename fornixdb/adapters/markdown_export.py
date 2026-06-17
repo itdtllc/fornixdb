@@ -31,7 +31,12 @@ from ..core import MemoryStore
 # kind -> the metadata.type the frontmatter importer reads back to that kind
 KIND_TO_TYPE = {"feedback": "feedback", "reference": "reference",
                 "semantic": "semantic", "episodic": "episodic"}
-_UNSAFE = re.compile(r"[/\\#]+")
+# Strip every character illegal in a Windows filename (`< > : " / \ | ? *` and
+# control chars) plus `#` — not just the POSIX path separators. A name with a
+# colon (e.g. "site phase 3: RE…") otherwise silently lands in an NTFS
+# Alternate Data Stream on Windows: the visible file is 0 bytes and the content
+# is lost to normal tooling.
+_UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f#]+')
 
 
 def _safe_filename(name: str) -> str:
