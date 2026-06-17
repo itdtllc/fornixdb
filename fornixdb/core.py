@@ -53,6 +53,12 @@ VECTOR_MIN_COS = 0.30     # noise floor: weaker similarity is no evidence at all
 # cos<0.12 AND relevance<5.2). The ambiguous middle is left to the consumer on
 # purpose — no single threshold separates weak-but-relevant from weak-noise.
 RECALL_ANSWER_COS = 0.30  # a real vector match (== the include floor)
+# Unsolicited PUSH needs a higher bar than an explicit PULL. When the user asks
+# (recall_memory), surfacing a weak 0.30 match is acceptable — they invited it.
+# When memory injects itself every turn (proactive recall), that same 0.30 floor
+# lets tangential matches drift in and erodes trust, so proactive recall gates at
+# this higher cosine by default. Per-store override: meta proactive_recall_floor.
+PROACTIVE_RECALL_COS = 0.45
 
 
 def recall_has_answer(rows: list[dict]) -> bool:

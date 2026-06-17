@@ -61,6 +61,28 @@ class TestProactiveRecall(unittest.TestCase):
             {"id": 9, "kind": "semantic", "gist": "anchor", "vec_cos": None}]
         self.assertEqual([r["id"] for r in relevant_memories(self.s, "x")], [9])
 
+    def test_keyword_anchor_dropped_when_vectors_on(self):
+        # but with vectors ACTIVE, a row that returned no cosine couldn't clear
+        # the vector noise floor — it's a weak keyword coincidence, not a real
+        # match. Pushing it unsolicited is the wrong-project leak; drop it.
+        self.s._resolve_embedder = lambda *a, **k: object()  # vectors "on"
+        self.s.recall = lambda *a, **k: [
+            {"id": 9, "kind": "semantic", "gist": "keyword coincidence",
+             "vec_cos": None}]
+        self.assertEqual(relevant_memories(self.s, "x"), [])
+
+    def test_default_floor_is_stricter_than_explicit_recall(self):
+        # unsolicited push gates higher than an explicit pull: the default floor
+        # (PROACTIVE_RECALL_COS) drops a moderate 0.40 match that the looser
+        # explicit-recall include floor (RECALL_ANSWER_COS = 0.30) would admit.
+        from fornixdb.core import PROACTIVE_RECALL_COS, RECALL_ANSWER_COS
+        self.assertGreater(PROACTIVE_RECALL_COS, RECALL_ANSWER_COS)
+        self.s._resolve_embedder = lambda *a, **k: object()  # vectors "on"
+        self.s.recall = lambda *a, **k: [
+            {"id": 1, "kind": "semantic", "gist": "moderate", "vec_cos": 0.40},
+            {"id": 2, "kind": "semantic", "gist": "strong", "vec_cos": 0.50}]
+        self.assertEqual([r["id"] for r in relevant_memories(self.s, "x")], [2])
+
     # ------------------------------------------------------------ budget / form
 
     def test_limit_caps_injected_rows(self):

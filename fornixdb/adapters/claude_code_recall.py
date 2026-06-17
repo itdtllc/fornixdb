@@ -14,8 +14,10 @@ never replaces, intercepts, or owns the host's native memory injection. Delete
 FornixDB and Claude Code's own memory is untouched.
 
 Silence is the default. Nothing is injected unless a hit clears the relevance
-floor (the same RECALL_ANSWER_COS gate `recall_memory` uses) — unsolicited noise
-erodes trust faster than a missed recall, so an empty turn is the common case.
+floor — and unsolicited PUSH gates HIGHER than an explicit pull (PROACTIVE_RECALL_COS,
+not the looser recall_memory include floor), with keyword-only anchors trusted
+only in a vectors-off store. Unsolicited noise erodes trust faster than a missed
+recall, so an empty turn is the common case.
 Cost stays lean (top-K + a char budget) because the measured price of memory is
 the PREFILL of what it adds to the prompt, not the recall itself.
 
@@ -40,7 +42,7 @@ import argparse
 import json
 import sys
 
-from ..core import AUTO_CAPTURE_SOURCES, RECALL_ANSWER_COS, MemoryStore
+from ..core import AUTO_CAPTURE_SOURCES, PROACTIVE_RECALL_COS, MemoryStore
 from ..multistore import get_config, set_config
 
 DEFAULT_LIMIT = 3        # top-K injected — a handful of pointers, not a dump
@@ -82,18 +84,27 @@ def relevant_memories(store: MemoryStore, prompt: str, *,
                       exclude_ids=()) -> list[dict]:
     """The relevance-gated core (testable, no I/O): rows worth injecting for
     `prompt`, best-first, or [] when nothing clears the floor. A row qualifies
-    if it is a keyword anchor (no vector — a literal token match, trusted like
-    `recall_has_answer` does) OR its vector cosine clears the floor."""
+    if its vector cosine clears the floor. In a KEYWORD-ONLY store (no embedder)
+    there is no cosine, so a literal FTS token anchor is the only signal and is
+    trusted (like `recall_has_answer`). But when the store HAS vectors, a row
+    that returned no cosine couldn't even clear the vector noise floor — it is
+    semantically unrelated, and pushing it unsolicited is exactly the keyword
+    leak that surfaced wrong-project memories, so it is dropped."""
     if floor is None:
         floor = float(get_config(store, "proactive_recall_floor",
-                                  str(RECALL_ANSWER_COS)))
+                                  str(PROACTIVE_RECALL_COS)))
+    has_vectors = store._resolve_embedder(None) is not None
     exclude = set(exclude_ids)
     out: list[dict] = []
     for r in store.recall(prompt, limit=limit * 4):
         if r["id"] in exclude:
             continue
         cos = r.get("vec_cos")
-        if cos is None or float(cos) >= floor:
+        if cos is None:
+            if has_vectors:        # weak vector match, not a real anchor — skip
+                continue
+            out.append(r)          # keyword-only store: FTS anchor is all we have
+        elif float(cos) >= floor:
             out.append(r)
         if len(out) >= limit:
             break
