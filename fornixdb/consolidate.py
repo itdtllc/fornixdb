@@ -57,6 +57,25 @@ _TASK_RE = re.compile(
     r"should build|needs? to|planned|plan to|open items?|wip|in progress|"
     r"pending|investigate)\b", re.I)
 
+
+def _headline(gist: str | None, detail: str | None, lede_chars: int = 160) -> str:
+    """The text the lifecycle gates should read: a memory's GIST plus the first
+    line of its detail — its announced subject — NOT the whole body.
+
+    Why this matters (the precision the 0.50 cosine cannot give): a long
+    status/resume memory incidentally contains the project's entire vocabulary —
+    task words AND closure words alike. Matching _TASK_RE / _CLOSURE_RE over its
+    full text then misfires: a design note that merely MENTIONS "shipped" once,
+    deep in a table, reads as a closure and gets proposed as resolving some
+    unrelated task it happens to share nouns with. A genuine task or closure note
+    states its status in its headline (the gist is the human-written title; for a
+    short single-purpose memory the gist *is* the whole memory). Scoping the gates
+    to the headline keeps the real lifecycle pairs and drops the incidental ones."""
+    g = (gist or "").strip()
+    lede = (detail or "").strip().split("\n", 1)[0][:lede_chars]
+    return f"{g}\n{lede}"
+
+
 _UNSET = object()
 
 
@@ -203,7 +222,10 @@ def _resolution_scan(store: MemoryStore, exclude_ids: set[int]) -> list:
         (model_row["model"],)).fetchall()
     rows = [r for r in rows if r["id"] not in exclude_ids]
     vecs = {r["id"]: from_blob(r["vector"]) for r in rows}
-    text = {r["id"]: f"{r['detail'] or ''} {r['gist'] or ''}" for r in rows}
+    # cosine runs on the full-text embeddings (above); the lifecycle gates read
+    # only the HEADLINE (see _headline) — incidental "shipped"/"backlog" keywords
+    # buried in a long status memory must not pass as task/closure direction.
+    head = {r["id"]: _headline(r["gist"], r["detail"]) for r in rows}
     supersede_linked = {(r["memory_id"], r["related_id"]) for r in store.conn.execute(
         "SELECT memory_id, related_id FROM memory_link WHERE relation='supersedes'")}
 
@@ -217,8 +239,8 @@ def _resolution_scan(store: MemoryStore, exclude_ids: set[int]) -> list:
             # supersede direction is unambiguous (the closure entry wins)
             older, newer = (a, b) if (a["recorded_time"] or "") <= (b["recorded_time"] or "") \
                 else (b, a)
-            if not (_TASK_RE.search(text[older["id"]])
-                    and _CLOSURE_RE.search(text[newer["id"]])):
+            if not (_TASK_RE.search(head[older["id"]])
+                    and _CLOSURE_RE.search(head[newer["id"]])):
                 continue
             if (older["id"], newer["id"]) in supersede_linked \
                     or (newer["id"], older["id"]) in supersede_linked:
@@ -490,8 +512,16 @@ def supersede_suggestion(store: MemoryStore, new_id: int, text: str,
                 return {"id": row["id"], "gist": row["gist"],
                         "cosine": round(cos, 3), "reason": "near-duplicate"}
         # 2) lifecycle resolution: if THIS memory reads as closure, does it close
-        #    an older task memory? cross-kind, RESOLUTION_COSINE band.
-        if _CLOSURE_RE.search(text):
+        #    an older task memory? cross-kind, RESOLUTION_COSINE band. Both
+        #    lifecycle gates read the HEADLINE (gist + lede), not the full body
+        #    (see _headline) — a long status memory that merely MENTIONS "shipped"
+        #    deep in its detail no longer reads as a closure of some noun-sharing
+        #    task, and an older memory that merely mentions "backlog" no longer
+        #    reads as the open task being closed.
+        new_row = store.conn.execute(
+            "SELECT gist, detail FROM memory WHERE id = ?", (new_id,)).fetchone()
+        new_head = _headline(new_row["gist"], new_row["detail"]) if new_row else text
+        if _CLOSURE_RE.search(new_head):
             for mid, cos in matches:
                 if cos < RESOLUTION_COSINE:
                     break
@@ -499,7 +529,7 @@ def supersede_suggestion(store: MemoryStore, new_id: int, text: str,
                     continue
                 row = store.conn.execute(
                     "SELECT id, gist, detail FROM memory WHERE id = ?", (mid,)).fetchone()
-                if row and _TASK_RE.search(f"{row['detail'] or ''} {row['gist'] or ''}"):
+                if row and _TASK_RE.search(_headline(row["gist"], row["detail"])):
                     return {"id": row["id"], "gist": row["gist"],
                             "cosine": round(cos, 3), "reason": "resolves"}
         return None
