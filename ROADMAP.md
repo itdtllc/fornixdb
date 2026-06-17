@@ -86,3 +86,13 @@ pulses all fire on the *right* memories instead of merely plausible ones.
 - **No rung is gated on a local model.** As everywhere in FornixDB, the
   algorithmic reflex layer is the floor; a local model is an optional
   enhancement to the work each rung does, never a requirement to be on it.
+- **Performance tuning lives in the deployment, not the core.** The embedding
+  model is **cold-loaded per turn** by design — the only behavior portable
+  across the hardware FornixDB targets (microcontroller → server). A deployment
+  on *known* hardware that runs inside one long-lived process (a humanoid robot,
+  a resident agent) can keep the model **warm** for a large per-turn speedup, but
+  that needs host-specific lifecycle/IPC glue the core can't write blind. So
+  FornixDB ships the **seam** for it — inject a warm `Embedder` via
+  `FORNIXDB_EMBEDDER` or `set_default_embedder()` — and keeps warm as a
+  per-deployment adapter. See INTEGRATION.md, "Warm embedding on dedicated
+  hardware."

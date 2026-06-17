@@ -67,18 +67,64 @@ class Model2VecEmbedder:
 
 
 _default_embedder = "unset"
+EMBEDDER_ENV = "FORNIXDB_EMBEDDER"  # "package.module:factory" — the warm hook
+
+
+def set_default_embedder(embedder: "Embedder | None") -> None:
+    """Inject the process-wide embedder, overriding the model2vec default.
+
+    THE WARM-EMBEDDER HOOK. By design FornixDB cold-loads model2vec in a fresh
+    process per recall (the proactive-recall hook is a new process each turn).
+    Cold is the only behavior portable across the unknown hardware/OS FornixDB
+    targets — microcontroller to server — so it is the default. But a *specific*
+    deployment on *known* hardware that runs FornixDB inside one long-lived
+    process — a humanoid robot, a resident agent — can keep the model warm in
+    RAM and inject it here ONCE at startup; every recall path (CLI, MCP, the
+    proactive hook via core, shims, consolidation) then reuses it with no
+    per-turn load. See INTEGRATION.md "Warm embedding on dedicated hardware."
+
+    Safety rule that keeps warm correct: a warm Embedder may cache only the
+    immutable model. NEVER cache the DB row/vector set — recall re-reads the
+    store every call, so memories written moments ago are always visible; a
+    cached row set would go stale on the next write. Pass None to force the
+    keyword-only baseline (no vectors)."""
+    global _default_embedder
+    _default_embedder = embedder
+
+
+def _load_env_embedder() -> "Embedder | None":
+    """$FORNIXDB_EMBEDDER='pkg.module:factory' → import and call it (no args).
+    Lets a deployment swap in a warm/daemon/ONNX/remote backend with no fork
+    and no code edit — the env-var twin of set_default_embedder(). Never raises:
+    a missing/bad spec falls through to the bundled model2vec default."""
+    import os
+    spec = os.environ.get(EMBEDDER_ENV)
+    if not spec:
+        return None
+    try:
+        import importlib
+        mod_name, _, attr = spec.partition(":")
+        obj = getattr(importlib.import_module(mod_name), attr or "embedder")
+        return obj() if callable(obj) else obj
+    except Exception:
+        return None
 
 
 def get_default_embedder() -> Embedder | None:
     """Best available local embedder, or None — never raises, never required.
-    Cached per process: callers (shims, adapters) invoke this per store/embed
-    call, and reconstructing the model each time re-reads it from disk."""
+    Resolution, first hit wins: an injected embedder (set_default_embedder) →
+    $FORNIXDB_EMBEDDER factory → the bundled model2vec → None (keyword-only).
+    Cached per process; reconstructing model2vec each call would re-read it from
+    disk, which is the cold cost a warm injection removes."""
     global _default_embedder
     if _default_embedder == "unset":
-        try:
-            _default_embedder = Model2VecEmbedder()
-        except Exception:
-            _default_embedder = None
+        emb = _load_env_embedder()
+        if emb is None:
+            try:
+                emb = Model2VecEmbedder()
+            except Exception:
+                emb = None
+        _default_embedder = emb
     return _default_embedder
 
 
