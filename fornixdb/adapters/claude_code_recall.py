@@ -150,6 +150,16 @@ def proactive_recall(store: MemoryStore, prompt: str, *,
 
 
 def main(argv=None) -> int:
+    # Claude Code reads this hook's stdout as UTF-8 and writes the hook JSON as
+    # UTF-8, but Python's piped stdio defaults to the OS code page on Windows
+    # (cp1252) — so the header's `·`/`—` and any non-ASCII gist would round-trip
+    # as `�`. Force UTF-8 on stdin/stdout — and stderr, whose diagnostics carry
+    # `—` that would otherwise mojibake — so nothing the hook emits is corrupted.
+    for _stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--db", help="store path (default: $FORNIXDB_DB or default)")
     ap.add_argument("--prompt", help="prompt text (otherwise read from the hook "

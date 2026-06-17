@@ -662,6 +662,16 @@ def main(argv: list[str] | None = None) -> int:
                    help="skip the machine-level shared tier")
     args = p.parse_args(argv)
 
+    # The MCP client speaks UTF-8 JSON over stdio, but Python's stdio defaults
+    # to the OS code page on Windows (cp1252) — reading stdin as cp1252 mangles
+    # any non-ASCII the client sends (e.g. `—` → `â€"`) BEFORE json.loads, so it
+    # gets stored corrupted at rest. Force UTF-8 on stdin/stdout/stderr.
+    for _stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
     server = FornixMCP(db_path=args.db, shared=not args.no_shared)
     n_active, n_all = len(active_tools(server.store)), len(TOOLS)
     note = (f"fornixdb-mcp ready (store: {args.db or 'default'}) — "

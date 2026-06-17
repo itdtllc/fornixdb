@@ -53,6 +53,11 @@ class Model2VecEmbedder:
     """Default embedder: model2vec static embeddings (tiny, fast, local)."""
 
     def __init__(self, model_name: str = DEFAULT_MODEL):
+        import os
+        # cosmetic: without this the cached-model load prints a "Fetching N
+        # files" progress bar to stderr on EVERY recall — noise on each
+        # proactive-recall hook turn. setdefault so an explicit user value wins.
+        os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
         from model2vec import StaticModel  # optional dep, import deferred
         self.name = f"model2vec:{model_name.split('/')[-1]}"
         self._model = StaticModel.from_pretrained(_resolve_model_source(model_name))
