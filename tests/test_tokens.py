@@ -21,7 +21,7 @@ class TestTokens(unittest.TestCase):
         r = report(self.s)
         fixed = r["fixed_per_session"]
         self.assertGreater(fixed["mcp_tool_schemas"]["tokens"], 100)
-        self.assertEqual(fixed["mcp_tool_schemas"]["tools"], 18)
+        self.assertEqual(fixed["mcp_tool_schemas"]["tools"], 19)
         self.assertEqual(fixed["total_tokens"],
                          fixed["mcp_tool_schemas"]["tokens"]
                          + fixed["mcp_instructions"]["tokens"]
@@ -48,14 +48,15 @@ class TestTokens(unittest.TestCase):
         # curation, never hardcoded here. `tests/test_tools_config.py` covers it.
         # History: 982->807 (trim) -> 1050 (dream+supersede) -> 1280 (markdown
         # bridge) -> 1340 (link) -> 1480 (remember_many) -> 1650 (jot +
-        # review_candidates, §15.2 #1) — each a deliberate raise for named
-        # tools. This measures ALL defined tools; the live footprint is the
+        # review_candidates, §15.2 #1) -> 1750 (mark_helpful, §15.2 #6) — each a
+        # deliberate raise for named tools. This measures ALL defined tools; the
+        # live footprint is the
         # smaller ADVERTISED set after `fornixdb tools` curation (jot/review,
         # like every optional tool, ship ON but can be disabled per deployment).
         import json
 
         from fornixdb.adapters.mcp_server import INSTRUCTIONS, TOOLS
-        SCHEMA_TOKEN_BUDGET = 1650
+        SCHEMA_TOKEN_BUDGET = 1750
         INSTRUCTIONS_TOKEN_BUDGET = 260
 
         schema_tokens = estimate_tokens(json.dumps(TOOLS))
