@@ -640,6 +640,14 @@ def _dispatch(p, args, store, stores) -> int:
 
     elif args.cmd == "eval":
         from .evals import format_report, load_history, record_run, run
+        if store.conn.execute("SELECT count(*) c FROM memory").fetchone()["c"] == 0:
+            print(f"eval: store {args.db or default_db_path()} has 0 memories — "
+                  f"every case would falsely score 0%, which looks like a total "
+                  f"regression but is just an empty store. Point at a populated "
+                  f"one with a PRE-subcommand flag: "
+                  f"fornixdb --db <path> eval {args.golden}  (or set $FORNIXDB_DB).",
+                  file=sys.stderr)
+            return 2
         report = run(store, args.golden,
                      embedder=False if args.keyword_only else None)
         if args.json:
@@ -672,6 +680,13 @@ def _dispatch(p, args, store, stores) -> int:
     elif args.cmd == "answer-eval":
         from .answer_eval import (default_answerer, format_report as fmt_ans,
                                   load_history, record_run, run as run_ans)
+        if store.conn.execute("SELECT count(*) c FROM memory").fetchone()["c"] == 0:
+            print(f"answer-eval: store {args.db or default_db_path()} has 0 "
+                  f"memories — every case would falsely score 0%. Point at a "
+                  f"populated store with a PRE-subcommand flag: "
+                  f"fornixdb --db <path> answer-eval {args.golden}  "
+                  f"(or set $FORNIXDB_DB).", file=sys.stderr)
+            return 2
         answerer = default_answerer(args.model)
         report = run_ans(store, args.golden, answerer,
                          embedder=False if args.keyword_only else None)
