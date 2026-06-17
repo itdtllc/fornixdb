@@ -233,6 +233,11 @@ def main(argv: list[str] | None = None) -> int:
     ip.add_argument("--retract", type=int, metavar="FEEDBACK_ID",
                     help="tombstone one feedback row (memory ranks normally again)")
 
+    fp = sub.add_parser("helpful",
+                        help="positive feedback: a recalled memory actually helped "
+                             "— endorse it (ranks higher everywhere, resists staleness)")
+    fp.add_argument("ref", help="memory id, 'shared:id', or name")
+
     gp = sub.add_parser("tag", help="add a topic to a memory")
     gp.add_argument("memory_id", type=int)
     gp.add_argument("topic")
@@ -437,6 +442,12 @@ def _dispatch(p, args, store, stores) -> int:
             _print_rows(b["recent"], False)
             print("--- most salient standing knowledge ---")
             _print_rows(b["salient"], False)
+            if b.get("useful"):
+                print("--- most useful so far (endorsed / recalled) ---")
+                for m in b["useful"]:
+                    sid = f"{m['_store']}:{m['id']}" if m.get("_store") else m["id"]
+                    print(f"#{sid} [helpful x{m['helpful_count']}, "
+                          f"recalled x{m['recall_count']}]  {(m.get('gist') or '')[:80]}")
             st = consolidate_status(store)
             if st["due"]:
                 print(f"--- consolidation DUE: {st['reason']} "
@@ -578,6 +589,19 @@ def _dispatch(p, args, store, stores) -> int:
                 return 1
             print(f"#{mem['id']} downweighted for queries like {args.query!r} "
                   f"(feedback {fid}; `irrelevant --retract {fid}` to undo)")
+
+    elif args.cmd == "helpful":
+        target, inner = resolve_ref(stores, args.ref)
+        try:
+            m = target.mark_helpful(inner)
+        except ValueError:
+            print(f"no memory: {args.ref}", file=sys.stderr)
+            return 1
+        except FrozenStoreError as e:
+            print(f"refused: {e}", file=sys.stderr)
+            return 1
+        print(f"#{m['id']} endorsed (helpful x{m['helpful_count']}) — "
+              f"ranks higher everywhere, reinforced against staleness")
 
     elif args.cmd == "tag":
         try:

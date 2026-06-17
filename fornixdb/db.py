@@ -13,7 +13,8 @@ import os
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 5  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
+SCHEMA_VERSION = 6  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
+                    # v5: writer. v6: helpful_count/last_helpful (usefulness).
                     # v4: recall_feedback (negative feedback, new table only)
                     # v5: memory.writer (shared-tier writer provenance, B3)
 
@@ -54,6 +55,11 @@ CREATE TABLE IF NOT EXISTS memory (
     last_reinforced TEXT,  -- detail engagement only — the staleness anchor;
                            -- passive listing (last_recalled) must not clear it
     recall_count    INTEGER NOT NULL DEFAULT 0,
+    helpful_count   INTEGER NOT NULL DEFAULT 0,  -- v6: explicit "this helped"
+                           -- endorsements — a durable, query-independent
+                           -- usefulness signal (counterpart to recall_feedback's
+                           -- query-conditional "irrelevant"); feeds ranking
+    last_helpful    TEXT,  -- when the memory was last marked helpful
     superseded_by   INTEGER REFERENCES memory(id),
     superseded_time TEXT
 );
@@ -177,6 +183,9 @@ def _migrate(conn: sqlite3.Connection) -> bool:
         conn.execute("ALTER TABLE memory ADD COLUMN last_reinforced TEXT")
     if mem_cols and "writer" not in mem_cols:  # v5
         conn.execute("ALTER TABLE memory ADD COLUMN writer TEXT")
+    if mem_cols and "helpful_count" not in mem_cols:  # v6
+        conn.execute("ALTER TABLE memory ADD COLUMN helpful_count INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE memory ADD COLUMN last_helpful TEXT")
     return rebuild
 
 

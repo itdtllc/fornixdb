@@ -128,6 +128,13 @@ TOOLS = [
          "ref": {"type": "string", "description": "id, 'shared:id', or name."},
          "query": {"type": "string", "description": "The query it was wrong for (verbatim)."}},
          "required": ["ref", "query"]}},
+    {"name": "mark_helpful",
+     "description": "Positive feedback: a recalled memory genuinely helped. A "
+                    "durable, query-independent endorsement — ranks it higher "
+                    "everywhere and resists staleness. Use sparingly.",
+     "inputSchema": {"type": "object", "properties": {
+         "ref": {"type": "string", "description": "id, 'shared:id', or name."}},
+         "required": ["ref"]}},
     {"name": "memory_usage",
      "description": "Disk space used (db + archives), any budget cap, and memory "
                     "count. Answers 'how much space is FornixDB taking'.",
@@ -421,6 +428,15 @@ class FornixMCP:
         return (f"#{mem['id']} downweighted for queries like {query!r} "
                 f"(feedback {fid}, retractable — never deleted)")
 
+    def mark_helpful(self, ref: str) -> str:
+        target, inner = self._target(ref)
+        try:
+            m = target.mark_helpful(inner)
+        except ValueError:
+            return f"no memory: {ref}"
+        return (f"#{m['id']} endorsed (helpful x{m['helpful_count']}) — ranks "
+                f"higher everywhere now, reinforced against staleness")
+
     def memory_usage(self) -> str:
         from ..budget import machine_usage, status
         st = status(self.store)
@@ -495,6 +511,15 @@ class FornixMCP:
         salient = "\n".join(_line(m) for m in b["salient"][:8])
         out = (f"capture mode: {mode}\n"
                f"most salient standing knowledge:\n{salient}")
+        # usefulness rollup: what has actually proven worth surfacing (explicit
+        # endorsements first, then recall hits). Omitted on a cold store.
+        useful = b.get("useful") or []
+        if useful:
+            lines = "\n".join(
+                f"{m['id']} {(m.get('event_time') or '')[:10]} {m['kind'][:3]}"
+                f"  [helpful x{m['helpful_count']}, recalled x{m['recall_count']}]"
+                f"  {(m.get('gist') or '')[:120]}" for m in useful)
+            out += f"\nmost useful so far (endorsed / recalled):\n{lines}"
         # surface the consolidation trigger so the AI can act on the sleep-step
         # guidance — only when due AND there's real material (don't nag a near-
         # empty store, which is "never consolidated" => technically due)

@@ -23,6 +23,13 @@ SALIENCE_WEIGHT = 1.0     # how much a salient memory outranks an equally-releva
 RECENCY_WEIGHT = 2.0      # max score bonus for a memory from "right now"
 RECENCY_HALFLIFE_DAYS = 90.0
 REINFORCE_BUMP = 0.05     # salience bump each time detail is recalled
+HELPFUL_BUMP = 0.15       # salience bump when a memory is explicitly marked
+                          # helpful — larger than passive reinforce because an
+                          # endorsement is stronger evidence than a mere read
+USEFULNESS_WEIGHT = 0.5   # max ranking bonus from "this helped" endorsements;
+                          # saturating so the first endorsement matters and a
+                          # popular memory can't drown a more relevant one
+USEFULNESS_SATURATION = 2.0  # endorsements for ~half the max bonus (1-e^-1)
 SALIENCE_CAP = 1.0
 VECTOR_WEIGHT = 15.0      # scales cosine into the -bm25 range. Tuned 2026-06-11
                           # via the eval fence: at 6.0, OR-mode keyword noise
@@ -416,6 +423,51 @@ class MemoryStore:
                 FROM recall_feedback f JOIN memory m ON m.id = f.memory_id
                 {where} ORDER BY f.id""", params)]
 
+    def mark_helpful(self, ref: int | str) -> dict:
+        """Explicit POSITIVE feedback: this memory actually helped. Unlike
+        `mark_irrelevant` (negative, query-conditional), an endorsement is a
+        durable, query-independent statement that the memory itself is worth
+        surfacing — so it raises ranking everywhere (via `_usefulness`), bumps
+        salience, and reinforces (a helped memory was just confirmed current,
+        so it should not read as stale). Idempotent only in spirit: each call
+        counts, letting repeated value accumulate."""
+        self._check_writable()
+        if isinstance(ref, str) and not ref.isdigit():
+            row = self.conn.execute(
+                "SELECT id FROM memory WHERE name = ?", (ref,)).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT id FROM memory WHERE id = ?", (int(ref),)).fetchone()
+        if row is None:
+            raise ValueError(f"no memory {ref!r}")
+        ts = now_iso()
+        self.conn.execute(
+            """UPDATE memory
+               SET helpful_count = helpful_count + 1, last_helpful = ?,
+                   last_recalled = ?, last_reinforced = ?,
+                   salience = min(salience + ?, ?)
+               WHERE id = ?""",
+            (ts, ts, ts, HELPFUL_BUMP, SALIENCE_CAP, row["id"]))
+        self.conn.commit()
+        out = self.conn.execute(
+            "SELECT id, gist, kind, helpful_count, last_helpful, recall_count, "
+            "salience FROM memory WHERE id = ?", (row["id"],)).fetchone()
+        return dict(out)
+
+    def top_useful(self, limit: int = 5) -> list[dict]:
+        """The startup rollup: live memories ranked by endorsements, then by
+        passive recall hits — what has actually proven worth surfacing. Empty
+        until something is marked helpful or recalled, so a fresh store shows
+        nothing rather than noise."""
+        return [dict(r) for r in self.conn.execute(
+            """SELECT id, gist, kind, event_time, helpful_count, recall_count,
+                      last_helpful
+               FROM memory
+               WHERE superseded_time IS NULL
+                 AND (helpful_count > 0 OR recall_count > 0)
+               ORDER BY helpful_count DESC, recall_count DESC, event_time DESC
+               LIMIT ?""", (limit,))]
+
     def _negative_penalties(self, query: str, emb) -> dict[int, float]:
         """{memory_id: score factor} for memories whose active feedback
         queries are similar to this query. Vector similarity when both sides
@@ -729,7 +781,19 @@ class MemoryStore:
             age_days = 365
         recency = RECENCY_WEIGHT * math.exp(-age_days / RECENCY_HALFLIFE_DAYS)
         eff = self.effective_salience(row, now)
-        return relevance * (1 + SALIENCE_WEIGHT * eff) + recency
+        return (relevance * (1 + SALIENCE_WEIGHT * eff + self._usefulness(row))
+                + recency)
+
+    def _usefulness(self, row: dict) -> float:
+        """A saturating bonus for memories explicitly marked helpful. Folded
+        into the salience multiplier (not added flat) so it scales a real
+        relevance match rather than lifting unrelated rows: an endorsed memory
+        outranks an equally-relevant un-endorsed one, but endorsement alone
+        never makes an irrelevant memory surface."""
+        n = float(row.get("helpful_count") or 0)
+        if n <= 0:
+            return 0.0
+        return USEFULNESS_WEIGHT * (1.0 - math.exp(-n / USEFULNESS_SATURATION))
 
     def timeline(
         self,
@@ -824,7 +888,8 @@ class MemoryStore:
         self.conn.commit()
 
     def brief(self, *, project: str | None = None, days: int = 7,
-              recent_limit: int = 8, salient_limit: int = 10) -> dict:
+              recent_limit: int = 8, salient_limit: int = 10,
+              useful_limit: int = 5) -> dict:
         """Session-start context brief: recent activity + most salient
         standing knowledge. Gist-only and capped — this is the cheap recall
         that opens every session; detail is always a `show` away."""
@@ -848,7 +913,12 @@ class MemoryStore:
         cand.sort(key=lambda r: r["eff_salience"], reverse=True)
         salient = cand[:salient_limit]
         self._mark_recalled([r["id"] for r in recent + salient], reinforce=False)
-        return {"since": since[:10], "recent": recent, "salient": salient}
+        # the usefulness rollup is META about what has proven worth surfacing —
+        # it is NOT itself a content recall, so it does not _mark_recalled (that
+        # would let the rollup inflate its own recall_count every session)
+        useful = self.top_useful(useful_limit) if useful_limit else []
+        return {"since": since[:10], "recent": recent, "salient": salient,
+                "useful": useful}
 
     def stats(self) -> dict:
         q = self.conn.execute
