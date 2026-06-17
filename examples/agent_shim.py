@@ -103,6 +103,10 @@ class AgentMemory:
             return f"stored #{new_id} (supersedes #{old['id']})"
         from fornixdb.consolidate import supersede_suggestion
         sug = supersede_suggestion(self.store, new_id, content, kind)
+        if sug and sug.get("reason") == "resolves":
+            return (f"stored #{new_id} — looks like it CLOSES open task #{sug['id']} "
+                    f"\"{sug['gist'][:60]}\"; supersede that one to close it instead "
+                    f"of leaving it open.")
         if sug:
             return (f"stored #{new_id} — looks like an update of #{sug['id']} "
                     f"\"{sug['gist'][:60]}\" (cos {sug['cosine']}); re-remember under "
