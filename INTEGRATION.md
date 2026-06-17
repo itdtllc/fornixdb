@@ -302,10 +302,15 @@ to the model's context.
 - **Additive, never a takeover** (same principle as native-memory following): it
   only *adds* a block, alongside whatever the host injects — it never replaces or
   intercepts the host's own memory. Remove FornixDB and nothing changes.
-- **Silence is the default.** Nothing is injected unless a hit clears the
-  relevance floor (the same `RECALL_ANSWER_COS` gate `recall_memory` uses), so
-  most turns add nothing. Vectors strongly recommended: in keyword-only mode the
-  floor can't filter, so the looser FTS OR-fallback can surface weak matches.
+- **Silence is the default, and push gates higher than pull.** Nothing is
+  injected unless a hit clears the proactive relevance floor — `PROACTIVE_RECALL_COS`
+  (0.45), deliberately *stricter* than the `RECALL_ANSWER_COS` (0.30) include
+  floor that explicit `recall_memory` uses, because unsolicited injection erodes
+  trust faster than a missed recall. Override per store via
+  `config proactive_recall_floor <cos>`. With vectors on, a row that returns no
+  cosine (a bare keyword coincidence below the vector floor) is **not** pushed —
+  keyword-only anchors are trusted only in a vectors-off store, where they are
+  the sole signal. So most turns add nothing.
 - **Lean by budget.** Top-K (`proactive_recall_limit`, default 3) + a char cap
   (`proactive_recall_max_chars`, default 600). The measured cost of memory is the
   *prefill* of what it adds to the prompt, not the recall — so the block is a
