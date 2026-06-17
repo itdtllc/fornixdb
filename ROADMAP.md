@@ -54,6 +54,25 @@ Endpoint-local memory storage is the correct foundation, and these are the
 stages that grow it from a store the AI queries into something that
 approximates the analog, parallel character of remembering.
 
+## Cross-cutting work that strengthens every rung
+
+The ladder measures the *maturity of the coupling*. Orthogonal to it — and to
+the two hardware dials — are signals that make every recall, at every rung,
+land better. These are not rungs (climbing them does not tighten the
+memory↔cognition loop), but the rungs lean on them: a sharper relevance signal
+makes L1's ranking, L3's once-per-turn gate, and L4/L5's repeated/parallel
+pulses all fire on the *right* memories instead of merely plausible ones.
+
+- **Per-memory usefulness feedback** *(the current next build)*. Today a
+  memory's rank comes only from its content match and recency. Nothing records
+  whether a surfaced memory *actually helped*. This capability gives each
+  memory a usefulness signal — recall hit-count, last-recalled timestamp, an
+  explicit "this helped" mark, rolled up at session start — and feeds it back
+  into ranking and into the relevance floor. It is **directly downstream of L3**:
+  now that proactive recall is ambient, the system can observe which injected
+  memories the reasoning actually used and let that close the loop. Buildable
+  with no open owner decision.
+
 ## Relationship to the rest of the design
 
 - **Orthogonal to the two dials.** A given rung runs at whatever memory and
