@@ -6,11 +6,12 @@ from pathlib import Path
 
 os.environ["FORNIXDB_VECTORS"] = "off"  # deterministic: no ambient-model auto-embed
 
-from fornixdb.consolidate import (_dream_narrative, _gist_problem, dream,
-                                  propose, status, supersede_suggestion)
+from fornixdb.consolidate import (RESOLUTION_COSINE, _dream_narrative,
+                                  _gist_problem, dream, propose, status,
+                                  supersede_suggestion)
 from fornixdb.core import FrozenStoreError, MemoryStore
 from fornixdb.multistore import set_config
-from fornixdb.vectors import embed_memory
+from fornixdb.vectors import cosine, embed_memory, from_blob
 
 from test_vectors import FakeEmbedder
 
@@ -446,6 +447,49 @@ class TestResolutionHeal(unittest.TestCase):
         self.assertIsNone(supersede_suggestion(
             self.s, close, "the chart axis renders blue done shipped",
             "episodic", embedder=self.emb))
+
+    # --------------------- precision: lifecycle words buried in a long body
+    # The real false positive (2026-06-17): two LONG status/resume memories that
+    # share a subject (cosine clears RESOLUTION_COSINE) but state NO task/closure
+    # in their headline — "backlog"/"shipped" appear only deep in the body. A
+    # status note that merely MENTIONS "shipped" is not a closure OF the other,
+    # so neither scan may fire. The gates read the headline (gist + lede), not
+    # the full text.
+    SUBJECT = ("fornix roadmap operating levels memory cognition coupling "
+               "project status overview design discussion notes section")
+
+    def _two_long_status_memories(self):
+        older = self.s.store(
+            "fornix roadmap status notes one",                  # gist: no task word
+            detail=self.SUBJECT + "\nremaining backlog federation aggregator tier")
+        _age(self.s, older, 4)
+        newer = self.s.store(
+            "fornix roadmap status notes two",                  # gist: no closure word
+            detail=self.SUBJECT + "\nshipped the parallel activation rung this time")
+        embed_memory(self.s, self.emb, older)
+        embed_memory(self.s, self.emb, newer)
+        return older, newer
+
+    def _chunk0(self, mid):
+        row = self.s.conn.execute(
+            "SELECT vector FROM embedding WHERE memory_id=? AND chunk=0", (mid,)).fetchone()
+        return from_blob(row["vector"])
+
+    def test_no_resolution_when_lifecycle_words_only_in_long_body(self):
+        older, newer = self._two_long_status_memories()
+        # the pair IS similar enough to be a candidate — so it is the headline
+        # gate, not a weak cosine, that rejects it (guards the test's premise)
+        self.assertGreaterEqual(
+            cosine(self._chunk0(older), self._chunk0(newer)), RESOLUTION_COSINE)
+        self.assertEqual(propose(self.s)["resolutions"], [])
+
+    def test_write_time_no_nudge_when_closure_word_only_in_body(self):
+        older, newer = self._two_long_status_memories()
+        content = "fornix roadmap status notes two\n" + self.SUBJECT + \
+                  "\nshipped the parallel activation rung this time"
+        sug = supersede_suggestion(self.s, newer, content, "semantic",
+                                   embedder=self.emb)
+        self.assertIsNone(sug)
 
 
 if __name__ == "__main__":
