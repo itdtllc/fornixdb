@@ -54,6 +54,17 @@ Published (MIT) and in daily use. Shipped: the hot spine (SQLite + FTS5, time + 
 pip install -e .          # includes model2vec; semantic recall on by default
 ```
 
+**Pin a released version** so a clone never lands mid-change. `main` is the
+active development branch and can change through the day; for a stable checkout,
+install a tagged release instead:
+
+```bash
+pip install "git+https://github.com/itdtllc/fornixdb@v0.2.0"
+```
+
+Releases are listed at <https://github.com/itdtllc/fornixdb/releases>; see
+[CHANGELOG.md](CHANGELOG.md) for what each version contains.
+
 ## Semantic recall (on by default)
 
 Recall ranks by keyword + time, blended with *similarity by meaning* from a small local embedding model — "the glitch where her eyes sparkled" finds the eye-twinkle memory with zero shared words. The model ships by default and is tiny (~30MB static embeddings, CPU-only, no torch); a fresh store embeds memories automatically from the first write, and an existing store from before vectors backfills itself the first time it's used (no manual step). `python3 -m fornixdb embed` still forces a backfill on demand.
