@@ -159,6 +159,16 @@ Memory topology is configurable, not fixed. Each AI gets its **own store** (its 
 
 Each store also carries an owner-settable **capture mode** (`config capture_mode explicit|suggest|auto`) that connected AIs read at startup: remember only when asked, offer to remember at checkpoints (default), or store autonomously.
 
+## Configuration at a glance
+
+`fornixdb config` with no arguments prints **every** store setting at once — capture mode, ingest mode, vectors, disk budget, frozen state, proactive recall, and the MCP tool surface — alongside the **suggested defaults** for each (and which aren't applied yet). `fornixdb doctor` adds a health pass: schema currency, the host-side hooks that make capture and proactive recall actually fire (the most common silent gap, since those live in the host's `settings.json`, not in FornixDB), and config smells. The one recommended setting **not** applied out of the box is a disk cap (never-delete is the default) — `fornixdb doctor --apply-suggested` sets it to a figure scaled to the device (20% of free disk, capped at 2 GB).
+
+```bash
+python3 -m fornixdb config                 # all settings + suggested defaults
+python3 -m fornixdb doctor                 # health check + host-hook detection
+python3 -m fornixdb doctor --apply-suggested   # apply the unmet defaults (e.g. a disk cap)
+```
+
 ## Disk budget
 
 Never-delete is the default: with no cap set, nothing is ever removed — forgetting is only a ranking and tier effect. On devices where that's not affordable, cap the store's **total on-disk footprint** (db + WAL + cold archives) and choose what happens at the boundary:

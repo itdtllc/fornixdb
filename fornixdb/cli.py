@@ -308,10 +308,17 @@ def main(argv: list[str] | None = None) -> int:
     bp.add_argument("--cap-chars", type=int,
                     help="MEMORY.md session-start load cap (default 24400)")
 
-    cp = sub.add_parser("config", help="get/set store settings (e.g. capture_mode)")
-    cp.add_argument("key")
+    cp = sub.add_parser("config", help="show ALL settings (no args), or get/set "
+                                       "one (e.g. config capture_mode suggest)")
+    cp.add_argument("key", nargs="?")
     cp.add_argument("value", nargs="?")
     cp.add_argument("--shared", action="store_true", help="apply to the shared tier")
+
+    drp = sub.add_parser("doctor", help="health check: schema, host hooks, and "
+                                        "suggested default settings")
+    drp.add_argument("--apply-suggested", action="store_true",
+                     help="set the recommended defaults that aren't satisfied yet "
+                          "(e.g. a disk-space cap scaled to this device)")
 
     ng = sub.add_parser("ingest", help="follow a host AI's native memory dir "
                                        "(additive); set ingest_mode / native_dir")
@@ -721,12 +728,37 @@ def _dispatch(p, args, store, stores) -> int:
 
     elif args.cmd == "config":
         target = stores[-1][1] if (args.shared and len(stores) > 1) else store
-        if args.value is None:
+        if args.key is None:
+            from .doctor import (config_overview, format_config,
+                                 format_suggested, suggested_settings)
+            print("--- current settings ---")
+            print(format_config(config_overview(target)))
+            print("\n--- suggested defaults ('SET' = not yet applied; "
+                  "`doctor --apply-suggested` to apply) ---")
+            print(format_suggested(suggested_settings(target)))
+        elif args.value is None:
             print(get_config(target, args.key) or "(unset)")
         else:
             set_config(target, args.key, args.value)
             hint = CAPTURE_MODE_HELP.get(args.value, "")
             print(f"{args.key} = {args.value}" + (f"  ({hint})" if hint else ""))
+
+    elif args.cmd == "doctor":
+        from .doctor import (apply_suggested, diagnose, format_diagnose,
+                             format_suggested, suggested_settings)
+        print("--- health ---")
+        print(format_diagnose(diagnose(store)))
+        print("\n--- suggested defaults ---")
+        print(format_suggested(suggested_settings(store)))
+        if args.apply_suggested:
+            try:
+                applied = apply_suggested(store)
+            except FrozenStoreError as e:
+                print(f"refused: {e}", file=sys.stderr)
+                return 1
+            print("\n--- applied ---")
+            print("\n".join(applied) if applied
+                  else "(nothing to apply — all suggestions already satisfied)")
 
     elif args.cmd == "ingest":
         from .adapters.native_memory import (auto_background_enabled, ingest,
