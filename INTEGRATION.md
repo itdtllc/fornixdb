@@ -327,6 +327,63 @@ exits 0; a silent turn is success, not failure):
     "/path/.venv/bin/python -m fornixdb.adapters.claude_code_recall --db /path/store/memory.db"}]}]}}
 ```
 
+## Warm embedding on dedicated hardware (advanced, per-deployment)
+
+*Skip this unless per-turn recall latency on your specific hardware is a
+measured problem. Default FornixDB is already correct and portable.*
+
+Proactive recall (and any vector recall) loads the embedding model. The
+proactive-recall hook is a **fresh process every turn**, so model2vec is
+**cold-loaded each time** — the model can't stay warm across turns. Measured:
+~0.19 s per turn on a fast workstation, ~0.85 s on a 7-year-old desktop; the
+query encode itself is ~0 ms. That cold load is the whole cost.
+
+**Why cold is the default — and stays the default.** Keeping the model warm
+means holding it in a process that outlives the turn, and *how* you do that is
+entirely host-specific: what keeps the process alive (launchd / systemd / a
+Windows service / nothing on a bare embedded target), how a thin per-turn client
+reaches it (unix socket vs named pipe vs TCP), and whether there is spare RAM to
+hold it resident at all. FornixDB targets unknown hardware from microcontrollers
+to servers, so it cannot ship that glue without breaking the "drop-in, no
+background service, runs anywhere" guarantee. Cold makes exactly one assumption —
+"I can run a process" — which is already the floor for using FornixDB.
+
+**So warm is a per-deployment adapter, not a core feature — and FornixDB gives
+you the seam to build it without forking.** A deployment on *known* hardware
+that runs FornixDB inside one long-lived process (a humanoid robot, a resident
+home agent, a kiosk) should keep the model warm and inject it once at startup.
+Two equivalent ways, both routed through `get_default_embedder()` so every
+recall path — CLI, MCP, the proactive hook via core, shims, consolidation —
+picks it up:
+
+- **Env var, no code:** point `FORNIXDB_EMBEDDER` at a factory —
+  `FORNIXDB_EMBEDDER="my_pkg.embed:make"` — where `my_pkg.embed.make()` returns
+  your `Embedder`. Bad/missing spec silently falls back to model2vec.
+- **In-process:** call `fornixdb.vectors.set_default_embedder(my_embedder)` once
+  during your startup, before the first recall.
+
+An `Embedder` is anything with `name: str` and
+`embed(texts: list[str]) -> list[list[float]]` (see `fornixdb/vectors.py`). A
+warm one typically wraps a model loaded once and held in RAM, or a tiny client
+to a resident daemon that holds it (the daemon owns the host-specific lifecycle
+and IPC — that is the part core can't write for you).
+
+**The one rule that keeps warm correct:** a warm `Embedder` may cache only the
+**immutable model**. It must **never** cache the store's rows or vectors —
+`recall` re-reads the DB on every call so a memory written moments ago is always
+visible, and a cached row set would go stale on the next write. Warm the model;
+never warm the data. (If you also stand up a daemon, use a `0600` unix
+socket/named pipe, not an open TCP port, per FornixDB's same-user threat model,
+and lazy-start it with stale-socket cleanup.)
+
+**Cheaper, fully-portable alternative:** if you don't need semantic
+(zero-keyword-overlap) hits in the *proactive* block specifically, run with
+vectors off (`config vectors off`) — proactive recall then uses keyword + time
+recall only, with no model to load. The explicit `recall_memory` tool can still
+be served warm by the resident MCP process. (A proactive-only `fts|vector`
+toggle that keeps vectors for explicit recall but skips the model for the
+ambient block is a roadmap idea, not yet shipped.)
+
 ## Sleep/Dream consolidation (the maintenance pass)
 
 Capture and recall keep memory current turn-to-turn; a periodic **consolidation
