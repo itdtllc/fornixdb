@@ -114,5 +114,33 @@ class TestImportMarkdownCli(unittest.TestCase):
         self.assertIn("a fact to export", recall)
 
 
+class TestEvalEmptyStoreGuard(unittest.TestCase):
+    """eval/answer-eval on a 0-memory store must fail loudly, not report a
+    false 0% that looks like a total regression (the silent-empty-store
+    footgun: --db is a PRE-subcommand global, easy to omit)."""
+
+    def test_eval_empty_store_fails_loudly(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = str(Path(d) / "empty.db")            # fresh store: 0 memories
+            golden = str(Path(d) / "golden.jsonl")    # never read — guard short-circuits
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                rc = main(["--db", db, "eval", golden])
+            self.assertEqual(rc, 2)                    # not 0 (false pass), not a crash
+            msg = err.getvalue()
+            self.assertIn("0 memories", msg)
+            self.assertIn("--db", msg)                 # points at the fix
+
+    def test_answer_eval_empty_store_fails_loudly(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = str(Path(d) / "empty.db")
+            golden = str(Path(d) / "golden.jsonl")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                rc = main(["--db", db, "answer-eval", golden])
+            self.assertEqual(rc, 2)
+            self.assertIn("0 memories", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
