@@ -400,7 +400,11 @@ def _dispatch(p, args, store, stores) -> int:
         from .consolidate import supersede_suggestion
         sug = supersede_suggestion(target, mem_id, args.gist + " " + (args.detail or ""),
                                    args.kind)
-        if sug:
+        if sug and sug.get("reason") == "resolves":
+            print(f"  note: looks like it CLOSES open task memory #{sug['id']} "
+                  f"\"{sug['gist'][:60]}\" — if so, `supersede {sug['id']} {mem_id}` "
+                  f"to close it", file=sys.stderr)
+        elif sug:
             print(f"  note: closely matches #{sug['id']} \"{sug['gist'][:60]}\" "
                   f"(cos {sug['cosine']}) — if this updates it, "
                   f"`supersede {sug['id']} {mem_id}`; if related, "
@@ -454,6 +458,12 @@ def _dispatch(p, args, store, stores) -> int:
                 print(f"--- rewrite poor gists ({len(work['gists'])}) ---")
                 for g in work["gists"]:
                     print(f"#{g['id']:<5} {g['problem']}: {g['gist'][:90]}")
+                print(f"--- close completed tasks ({len(work.get('resolutions', []))}) ---")
+                for m in work.get("resolutions", []):
+                    print(f"supersede old=#{m['ids'][0]} new=#{m['ids'][1]} "
+                          f"cos {m['cosine']:.2f} ({m['kinds'][0]}/{m['kinds'][1]})")
+                    for g in m["gists"]:
+                        print(f"        {(g or '')[:90]}")
                 print(f"--- merge near-duplicates ({len(work['merges'])}) ---")
                 for m in work["merges"]:
                     print(f"#{m['ids'][0]} + #{m['ids'][1]} cos {m['cosine']:.2f} ({m['kind']})")
@@ -487,6 +497,14 @@ def _dispatch(p, args, store, stores) -> int:
             work = rep["work"]
             # on done the wake narrative already names the remaining heal
             # candidates; the full worklist is the entering (not-done) view
+            if work.get("resolutions") and not args.done:
+                print(f"\n--- completed tasks to close "
+                      f"({len(work['resolutions'])}) — supersede the open one ---")
+                for m in work["resolutions"]:
+                    print(f"supersede old=#{m['ids'][0]} new=#{m['ids'][1]} "
+                          f"cos {m['cosine']:.2f} ({m['kinds'][0]}/{m['kinds'][1]})")
+                    print(f"        task:  {(m['gists'][0] or '')[:80]}")
+                    print(f"        close: {(m['gists'][1] or '')[:80]}")
             if work["contradictions"] and not args.done:
                 print(f"\n--- possible outdated memories to reconcile "
                       f"({len(work['contradictions'])}) — supersede the stale one ---")

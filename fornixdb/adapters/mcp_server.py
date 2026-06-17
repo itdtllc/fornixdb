@@ -349,7 +349,12 @@ class FornixMCP:
                        + " (from [[wikilinks]])")
         from ..consolidate import supersede_suggestion
         sug = supersede_suggestion(self.store, new_id, content, kind)
-        if sug:
+        if sug and sug.get("reason") == "resolves":
+            out.append(
+                f"this looks like it CLOSES open task memory #{sug['id']} "
+                f"\"{sug['gist'][:50]}\" — if so, `supersede {sug['id']} {new_id}` "
+                f"to close it (old kept as history).")
+        elif sug:
             out.append(
                 f"near-duplicate of #{sug['id']} \"{sug['gist'][:50]}\" "
                 f"(cos {sug['cosine']}) — if it UPDATES that memory, re-remember "
@@ -523,6 +528,10 @@ class FornixMCP:
                 lines.append(f"{head} ({len(items)}):")
                 lines.extend("  " + fmt(it) for it in items[:8])
 
+        section("resolutions", "completed task to close — supersede old=first",
+                lambda m: f"supersede old=#{m['ids'][0]} new=#{m['ids'][1]} "
+                          f"({m['kinds'][0]}/{m['kinds'][1]}): "
+                          f"{(m['gists'][0] or '')[:40]} | {(m['gists'][1] or '')[:40]}")
         section("contradictions", "outdated? supersede the stale one",
                 lambda m: f"#{m['ids'][0]} ~ #{m['ids'][1]} ({m['kind']}): "
                           f"{m['gists'][0][:45]} | {m['gists'][1][:45]}")

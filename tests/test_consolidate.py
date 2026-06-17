@@ -334,5 +334,119 @@ class TestPropose(unittest.TestCase):
         self.assertIn("nothing needed changing", rep["narrative"])
 
 
+# Fix A + B (2026-06-16): lifecycle-aware heal — an OLDER task memory closed by a
+# NEWER closure memory. The #165->#166 case that resurfaced as still-open.
+class TestResolutionHeal(unittest.TestCase):
+    # subject words shared by both members so cosine clears RESOLUTION_COSINE;
+    # the task/closure marker words give the supersede its direction
+    TASK = ("TASKS to do: optimize the prefill performance and the token "
+            "footprint report")
+    CLOSE = ("optimize the prefill performance and the token footprint report "
+             "shipped done")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.s = file_store(self.tmp.name)
+        self.emb = FakeEmbedder()
+
+    def tearDown(self):
+        self.s.close()
+        self.tmp.cleanup()
+
+    def _task_then_close(self, task_kind="semantic", close_kind="episodic"):
+        task = self.s.store(self.TASK, kind=task_kind)
+        _age(self.s, task, 4)                       # the task is the OLDER memory
+        close = self.s.store(self.CLOSE, kind=close_kind)
+        embed_memory(self.s, self.emb, task)
+        embed_memory(self.s, self.emb, close)
+        return task, close
+
+    def test_resolution_proposed_with_old_to_new_direction(self):
+        task, close = self._task_then_close()        # cross-kind sem -> epi (the #165/#166 shape)
+        res = propose(self.s)["resolutions"]
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["ids"], [task, close])  # old -> new, direction settled
+
+    def test_no_resolution_without_closure_language(self):
+        task = self.s.store(self.TASK, kind="semantic")
+        _age(self.s, task, 4)
+        # a NEWER memory on the same subject but NOT phrased as closure
+        other = self.s.store("optimize the prefill performance and the token "
+                             "footprint report notes", kind="episodic")
+        embed_memory(self.s, self.emb, task)
+        embed_memory(self.s, self.emb, other)
+        self.assertEqual(propose(self.s)["resolutions"], [])
+
+    def test_no_resolution_when_subjects_unrelated(self):
+        task = self.s.store(self.TASK, kind="semantic")
+        _age(self.s, task, 4)
+        close = self.s.store("the chart axis renders blue done shipped",
+                             kind="episodic")  # closure language, different subject
+        embed_memory(self.s, self.emb, task)
+        embed_memory(self.s, self.emb, close)
+        self.assertEqual(propose(self.s)["resolutions"], [])
+
+    def test_resolution_supersede_linked_pair_not_reproposed(self):
+        task, close = self._task_then_close()
+        self.s.supersede(task, close)
+        self.assertEqual(propose(self.s)["resolutions"], [])
+
+    def test_same_kind_resolution_wins_over_merge(self):
+        # a same-kind task/closure near-duplicate would also be a 'merge'; the
+        # resolution carries direction, so propose() drops it from merges
+        task = self.s.store("task optimize prefill token footprint report "
+                            "performance latency throughput", kind="semantic")
+        _age(self.s, task, 4)
+        close = self.s.store("done optimize prefill token footprint report "
+                             "performance latency throughput", kind="semantic")
+        embed_memory(self.s, self.emb, task)
+        embed_memory(self.s, self.emb, close)
+        work = propose(self.s)
+        self.assertEqual([r["ids"] for r in work["resolutions"]], [[task, close]])
+        self.assertNotIn({task, close}, [set(m["ids"]) for m in work["merges"]])
+
+    def test_dream_counts_and_wake_nudge_name_the_resolution(self):
+        task, close = self._task_then_close()
+        rep = dream(self.s)
+        self.assertEqual(rep["counts"]["resolutions"], 1)
+        self.assertIn("complete", rep["narrative"].lower())
+        # on wake, the remaining-heal nudge names the supersede with direction
+        woke = dream(self.s, done=True)
+        self.assertIn(f"old=#{task} new=#{close}", woke["narrative"])
+
+    # ----------------------------------------- Fix B: write-time resolution nudge
+
+    def test_write_time_nudge_flags_closing_an_open_task(self):
+        task = self.s.store(self.TASK, kind="semantic")
+        _age(self.s, task, 4)
+        embed_memory(self.s, self.emb, task)
+        # a NEW closure memory (cross-kind) — should be flagged as resolving #task
+        close = self.s.store(self.CLOSE, kind="episodic")
+        sug = supersede_suggestion(self.s, close, self.CLOSE, "episodic",
+                                   embedder=self.emb)
+        self.assertIsNotNone(sug)
+        self.assertEqual(sug["id"], task)
+        self.assertEqual(sug["reason"], "resolves")
+
+    def test_write_time_near_duplicate_still_reported(self):
+        # the original same-kind near-dup nudge is unchanged, now tagged
+        a = self.s.store("the deploy script reads config from env", kind="semantic")
+        embed_memory(self.s, self.emb, a)
+        text = "the deploy script reads config from env always"
+        b = self.s.store(text, kind="semantic")
+        sug = supersede_suggestion(self.s, b, text, "semantic", embedder=self.emb)
+        self.assertEqual(sug["id"], a)
+        self.assertEqual(sug["reason"], "near-duplicate")
+
+    def test_write_time_no_nudge_for_plain_closure_text(self):
+        # closure language but nothing task-like to resolve -> no suggestion
+        close = self.s.store("the chart axis renders blue done shipped",
+                             kind="episodic")
+        embed_memory(self.s, self.emb, close)
+        self.assertIsNone(supersede_suggestion(
+            self.s, close, "the chart axis renders blue done shipped",
+            "episodic", embedder=self.emb))
+
+
 if __name__ == "__main__":
     unittest.main()

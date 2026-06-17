@@ -16,6 +16,7 @@ the last pass; per-store overrides in meta (consolidate_days / consolidate_sessi
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from .core import MemoryStore, now_iso
@@ -37,6 +38,24 @@ NEAR_DUP_COSINE = 0.85        # write-time "you may have just re-stored #N" nudg
                               # still nudge; corrections (~0.96) and unrelated
                               # (<0.5) stay clearly on either side
 MAX_PAIR_PROPOSALS = 15       # per list, best first — a pass is incremental
+
+# Lifecycle-aware heal (Fix A, 2026-06-16): a memory recording an OPEN task
+# ("(5) performance — investigate the lag") stays live and recallable even after
+# a LATER memory records its closure ("tasks 5+6 shipped"), because closure is
+# usually logged as a NEW sibling rather than a supersede. Similarity alone can't
+# fix this: "X is a task" and "X is done" are OPPOSITE in status yet near-identical
+# in vocabulary, so embeddings group them as merge/relates, never supersede WITH
+# DIRECTION. The missing signal is LIFECYCLE LANGUAGE — an older memory phrased as
+# a task, resolved by a newer one phrased as closure. Similarity then only confirms
+# the two are about the same subject; the language carries the direction.
+RESOLUTION_COSINE = 0.50      # "same subject" gate; the language gates carry precision
+_CLOSURE_RE = re.compile(
+    r"\b(shipped|done|resolved|closed|completed?|finished|fixed|implemented|"
+    r"merged|landed)\b|\bcommit\s+[0-9a-f]{7,}", re.I)
+_TASK_RE = re.compile(
+    r"\b(tasks?|to-?dos?|backlog|remaining|next steps?|to build|to add|"
+    r"should build|needs? to|planned|plan to|open items?|wip|in progress|"
+    r"pending|investigate)\b", re.I)
 
 _UNSET = object()
 
@@ -160,6 +179,57 @@ def _pair_scan(store: MemoryStore, exclude_ids: set[int]) -> tuple[list, list, l
             assocs[:MAX_PAIR_PROPOSALS])
 
 
+def _resolution_scan(store: MemoryStore, exclude_ids: set[int]) -> list:
+    """Lifecycle-aware heal (Fix A): an OLDER task memory resolved by a NEWER one
+    carrying closure language — propose supersede(old -> new) WITH direction.
+
+    Differs from _pair_scan in two ways that matter: it INCLUDES episodic rows
+    (the "shipped/done" note usually lands in a session/diary memory, the kind
+    _pair_scan deliberately skips) and it gates on lifecycle LANGUAGE, not
+    similarity band. Cosine here only confirms the pair is about the same
+    subject (>= RESOLUTION_COSINE); the task/closure regexes give the supersede
+    its direction — the one thing a status-flip's near-identical embeddings
+    cannot. Propose-only (§6.5): the reviewing AI applies the supersede."""
+    model_row = store.conn.execute(
+        "SELECT model, count(*) c FROM embedding GROUP BY model "
+        "ORDER BY c DESC LIMIT 1").fetchone()
+    if model_row is None:
+        return []
+    rows = store.conn.execute(
+        """SELECT m.id, m.kind, m.gist, m.detail, m.recorded_time, e.vector
+           FROM memory m
+           JOIN embedding e ON e.memory_id = m.id AND e.model = ? AND e.chunk = 0
+           WHERE m.superseded_time IS NULL""",
+        (model_row["model"],)).fetchall()
+    rows = [r for r in rows if r["id"] not in exclude_ids]
+    vecs = {r["id"]: from_blob(r["vector"]) for r in rows}
+    text = {r["id"]: f"{r['detail'] or ''} {r['gist'] or ''}" for r in rows}
+    supersede_linked = {(r["memory_id"], r["related_id"]) for r in store.conn.execute(
+        "SELECT memory_id, related_id FROM memory_link WHERE relation='supersedes'")}
+
+    out = []
+    for i, a in enumerate(rows):
+        for b in rows[i + 1:]:
+            cos = cosine(vecs[a["id"]], vecs[b["id"]])
+            if cos < RESOLUTION_COSINE:
+                continue
+            # the NEWER memory is the resolution; order by recorded_time so the
+            # supersede direction is unambiguous (the closure entry wins)
+            older, newer = (a, b) if (a["recorded_time"] or "") <= (b["recorded_time"] or "") \
+                else (b, a)
+            if not (_TASK_RE.search(text[older["id"]])
+                    and _CLOSURE_RE.search(text[newer["id"]])):
+                continue
+            if (older["id"], newer["id"]) in supersede_linked \
+                    or (newer["id"], older["id"]) in supersede_linked:
+                continue
+            out.append({"ids": [older["id"], newer["id"]], "cosine": round(cos, 3),
+                        "kinds": [older["kind"], newer["kind"]],
+                        "gists": [older["gist"], newer["gist"]]})
+    out.sort(key=lambda e: e["cosine"], reverse=True)
+    return out[:MAX_PAIR_PROPOSALS]
+
+
 def propose(store: MemoryStore) -> dict:
     """Emit the §13.3 worklist. Read-only: nothing is tagged, rewritten, or
     embedded here — the reviewing AI applies what survives its judgment."""
@@ -194,9 +264,17 @@ def propose(store: MemoryStore) -> dict:
     # undistilled session gists are templated ("Session <date> (N user turns…")
     # and would flood the pair lists with false neighbors — scan without them
     merges, contradictions, associations = _pair_scan(store, pending_distill)
+    resolutions = _resolution_scan(store, pending_distill)
+
+    # a same-kind task/closure pair can surface in both scans; resolutions carry
+    # direction, so they win — drop those pairs from the fuzzier lists
+    res_pairs = {frozenset(r["ids"]) for r in resolutions}
+    merges = [m for m in merges if frozenset(m["ids"]) not in res_pairs]
+    contradictions = [c for c in contradictions if frozenset(c["ids"]) not in res_pairs]
 
     return {"distill": distill, "gists": gists, "merges": merges,
-            "contradictions": contradictions, "associations": associations}
+            "contradictions": contradictions, "associations": associations,
+            "resolutions": resolutions}
 
 
 # ------------------------------------------------------------- sleep / dream
@@ -213,6 +291,12 @@ def _dream_narrative(st: dict, counts: dict, woven: int = 0) -> str:
         return f"{n} {one if n == 1 else many}"
 
     parts = []
+    if counts.get("resolutions"):
+        # the strongest signal: an older task memory a newer entry has closed —
+        # supersede direction is already known (close the open one)
+        parts.append(plural(counts["resolutions"],
+                            "completed task to close",
+                            "completed tasks to close"))
     if counts["contradictions"]:
         # the headline: a later fix stored under a different title leaves the
         # stale one live; contradiction pairs surface exactly those
@@ -318,7 +402,8 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
             store.link(a["ids"][0], a["ids"][1], relation="relates")
             woven += 1
     counts = {k: len(work[k]) for k in ("distill", "gists", "merges",
-                                        "contradictions", "associations")}
+                                        "contradictions", "associations",
+                                        "resolutions")}
     counts["total"] = sum(counts.values())
     counts["woven"] = woven
 
@@ -336,7 +421,8 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
         # standing so they don't silently slip past a closed pass. Never forces
         # a reconcile — a contradiction pair can be two legitimately distinct
         # memories; the decision is the AI's / owner's.
-        remaining = work["contradictions"] + work["merges"]
+        # resolutions first: their supersede direction is already settled
+        remaining = work["resolutions"] + work["contradictions"] + work["merges"]
         if remaining:
             one = len(remaining) == 1
             lines = [narrative,
@@ -371,11 +457,19 @@ def supersede_suggestion(store: MemoryStore, new_id: int, text: str,
     silently create an orphan that leaves stale info recallable. Returns
     {id, gist, cosine} for the best such match, or None.
 
+    Two nudges, returned with a `reason`:
+      "near-duplicate" — same kind, near-duplicate band (NEAR_DUP_COSINE): may be
+                         an UPDATE that should supersede rather than orphan.
+      "resolves"       — this memory carries CLOSURE language (shipped/done/…) and
+                         loosely matches an OLDER memory phrased as a TASK: it may
+                         CLOSE that open task (Fix B, the write-time twin of the
+                         dream pass's _resolution_scan). Cross-kind, looser band —
+                         the language carries the precision the cosine can't.
+
     SUGGEST ONLY — never auto-supersedes: a high-similarity pair can still be
     two legitimately distinct memories, and only the writer knows. Model-free
     safe: with no embedder (or no stored vectors) it returns None, like the
-    dream pass. Threshold is the near-duplicate band (NEAR_DUP_COSINE); the
-    fuzzier contradiction band is the dream pass's deliberate-review job."""
+    dream pass."""
     if embedder is _UNSET:
         from .vectors import get_default_embedder
         embedder = get_default_embedder()
@@ -383,15 +477,31 @@ def supersede_suggestion(store: MemoryStore, new_id: int, text: str,
         return None
     try:
         from .vectors import similar
-        for mid, cos in similar(store, embedder, text, limit=5):
+        matches = similar(store, embedder, text, limit=8)
+        # 1) same-kind near-duplicate (the original nudge)
+        for mid, cos in matches:
             if cos < NEAR_DUP_COSINE:
-                break  # sorted best-first: nothing else qualifies
+                break  # sorted best-first: nothing else qualifies for THIS band
             if mid == new_id:
                 continue
             row = store.conn.execute(
                 "SELECT id, gist, kind FROM memory WHERE id = ?", (mid,)).fetchone()
             if row and row["kind"] == kind:
-                return {"id": row["id"], "gist": row["gist"], "cosine": round(cos, 3)}
+                return {"id": row["id"], "gist": row["gist"],
+                        "cosine": round(cos, 3), "reason": "near-duplicate"}
+        # 2) lifecycle resolution: if THIS memory reads as closure, does it close
+        #    an older task memory? cross-kind, RESOLUTION_COSINE band.
+        if _CLOSURE_RE.search(text):
+            for mid, cos in matches:
+                if cos < RESOLUTION_COSINE:
+                    break
+                if mid == new_id:
+                    continue
+                row = store.conn.execute(
+                    "SELECT id, gist, detail FROM memory WHERE id = ?", (mid,)).fetchone()
+                if row and _TASK_RE.search(f"{row['detail'] or ''} {row['gist'] or ''}"):
+                    return {"id": row["id"], "gist": row["gist"],
+                            "cosine": round(cos, 3), "reason": "resolves"}
         return None
     except Exception:
         return None
