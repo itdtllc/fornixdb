@@ -14,6 +14,8 @@ FornixDB is a memory any AI can read and write. It runs entirely on your machine
 
 It is a **memory, not a mind**: it stores, indexes, ranks, and retrieves. It never decides, never acts, never calls a tool. All judgment and guardrails stay in the AI you connect it to.
 
+**Connect it in one line.** `claude mcp add fornixdb -- fornixdb-mcp` wires it into Claude Code or any [MCP](https://modelcontextprotocol.io) client; a local Llama/Qwen reaches the same tools through the shim or a shell call. Details in [Connecting an AI](#connecting-an-ai).
+
 ## What it does
 
 - **Recall by time.** Natural phrases — *"what did we do last Thursday?"*, *"this morning"* — return everything from that window. Sessions are captured automatically (owner-toggleable), so the answer exists without anyone deciding to save it.
