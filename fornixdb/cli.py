@@ -356,9 +356,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="write into the machine-level shared tier")
 
     xp = sub.add_parser("export-markdown",
-                        help="export memories to a directory of human-readable "
-                             "Markdown files (+ MEMORY.md index); round-trips "
-                             "with `import-markdown --frontmatter`")
+                        help="export memories to human-readable Markdown (a "
+                             "directory of files + a FornixDB.md index, or one "
+                             "doc with --document); round-trips with "
+                             "`import-markdown --frontmatter`")
     xp.add_argument("out_dir", help="output directory (created if missing)")
     xp.add_argument("--project", help="only memories in this project")
     xp.add_argument("--kind", choices=KINDS, help="only this kind")
@@ -366,6 +367,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="also export tombstoned (superseded) memories")
     xp.add_argument("--shared", action="store_true",
                     help="export the machine-level shared tier instead")
+    xp.add_argument("--index-name", default="FornixDB.md",
+                    help="directory-mode index filename (default FornixDB.md, "
+                         "never MEMORY.md)")
+    xp.add_argument("--query", help="only memories matching this subject")
+    xp.add_argument("--when", help="time phrase, e.g. 'yesterday', 'last week'")
+    xp.add_argument("--since", help="ISO lower bound on event_time")
+    xp.add_argument("--until", help="ISO upper bound on event_time")
+    xp.add_argument("--document", nargs="?", const="", metavar="FILE",
+                    help="write ONE human-readable doc instead of a directory "
+                         "(optional FILE path, else <out_dir>/FornixDB-export.md)")
 
     args = p.parse_args(argv)
     store = MemoryStore(db_path=args.db)
@@ -993,14 +1004,30 @@ def _dispatch(p, args, store, stores) -> int:
 
     elif args.cmd == "export-markdown":
         target = stores[-1][1] if (args.shared and len(stores) > 1) else store
-        from .adapters.markdown_export import export_directory
-        result = export_directory(
-            target, args.out_dir, project=args.project, kind=args.kind,
-            include_superseded=args.include_superseded)
+        from pathlib import Path
+
+        from .adapters.markdown_export import (export_directory,
+                                               export_document)
+        sel = dict(project=args.project, kind=args.kind,
+                   include_superseded=args.include_superseded, query=args.query,
+                   when=args.when, since=args.since, until=args.until)
+        try:
+            if args.document is not None:
+                out_file = args.document or str(
+                    Path(args.out_dir) / "FornixDB-export.md")
+                result = export_document(target, out_file, **sel)
+                loc = result["file"]
+            else:
+                result = export_directory(target, args.out_dir,
+                                          index_name=args.index_name, **sel)
+                loc = result["dir"]
+        except ValueError as e:           # e.g. an unreadable --when phrase
+            print(f"couldn't export: {e}")
+            return 2
         if args.json:
             print(json.dumps(result, indent=2))
         else:
-            print(f"exported {result['exported']} memories to {result['dir']}")
+            print(f"exported {result['exported']} memories to {loc}")
 
     return 0
 

@@ -184,13 +184,21 @@ TOOLS = [
          "project": {"type": "string"}},
          "required": ["path"]}},
     {"name": "export_markdown",
-     "description": "Export memories to a directory of Markdown files + MEMORY.md "
-                    "index; round-trips with import_markdown frontmatter=true.",
+     "description": "Export memories to Markdown (dir of files + FornixDB.md "
+                    "index, round-trips via import_markdown; single_file=true = "
+                    "one readable doc). Filter by project/kind/query or time "
+                    "(when/since/until).",
      "inputSchema": {"type": "object", "properties": {
-         "out_dir": {"type": "string", "description": "output directory"},
+         "out_dir": {"type": "string"},
          "project": {"type": "string"},
          "kind": {"type": "string", "enum": ["semantic", "feedback", "reference", "episodic"]},
-         "include_superseded": {"type": "boolean", "default": False}},
+         "include_superseded": {"type": "boolean", "default": False},
+         "index_name": {"type": "string", "default": "FornixDB.md"},
+         "query": {"type": "string"},
+         "when": {"type": "string"},
+         "since": {"type": "string"},
+         "until": {"type": "string"},
+         "single_file": {"type": "boolean", "default": False}},
          "required": ["out_dir"]}},
 ]
 
@@ -601,11 +609,28 @@ class FornixMCP:
 
     def export_markdown(self, out_dir: str, project: str | None = None,
                         kind: str | None = None,
-                        include_superseded: bool = False) -> str:
-        from .markdown_export import export_directory
-        r = export_directory(self.store, out_dir, project=project, kind=kind,
-                             include_superseded=bool(include_superseded))
-        return f"exported {r['exported']} memories to {r['dir']}"
+                        include_superseded: bool = False,
+                        index_name: str = "FornixDB.md",
+                        query: str | None = None, when: str | None = None,
+                        since: str | None = None, until: str | None = None,
+                        single_file: bool = False) -> str:
+        from pathlib import Path
+
+        from .markdown_export import export_directory, export_document
+        sel = dict(project=project, kind=kind,
+                   include_superseded=bool(include_superseded), query=query,
+                   when=when, since=since, until=until)
+        try:
+            if single_file:
+                out_file = (out_dir if out_dir.endswith(".md")
+                            else str(Path(out_dir) / "FornixDB-export.md"))
+                r = export_document(self.store, out_file, **sel)
+                return f"exported {r['exported']} memories to {r['file']}"
+            r = export_directory(self.store, out_dir, index_name=index_name, **sel)
+            idx = f" (index {r['index_name']})" if r.get("index_name") else ""
+            return f"exported {r['exported']} memories to {r['dir']}{idx}"
+        except ValueError as e:  # an unreadable time phrase, surfaced as a result
+            return f"couldn't export: {e}"
 
     # ---------------------------------------------------------- protocol
 

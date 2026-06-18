@@ -94,7 +94,38 @@ class TestProtocol(unittest.TestCase):
             out_dir = str(Path(d) / "out")
             exp = self._call("export_markdown", out_dir=out_dir)["content"][0]["text"]
             self.assertIn("exported 2", exp)
-            self.assertTrue((Path(out_dir) / "MEMORY.md").exists())
+            # index is FornixDB.md by default, NEVER MEMORY.md (no collision with
+            # Claude Code's own memory index)
+            self.assertTrue((Path(out_dir) / "FornixDB.md").exists())
+            self.assertFalse((Path(out_dir) / "MEMORY.md").exists())
+
+    def test_export_markdown_options(self):
+        self._call("remember", title="Title", content="Intro.")
+        self._call("remember", title="Section A", content="Body A.")
+        with tempfile.TemporaryDirectory() as d:
+            # custom index name
+            out_dir = str(Path(d) / "named")
+            self._call("export_markdown", out_dir=out_dir, index_name="Index.md")
+            self.assertTrue((Path(out_dir) / "Index.md").exists())
+            self.assertFalse((Path(out_dir) / "FornixDB.md").exists())
+            # single consolidated human-readable document
+            doc_dir = str(Path(d) / "doc")
+            r = self._call("export_markdown", out_dir=doc_dir,
+                           single_file=True)["content"][0]["text"]
+            self.assertIn("FornixDB-export.md", r)
+            text = (Path(doc_dir) / "FornixDB-export.md").read_text()
+            self.assertIn("# FornixDB Export", text)
+            self.assertIn("## Title", text)
+            self.assertNotIn("\nsalience:", text)   # no machine frontmatter
+            # subject filter selects a subset
+            sub = str(Path(d) / "sub")
+            r = self._call("export_markdown", out_dir=sub,
+                           query="Body A")["content"][0]["text"]
+            self.assertIn("exported 1", r)
+            # an unreadable time phrase is a clean tool result, not a crash
+            r = self._call("export_markdown", out_dir=str(Path(d) / "x"),
+                           when="blarghh")["content"][0]["text"]
+            self.assertIn("couldn't export", r)
 
     def test_mark_irrelevant(self):
         self._call("remember", title="pie", content="apple pie recipe steps")

@@ -12,7 +12,7 @@ Source format (as used by Claude Code's auto-memory and similar systems):
 
 Mapping: description -> gist, body -> detail, name -> name, file mtime ->
 event/recorded time, [[wikilinks]] -> 'relates' links (resolved by name after
-all files are imported). Index files (MEMORY.md) are skipped. The source
+all files are imported). Index files (MEMORY.md, FornixDB.md) are skipped. The source
 directory is never modified.
 
 Usage:
@@ -74,7 +74,7 @@ def import_directory(
     *,
     project: str | None = None,
     source: str = "markdown-import",
-    skip_names: tuple[str, ...] = ("MEMORY.md", "README.md"),
+    skip_names: tuple[str, ...] = ("MEMORY.md", "FornixDB.md", "README.md"),
     dedup_gist: bool = False,
 ) -> dict:
     directory = Path(directory).expanduser()
