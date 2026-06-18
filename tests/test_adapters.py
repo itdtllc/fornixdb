@@ -155,10 +155,10 @@ class TestMarkdownExport(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             r = export_directory(s, d)
             files = {p.name for p in Path(d).glob("*.md")}
-            index = Path(d, "MEMORY.md").read_text()
+            index = Path(d, "FornixDB.md").read_text()
             first = Path(d, "first-fact.md").read_text()
         self.assertEqual(r["exported"], 2)
-        self.assertEqual(files, {"first-fact.md", "second-fact.md", "MEMORY.md"})
+        self.assertEqual(files, {"first-fact.md", "second-fact.md", "FornixDB.md"})
         self.assertIn("(first-fact.md)", index)         # index links the file
         self.assertIn("type: feedback", first)          # kind -> metadata.type
         self.assertIn("Detail of first.", first)
@@ -184,7 +184,7 @@ class TestMarkdownExport(unittest.TestCase):
         s.supersede(old, new)
         with tempfile.TemporaryDirectory() as d:
             r = export_directory(s, d)
-            names = {p.stem for p in Path(d).glob("*.md")} - {"MEMORY"}
+            names = {p.stem for p in Path(d).glob("*.md")} - {"FornixDB"}
             r_all = export_directory(s, d, include_superseded=True)
         self.assertEqual(r["exported"], 1)
         self.assertEqual(names, {"new"})

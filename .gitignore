@@ -4,6 +4,9 @@ store/
 *.db-wal
 *.db-shm
 
+# Generated markdown exports are a dump of the personal store — keep local.
+exports/
+
 __pycache__/
 *.pyc
 .DS_Store

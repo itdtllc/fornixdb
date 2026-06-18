@@ -48,15 +48,17 @@ class TestTokens(unittest.TestCase):
         # curation, never hardcoded here. `tests/test_tools_config.py` covers it.
         # History: 982->807 (trim) -> 1050 (dream+supersede) -> 1280 (markdown
         # bridge) -> 1340 (link) -> 1480 (remember_many) -> 1650 (jot +
-        # review_candidates, §15.2 #1) -> 1750 (mark_helpful, §15.2 #6) — each a
-        # deliberate raise for named tools. This measures ALL defined tools; the
+        # review_candidates, §15.2 #1) -> 1750 (mark_helpful, §15.2 #6) -> 1810
+        # (export_markdown filters: query/when/since/until + single_file +
+        # index_name) — each a deliberate raise for named tools. This measures
+        # ALL defined tools; the
         # live footprint is the
         # smaller ADVERTISED set after `fornixdb tools` curation (jot/review,
         # like every optional tool, ship ON but can be disabled per deployment).
         import json
 
         from fornixdb.adapters.mcp_server import INSTRUCTIONS, TOOLS
-        SCHEMA_TOKEN_BUDGET = 1750
+        SCHEMA_TOKEN_BUDGET = 1810
         INSTRUCTIONS_TOKEN_BUDGET = 260
 
         schema_tokens = estimate_tokens(json.dumps(TOOLS))

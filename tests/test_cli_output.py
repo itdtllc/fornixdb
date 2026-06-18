@@ -105,7 +105,7 @@ class TestImportMarkdownCli(unittest.TestCase):
                       "--gist", "a fact to export", "--name", "exported-fact")
             out = self._run("--db", db, "--no-shared", "export-markdown", out_dir)
             self.assertTrue((Path(out_dir) / "exported-fact.md").exists())
-            self.assertTrue((Path(out_dir) / "MEMORY.md").exists())
+            self.assertTrue((Path(out_dir) / "FornixDB.md").exists())
             db2 = str(Path(d) / "m2.db")
             self._run("--db", db2, "--no-shared",
                       "import-markdown", out_dir, "--frontmatter")
