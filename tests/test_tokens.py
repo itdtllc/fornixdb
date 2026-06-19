@@ -21,7 +21,7 @@ class TestTokens(unittest.TestCase):
         r = report(self.s)
         fixed = r["fixed_per_session"]
         self.assertGreater(fixed["mcp_tool_schemas"]["tokens"], 100)
-        self.assertEqual(fixed["mcp_tool_schemas"]["tools"], 19)
+        self.assertEqual(fixed["mcp_tool_schemas"]["tools"], 20)
         self.assertEqual(fixed["total_tokens"],
                          fixed["mcp_tool_schemas"]["tokens"]
                          + fixed["mcp_instructions"]["tokens"]
@@ -50,7 +50,9 @@ class TestTokens(unittest.TestCase):
         # bridge) -> 1340 (link) -> 1480 (remember_many) -> 1650 (jot +
         # review_candidates, §15.2 #1) -> 1750 (mark_helpful, §15.2 #6) -> 1810
         # (export_markdown filters: query/when/since/until + single_file +
-        # index_name) — each a deliberate raise for named tools. This measures
+        # index_name) -> 1890 (recent_writes — session write-log for
+        # end-of-session dedup, dogfooding report §4.4) — each a deliberate
+        # raise for named tools. This measures
         # ALL defined tools; the
         # live footprint is the
         # smaller ADVERTISED set after `fornixdb tools` curation (jot/review,
@@ -58,7 +60,7 @@ class TestTokens(unittest.TestCase):
         import json
 
         from fornixdb.adapters.mcp_server import INSTRUCTIONS, TOOLS
-        SCHEMA_TOKEN_BUDGET = 1810
+        SCHEMA_TOKEN_BUDGET = 1890
         INSTRUCTIONS_TOKEN_BUDGET = 260
 
         schema_tokens = estimate_tokens(json.dumps(TOOLS))

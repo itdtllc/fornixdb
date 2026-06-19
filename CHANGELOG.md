@@ -5,6 +5,27 @@ versioning. While the project is pre-1.0 the public API may still evolve between
 minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
 active development branch and can change through the day.
 
+## [Unreleased]
+
+Fixes from dogfooding FornixDB as the live memory during a real (unrelated)
+work session — see the in-use session report's recommendations.
+
+### Added
+- **`recent_writes` (MCP).** Lists the memories saved this session (this
+  connection), in write order, marking any since superseded — a checkpoint view
+  for end-of-session dedup/supersede review. Optional tool (trimmable via
+  `fornixdb tools`).
+
+### Changed
+- **`kind` accepts native-taxonomy aliases.** `remember(kind="project")` /
+  `kind="user"` no longer bounce — both map to `semantic` (standing knowledge).
+  A model reaching for a host's native memory kinds just works; an unknown kind
+  still errors, now with the offending value and the known aliases in the
+  message. Documented in the `remember` tool description.
+- **README** now shows *how* to trigger supersede-by-same-title (re-`remember`
+  under the same title), the quiet feature that keeps an evolving finding as one
+  current memory.
+
 ## [0.2.0] — 2026-06-17
 
 The first tagged release after the initial publish. Adds semantic recall by

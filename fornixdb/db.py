@@ -22,6 +22,11 @@ DEFAULT_DB_ENV = "FORNIXDB_DB"
 DEFAULT_DB_PATH = "~/.fornixdb/memory.db"
 
 KINDS = ("episodic", "semantic", "feedback", "reference")
+# Native memory taxonomies (e.g. Claude Code's user|feedback|project|reference)
+# don't map 1:1 to ours, so a model naturally reaches for a kind we don't have.
+# Accept those names as aliases so a write never bounces on a vocabulary
+# mismatch: "project"/"user" facts are standing knowledge -> semantic.
+KIND_ALIASES = {"project": "semantic", "user": "semantic"}
 RELATIONS = ("refines", "supersedes", "relates")
 TIERS = ("hot", "consolidated", "cold")
 
