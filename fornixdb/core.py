@@ -17,7 +17,7 @@ import re
 import sqlite3
 from datetime import datetime, timedelta
 
-from .db import KINDS, RELATIONS, connect
+from .db import KIND_ALIASES, KINDS, RELATIONS, connect
 
 SALIENCE_WEIGHT = 1.0     # how much a salient memory outranks an equally-relevant one
 RECENCY_WEIGHT = 2.0      # max score bonus for a memory from "right now"
@@ -189,8 +189,11 @@ class MemoryStore:
         writer: str | None = None,
         embedder=None,  # None = auto (embed when this store uses vectors); False = skip
     ) -> int:
+        kind = KIND_ALIASES.get(kind, kind)
         if kind not in KINDS:
-            raise ValueError(f"kind must be one of {KINDS}")
+            raise ValueError(
+                f"kind must be one of {KINDS} (got {kind!r}); "
+                f"or a known alias {tuple(KIND_ALIASES)}")
         self._check_writable()
         from .budget import make_room  # lazy: avoids import cycle, free when no budget set
         make_room(self)

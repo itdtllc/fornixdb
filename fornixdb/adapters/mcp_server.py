@@ -82,7 +82,9 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "remember",
      "description": "Save one idea under a short title. Same title updates it "
-                    "(old kept as history, never overwritten). Honor the capture policy.",
+                    "(old kept as history, never overwritten). Honor the capture policy. "
+                    "kind defaults to semantic; native kinds like 'project'/'user' "
+                    "are accepted and mapped to semantic.",
      "inputSchema": {"type": "object", "properties": {
          "title": {"type": "string"},
          "content": {"type": "string"},
@@ -115,6 +117,11 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {
          "discard": {"type": "array", "items": {"type": "integer"}},
          "clear": {"type": "boolean", "default": False}}}},
+    {"name": "recent_writes",
+     "description": "List memories saved THIS session (this connection), in "
+                    "write order, marking any since superseded. Use at a "
+                    "checkpoint or before ending to dedup/supersede what you wrote.",
+     "inputSchema": {"type": "object", "properties": {}}},
     {"name": "forget_memory",
      "description": "Retire a memory by title or id — gone from recall but "
                     "recoverable (never deleted).",
@@ -276,6 +283,9 @@ class FornixMCP:
     def __init__(self, db_path=None, shared=True):
         self.store = MemoryStore(db_path=db_path)
         self.stores = open_stores(self.store, shared=shared)
+        # Ids written during this connection — the natural "this session"
+        # boundary for an end-of-session dedup/supersede review (recent_writes).
+        self._session_writes: list[int] = []
 
     # ------------------------------------------------------------- tools
 
@@ -352,6 +362,7 @@ class FornixMCP:
         new_id = self.store.store(content[:120], content, kind=kind,
                                   name=None if old else title or None,
                                   source="mcp")
+        self._session_writes.append(new_id)
         if old:
             self.store.supersede(old["id"], new_id)
             return [f"stored #{new_id} (supersedes #{old['id']}, history kept)"]
@@ -395,6 +406,23 @@ class FornixMCP:
                                      it.get("kind", "semantic"))
             lines.append(f"{n}. " + "; ".join(rep))
         return "\n".join(lines)
+
+    def recent_writes(self) -> str:
+        """Memories written this session (this connection), in write order —
+        a checkpoint view for end-of-session dedup/supersede review (§4.4 of
+        the dogfooding report). Marks any since superseded by a later write."""
+        if not self._session_writes:
+            return "(no memories written this session)"
+        lines = []
+        for sid in self._session_writes:
+            row = self.store.conn.execute(
+                "SELECT id, kind, gist, superseded_time FROM memory WHERE id = ?",
+                (sid,)).fetchone()
+            if not row:
+                continue
+            flag = " [superseded]" if row["superseded_time"] else ""
+            lines.append(f"#{row['id']} {row['kind'][:3]}{flag}  {row['gist']}")
+        return "\n".join(lines) or "(no memories written this session)"
 
     def jot(self, note: str) -> str:
         if not note or not note.strip():

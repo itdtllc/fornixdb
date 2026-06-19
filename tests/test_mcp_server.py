@@ -39,7 +39,7 @@ class TestProtocol(unittest.TestCase):
         self.assertIn("recall_timeline", r["instructions"])
         tools = self.srv.handle(req(2, "tools/list"))["result"]["tools"]
         self.assertEqual({t["name"] for t in tools}, {t["name"] for t in TOOLS})
-        self.assertEqual(len(tools), 19)
+        self.assertEqual(len(tools), 20)
 
     def test_remember_recall_show_forget_cycle(self):
         out = self._call("remember", title="gpu-rule",
@@ -55,6 +55,19 @@ class TestProtocol(unittest.TestCase):
         self.assertIn("supersedes #1", out["content"][0]["text"])
         out = self._call("forget_memory", ref="gpu-rule")
         self.assertIn("tombstoned, recoverable", out["content"][0]["text"])
+
+    def test_recent_writes_tracks_session_and_supersede(self):
+        self.assertIn("no memories written",
+                      self._call("recent_writes")["content"][0]["text"])
+        self._call("remember", title="alpha", content="first fact")
+        self._call("remember", title="beta", content="second fact")
+        # re-remember beta -> supersedes, both ids are session writes
+        self._call("remember", title="beta", content="second fact, revised")
+        out = self._call("recent_writes")["content"][0]["text"]
+        self.assertIn("#1", out)
+        self.assertIn("#2", out)
+        self.assertIn("#3", out)
+        self.assertIn("[superseded]", out)  # #2 was superseded by #3
 
     def test_recall_max_chars(self):
         for i in range(6):

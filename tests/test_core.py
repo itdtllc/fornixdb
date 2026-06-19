@@ -50,6 +50,18 @@ class TestStoreRecall(unittest.TestCase):
         mem2 = self.s.show("sqlite-decision")
         self.assertEqual(mem2["id"], mid)
 
+    def test_native_kind_alias_maps_to_semantic(self):
+        # A model reaching for the native "project"/"user" taxonomy must not
+        # bounce; both are standing knowledge and map to semantic.
+        for alias in ("project", "user"):
+            mid = self.s.store(f"{alias} fact", kind=alias)
+            self.assertEqual(self.s.show(mid)["kind"], "semantic")
+
+    def test_unknown_kind_still_rejected_with_hint(self):
+        with self.assertRaises(ValueError) as cm:
+            self.s.store("bad", kind="nonsense")
+        self.assertIn("nonsense", str(cm.exception))
+
     def test_subject_recall_ranked(self):
         self.s.store("Picked FTS5 for subject recall")
         self.s.store("Bought groceries")
