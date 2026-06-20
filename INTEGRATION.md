@@ -329,8 +329,34 @@ exits 0; a silent turn is success, not failure):
 
 ```json
 {"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command":
-    "/path/.venv/bin/python -m fornixdb.adapters.claude_code_recall --db /path/store/memory.db"}]}]}}
+    "/path/.venv/bin/python -m fornixdb.adapters.claude_code_recall --db /path/store/fornix.db"}]}]}}
 ```
+
+### Rhythmic recall (L4) — many pulses per thought
+
+Where the hook above fires **once per turn**, `fornixdb.cadence` fires **many
+times within one reasoning episode**: a host that owns its inner loop (a local
+model, a robot) ticks `cadence.pulse(store, thought, episode)` at each reasoning
+checkpoint, passing the *evolving* thought. It returns a block to inject or
+`None`. The cadence logic is portable core — only the tick is host-specific:
+
+```python
+from fornixdb.cadence import Episode, pulse
+
+episode = Episode()                       # one per reasoning episode/turn
+for step in agent_inner_loop():           # e.g. each tool call
+    block = pulse(store, current_thought, episode)
+    if block:
+        inject_into_context(block)        # additive; steers the next step
+```
+
+It is **event-driven, not a constant beat**: a pulse fires only when the thought
+has meaningfully moved since the last one (token-overlap debounce), a hit clears
+a floor a notch above L3, the memory hasn't already surfaced this episode, and
+the per-episode pulse budget isn't spent. Switches: `ingest_mode=explicit` off
+entirely; `config rhythmic_recall off` disables just this. Floor / limit /
+max-chars / max-pulses are per-store config (`rhythmic_recall_*`). Reference
+caller: Elira's tool-loop via `elira_engram.rhythmic_pulse`.
 
 ## Warm embedding on dedicated hardware (advanced, per-deployment)
 

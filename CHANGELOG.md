@@ -15,8 +15,49 @@ work session — see the in-use session report's recommendations.
   connection), in write order, marking any since superseded — a checkpoint view
   for end-of-session dedup/supersede review. Optional tool (trimmable via
   `fornixdb tools`).
+- **L4 rhythmic in-thought recall (first build).** `fornixdb.cadence` — a
+  portable "metronome" controller that fires many recall pulses within one
+  reasoning episode (event-driven debounce, per-episode dedup, a relevance floor
+  a notch above the L3 push). Host-neutral; wired into a local model's inner
+  tool-loop (Elira) as the reference caller. Shared the L3 relevance gate +
+  formatter by extracting them into a vendor-neutral `fornixdb.proactive`
+  module. Switches: `ingest_mode=explicit` / `config rhythmic_recall off`. Also
+  wired as a Claude Code `PostToolUse` hook
+  (`fornixdb.adapters.claude_code_cadence`) so the metronome rides the tool-call
+  seam on any OS Claude Code runs on.
+- **Operating-levels ladder as a configurable surface (`fornixdb level`).** The
+  ROADMAP's L0–L6 ladder is now something you set: `level` shows the rungs and
+  the current one, `level L3` selects a rung, `level L4 off` toggles one. The
+  ladder is cumulative (a rung is on only if every rung below it is) and each
+  rung is a view over the dial that drives it. L1 (associative recall) is
+  toggleable, so a constrained device can sit at a pure keyed-store L0.
+- **Interactive configuration wizard (`fornixdb configure`).** Walks every
+  setting — operating level, capture style, session capture, vectors, ingest
+  mode, disk budget/policy, and MCP tools — showing each current value and its
+  default; collects your choices, shows a diff, and writes only after you
+  confirm (Ctrl-C aborts clean). A `./fornix-config` launcher runs it with one
+  command (no venv activation or `$FORNIXDB_DB` needed; defaults to the repo's
+  store).
+- **Read-only `config` overview.** Bare `fornixdb config` now prints every
+  option with its `[default: …]` plus the full ladder — a no-change way to see
+  the whole configuration at a glance.
+- **`fornixdb tools --full`.** Prints each MCP tool's complete explanation (not
+  truncated); the wizard's MCP-tools step (keep / minimal / custom) shows the
+  same explanations inline while you choose which tools to advertise.
 
 ### Changed
+- **L1 associative recall is a real runtime toggle.** With
+  `associative_recall=off` (rung L0) `recall()` collapses to exact keyed-name
+  lookup only — no FTS/vector ranking — matching the ROADMAP's "L0 = exact
+  lookups, no ranking." `show_memory` by id/name still works.
+- **Default filenames are FornixDB-branded.** The default store is now
+  `~/.fornixdb/fornix.db` (was `memory.db`), the shared tier `fornix-shared.db`,
+  and the Markdown export `FornixDB.md` — so a FornixDB store is never mistaken
+  for a host AI's own memory file. Existing stores (referenced by explicit path
+  or `$FORNIXDB_DB`) are unaffected.
+- **L4 relevance floor lowered 0.60 → 0.50** after measuring genuine
+  signal/noise separation on a live store (noise ≈ 0 cosine vs signal 0.42–0.92);
+  still a notch above the L3 once-per-turn floor.
 - **`kind` accepts native-taxonomy aliases.** `remember(kind="project")` /
   `kind="user"` no longer bounce — both map to `semantic` (standing knowledge).
   A model reaching for a host's native memory kinds just works; an unknown kind

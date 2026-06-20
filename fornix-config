@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# FornixDB configuration wizard launcher.
+#
+#   cd /path/to/AIMemory
+#   ./fornix-config                 # run the wizard against THIS repo's store
+#   ./fornix-config --db /other.db  # explicit override
+#
+# No `source .venv/bin/activate` and no `export FORNIXDB_DB` needed. The store
+# ALWAYS defaults to this repo's ./store/fornix.db, deterministically — the
+# launcher deliberately ignores an ambient $FORNIXDB_DB so a stale export in
+# your shell can't redirect it to the wrong (or a non-existent) store. To point
+# somewhere else, pass --db explicitly.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Prefer the repo venv's interpreter (has the deps); fall back to system python3.
+py="$here/.venv/bin/python"
+[ -x "$py" ] || py="$(command -v python3)"
+
+# Default store = this repo's; a leading --db / --db=PATH overrides it. Extra
+# args pass through to `fornixdb configure`.
+db="$here/store/fornix.db"
+passthrough=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --db) db="$2"; shift 2 ;;
+        --db=*) db="${1#--db=}"; shift ;;
+        *) passthrough+=("$1"); shift ;;
+    esac
+done
+
+# Unset any ambient FORNIXDB_DB so it cannot override the explicit --db below.
+exec env -u FORNIXDB_DB PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" \
+    "$py" -m fornixdb --db "$db" configure "${passthrough[@]+"${passthrough[@]}"}"

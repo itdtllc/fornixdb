@@ -40,6 +40,18 @@ class TestProactiveRecall(unittest.TestCase):
         self._seed("monte carlo simulation draws thousands of random samples")
         self.assertIsNone(proactive_recall(self.s, self.PROMPT, session_id="s1"))
 
+    def test_low_info_episodic_opener_not_surfaced(self):
+        # a bland session-opener gist ("Chat …: Hello") is noise to push even
+        # though it keyword-matches — filtered from proactive surfacing, while a
+        # real episodic summary on the same query still comes through
+        self._seed("Chat 2026-06-12 (23 turns): Hello deploy", kind="episodic")
+        rows = relevant_memories(self.s, "hello deploy script")
+        self.assertEqual(rows, [])
+        rich = self._seed("Chat 2026-06-12: Danny and I rewrote the deploy "
+                          "script configuration loader", kind="episodic")
+        rows = relevant_memories(self.s, "deploy script configuration")
+        self.assertIn(rich, [r["id"] for r in rows])
+
     def test_block_surfaced_for_a_relevant_prompt(self):
         mid = self._seed()
         block = proactive_recall(self.s, self.PROMPT, session_id="s1")

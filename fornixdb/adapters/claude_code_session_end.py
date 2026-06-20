@@ -8,7 +8,7 @@ without waiting for a back-fill pass. Parity with the in-process shim's auto ses
 Wire it in Claude Code settings.json:
 
     {"hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command":
-        "/path/.venv/bin/python -m fornixdb.adapters.claude_code_session_end --db /path/store/memory.db"}]}]}}
+        "/path/.venv/bin/python -m fornixdb.adapters.claude_code_session_end --db /path/store/fornix.db"}]}]}}
 
 The hook reads Claude Code's JSON payload on stdin (session_id,
 transcript_path), summarizes that one transcript (read-only, algorithmic — no

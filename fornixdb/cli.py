@@ -314,6 +314,20 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("value", nargs="?")
     cp.add_argument("--shared", action="store_true", help="apply to the shared tier")
 
+    lvp = sub.add_parser("level", help="operating-levels ladder (L0–L6): show "
+                                       "it, set a rung (level L3), or toggle one "
+                                       "(level L4 off)")
+    lvp.add_argument("level", nargs="?",
+                     help="L0–L6; omit to show the ladder and current rung")
+    lvp.add_argument("state", nargs="?", choices=["on", "off"],
+                     help="toggle just this one level on/off (cumulative); "
+                          "omit to set the rung to this level")
+    lvp.add_argument("--shared", action="store_true",
+                     help="apply to the shared tier")
+
+    sub.add_parser("configure", help="interactive wizard: walk through every "
+                                     "setting and apply changes after a confirm")
+
     drp = sub.add_parser("doctor", help="health check: schema, host hooks, and "
                                         "suggested default settings")
     drp.add_argument("--apply-suggested", action="store_true",
@@ -339,6 +353,8 @@ def main(argv: list[str] | None = None) -> int:
     tlp.add_argument("name", nargs="?", help="tool name for enable/disable")
     tlp.add_argument("--profile", choices=["full", "minimal"],
                      help="full = all tools on; minimal = core only")
+    tlp.add_argument("--full", action="store_true",
+                     help="show each tool's COMPLETE explanation (not truncated)")
     sub.add_parser("topics", help="list topics with counts")
     sub.add_parser("stats", help="store statistics")
 
@@ -752,13 +768,44 @@ def _dispatch(p, args, store, stores) -> int:
         else:
             print(json.dumps(budget_status(store), indent=2))
 
+    elif args.cmd == "configure":
+        from .wizard import run_configure
+        label = args.db or str(default_db_path())
+        try:
+            run_configure(store, db_label=label)
+        except (FrozenStoreError, ValueError) as e:
+            print(f"refused: {e}", file=sys.stderr)
+            return 1
+
+    elif args.cmd == "level":
+        from . import levels
+        target = stores[-1][1] if (args.shared and len(stores) > 1) else store
+        if args.level is None:
+            rung, _ = levels.current_rung(target)
+            print(f"--- operating levels (current rung: {rung}) ---")
+            print(levels.format_ladder(target))
+            print("\nset a rung: `level L3`   toggle one: `level L4 off`")
+        else:
+            try:
+                if args.state is None:
+                    print(levels.set_rung(target, args.level))
+                else:
+                    print(levels.toggle(target, args.level, args.state == "on"))
+            except ValueError as e:
+                print(f"refused: {e}", file=sys.stderr)
+                return 1
+            print(levels.format_ladder(target))
+
     elif args.cmd == "config":
         target = stores[-1][1] if (args.shared and len(stores) > 1) else store
         if args.key is None:
-            from .doctor import (config_overview, format_config,
+            from . import levels
+            from .doctor import (CONFIG_DEFAULTS, config_overview, format_config,
                                  format_suggested, suggested_settings)
-            print("--- current settings ---")
-            print(format_config(config_overview(target)))
+            print("--- current settings (read-only view; nothing changed) ---")
+            print(format_config(config_overview(target), CONFIG_DEFAULTS))
+            print("\n--- operating-levels ladder (`level` to change) ---")
+            print(levels.format_ladder(target))
             print("\n--- suggested defaults ('SET' = not yet applied; "
                   "`doctor --apply-suggested` to apply) ---")
             print(format_suggested(suggested_settings(target)))
@@ -961,9 +1008,13 @@ def _dispatch(p, args, store, stores) -> int:
             cost = estimate_tokens(_json.dumps(t))
             mark = "on " if on else "OFF"
             lock = "core" if tier == "core" else "opt "
-            desc = (t["description"][:54] + "…") if len(t["description"]) > 55 \
-                else t["description"]
-            print(f"  [{mark}] {lock} ~{cost:>3}t  {name:<16} {desc}")
+            if args.full:
+                print(f"  [{mark}] {lock} ~{cost:>3}t  {name}")
+                print(f"          {t['description']}")
+            else:
+                desc = (t["description"][:54] + "…") if len(t["description"]) > 55 \
+                    else t["description"]
+                print(f"  [{mark}] {lock} ~{cost:>3}t  {name:<16} {desc}")
         print("\nAll tools are ON by default. Disable optional ('opt') tools to "
               "shrink the per-turn prompt:\n  fornixdb tools disable <name>   "
               "(or: fornixdb tools --profile minimal)\nCore tools cannot be "

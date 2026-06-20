@@ -19,7 +19,10 @@ SCHEMA_VERSION = 6  # v2: FTS gains name; chunked embeddings. v3: last_reinforce
                     # v5: memory.writer (shared-tier writer provenance, B3)
 
 DEFAULT_DB_ENV = "FORNIXDB_DB"
-DEFAULT_DB_PATH = "~/.fornixdb/memory.db"
+# FornixDB-branded so a default store is never mistaken for a host AI's memory
+# file (e.g. a "memory.db"). Existing stores are referenced by explicit path, so
+# this only names NEWLY created default-path stores. See decision #356.
+DEFAULT_DB_PATH = "~/.fornixdb/fornix.db"
 
 KINDS = ("episodic", "semantic", "feedback", "reference")
 # Native memory taxonomies (e.g. Claude Code's user|feedback|project|reference)
@@ -202,7 +205,7 @@ REGISTRY_ENV = "FORNIXDB_REGISTRY"
 DEFAULT_REGISTRY = "~/.fornixdb/stores.json"
 
 SHARED_ENV = "FORNIXDB_SHARED_DB"          # canonical here; multistore re-exports
-DEFAULT_SHARED_PATH = "~/.fornixdb/shared.db"
+DEFAULT_SHARED_PATH = "~/.fornixdb/fornix-shared.db"  # FornixDB-branded; see #357
 
 # Install-time machine cap default (owner decision 2026-06-12, ceiling raised
 # to 2 GB 2026-06-16): a fresh machine gets a cap of 20% of free disk, at most

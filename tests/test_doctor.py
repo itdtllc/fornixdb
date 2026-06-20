@@ -43,6 +43,18 @@ class TestConfigOverview(_FileStoreCase):
         rows = dict(doctor.config_overview(self.s))
         self.assertEqual(rows["capture_mode"], "explicit")
 
+    def test_every_overview_item_has_a_default(self):
+        # a read-only `config` run must be able to show a default for every
+        # option, so none is left blank/unset for the user
+        keys = {k for k, _ in doctor.config_overview(self.s)}
+        self.assertTrue(keys <= set(doctor.CONFIG_DEFAULTS),
+                        f"missing defaults for: {keys - set(doctor.CONFIG_DEFAULTS)}")
+
+    def test_format_config_shows_defaults_when_provided(self):
+        out = doctor.format_config(doctor.config_overview(self.s),
+                                   doctor.CONFIG_DEFAULTS)
+        self.assertIn("[default:", out)
+
 
 class TestSuggestedDefaults(_FileStoreCase):
     def test_disk_budget_suggested_and_unsatisfied_by_default(self):
