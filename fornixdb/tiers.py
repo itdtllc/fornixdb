@@ -54,7 +54,7 @@ def archive_dir_for(db_path: str | Path) -> Path:
     directory — the single source of truth (budget.py footprint/prune use it too).
 
     Multiple stores often share one directory — e.g. different AIs keeping
-    ~/.fornixdb/memory.db and ~/.fornixdb/artist.db. A shared `archive/` dir
+    ~/.fornixdb/fornix.db and ~/.fornixdb/artist.db. A shared `archive/` dir
     would put both stores' cold rows in the same YYYY-MM.jsonl.gz, and since
     memory_id is per-store autoincrement, ids collide and load_detail could
     return another store's detail. A per-store `<stem>.archive/` keeps each

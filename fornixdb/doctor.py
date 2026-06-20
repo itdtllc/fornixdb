@@ -72,7 +72,12 @@ def config_overview(store) -> list[tuple[str, str]]:
              f"(~{estimate_tokens(json.dumps(active))} tok)")
     proactive = (get_config(store, "proactive_recall", "on") or "on")
     session_cap = (get_config(store, "session_capture", "on") or "on")
+    from .levels import current_rung, level
+    rung, incoherent = current_rung(store)
+    rung_str = (f"{rung} — {level(rung).name}"
+                + ("  (incoherent — see doctor)" if incoherent else ""))
     return [
+        ("operating_level", rung_str),
         ("capture_mode", capture_mode(store)),
         ("ingest_mode", f"{ingest} (background ingest: {bg}, dir: {nd or 'unset'})"),
         ("session_capture", "off" if session_cap in _OFF else "on"),
@@ -82,6 +87,22 @@ def config_overview(store) -> list[tuple[str, str]]:
         ("frozen", "yes (read-only)" if store.frozen() else "no"),
         ("MCP tools", tools),
     ]
+
+
+# The out-of-the-box value of every config_overview row, so a read-only `config`
+# run shows what each option *would* be if never touched. Keys MUST stay in step
+# with config_overview labels (test_doctor enforces full coverage).
+CONFIG_DEFAULTS: dict[str, str] = {
+    "operating_level": "L4 (every built rung on)",
+    "capture_mode": "suggest",
+    "ingest_mode": "passive",
+    "session_capture": "on",
+    "proactive_recall": "on",
+    "vectors": "on",
+    "disk_budget": "no cap (never-delete)",
+    "frozen": "no",
+    "MCP tools": "all advertised",
+}
 
 
 def host_hook_status(paths=DEFAULT_HOST_SETTINGS) -> list[dict]:
@@ -148,6 +169,13 @@ def diagnose(store, *, host_paths=DEFAULT_HOST_SETTINGS) -> list[dict]:
     if store.frozen():
         out.append({"level": "info",
                     "msg": "store is frozen (read-only) — `config frozen off` to write"})
+    from .levels import current_rung
+    rung, incoherent = current_rung(store)
+    if incoherent:
+        out.append({"level": "warn",
+                    "msg": f"operating-levels ladder is incoherent — a level above "
+                           f"an off level is on (set directly via `config`). "
+                           f"`level {rung}` re-normalizes to a clean rung"})
     return out
 
 
@@ -244,9 +272,16 @@ def format_suggested(rows: list[dict]) -> str:
     return "\n".join(out)
 
 
-def format_config(rows: list[tuple[str, str]]) -> str:
+def format_config(rows: list[tuple[str, str]],
+                  defaults: dict[str, str] | None = None) -> str:
     w = max(len(k) for k, _ in rows)
-    return "\n".join(f"{k.ljust(w)} = {v}" for k, v in rows)
+    out = []
+    for k, v in rows:
+        line = f"{k.ljust(w)} = {v}"
+        if defaults is not None and k in defaults:
+            line += f"   [default: {defaults[k]}]"
+        out.append(line)
+    return "\n".join(out)
 
 
 def format_diagnose(rows: list[dict]) -> str:

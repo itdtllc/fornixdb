@@ -60,6 +60,19 @@ RECALL_ANSWER_COS = 0.30  # a real vector match (== the include floor)
 # this higher cosine by default. Per-store override: meta proactive_recall_floor.
 PROACTIVE_RECALL_COS = 0.45
 
+# Rhythmic (L4) recall fires MANY times inside one reasoning episode, so an
+# unwanted pulse interrupts mid-thought — more intrusive than the once-per-turn
+# L3 push. It therefore gates a notch HIGHER than L3 (above PROACTIVE_RECALL_COS).
+# The earlier 0.60 was set to suppress a bland "Chat: Hello" episodic leak onto
+# action queries; that leak is now handled independently by the _is_low_information
+# filter (proactive.py), so the floor no longer has to carry it. Re-measured
+# 2026-06-20 on a live Claude-Code store (#351): pure-noise queries return cosine
+# ~0.0 (no vector neighbor) while GENUINE hits span 0.42–0.92 — so 0.60 was
+# silencing a wide band of real signal (e.g. an L4-design query at 0.51) for no
+# noise benefit. 0.50 admits that signal, stays clear of the ~0 noise floor, and
+# remains stricter than L3. Per-store override: meta rhythmic_recall_floor.
+RHYTHMIC_RECALL_COS = 0.50
+
 
 def recall_has_answer(rows: list[dict]) -> bool:
     """True if recall's best hit is a real match; False if the store has
@@ -536,31 +549,74 @@ class MemoryStore:
         # the top `limit`) so a row with weak keyword + strong semantic match
         # carries its bm25 relevance into the blend instead of being re-added
         # later with relevance 0 — that erasure sank eval #17 (rank 1 -> 4).
-        emb = self._resolve_embedder(embedder)
-        keep = max(limit * 5, 25) if emb is not None else limit
-        rows = self._recall_fts(query, "AND", limit, kind, project,
-                                include_superseded, since, until, keep=keep)
-        if not rows:
-            rows = self._recall_fts(query, "OR", limit, kind, project,
+        if self._setting_off("associative_recall"):
+            # L0/L1 boundary (ROADMAP: L0 = "exact lookups, no ranking"). When
+            # associative recall is disabled the store behaves as a plain keyed
+            # get/put: exact name lookup only, no FTS/vector ranking. (Keyed
+            # access via show_memory by id/name still works regardless.)
+            rows = self._recall_exact_name(query, limit, kind, project,
+                                           include_superseded, since, until)
+        else:
+            emb = self._resolve_embedder(embedder)
+            keep = max(limit * 5, 25) if emb is not None else limit
+            rows = self._recall_fts(query, "AND", limit, kind, project,
                                     include_superseded, since, until, keep=keep)
+            if not rows:
+                rows = self._recall_fts(query, "OR", limit, kind, project,
+                                        include_superseded, since, until, keep=keep)
 
-        if emb is not None:
-            rows = self._blend_vectors(rows, query, emb, limit, kind, project,
-                                       include_superseded, since, until)
-        penalties = self._negative_penalties(query, emb)
-        if penalties:
-            for r in rows:
-                factor = penalties.get(r["id"])
-                if factor is not None:
-                    r["score"] = float(r.get("score") or 0.0) * factor
-                    r["neg_feedback"] = True
-            rows.sort(key=lambda r: r.get("score", 0.0), reverse=True)
+            if emb is not None:
+                rows = self._blend_vectors(rows, query, emb, limit, kind, project,
+                                           include_superseded, since, until)
+            penalties = self._negative_penalties(query, emb)
+            if penalties:
+                for r in rows:
+                    factor = penalties.get(r["id"])
+                    if factor is not None:
+                        r["score"] = float(r.get("score") or 0.0) * factor
+                        r["neg_feedback"] = True
+                rows.sort(key=lambda r: r.get("score", 0.0), reverse=True)
         now = datetime.now()
         for r in rows:
             r["stale_days"] = self.stale_days(r, now)
         if related:
             self._attach_neighbors(rows)
         self._mark_recalled([r["id"] for r in rows], reinforce=False)
+        return rows
+
+    def _setting_off(self, key: str, default: str = "on") -> bool:
+        """Read a boolean meta setting directly (core can't import multistore)."""
+        row = self.conn.execute(
+            "SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        val = (row["value"] if row else default) or default
+        return str(val).strip().lower() in ("off", "0", "false", "no")
+
+    def _recall_exact_name(self, query, limit, kind, project,
+                           include_superseded, since, until) -> list[dict]:
+        """Keyed get: rows whose name matches `query` exactly (case-folded).
+        The L0 retrieval mode — no ranking, no fuzzy match."""
+        where = ["lower(m.name) = lower(?)"]
+        params: list = [query.strip()]
+        if kind:
+            where.append("m.kind = ?")
+            params.append(kind)
+        if project:
+            where.append("m.project = ?")
+            params.append(project)
+        if not include_superseded:
+            where.append("m.superseded_time IS NULL")
+        if since:
+            where.append("(m.event_time >= ? OR m.event_time_end >= ?)")
+            params += [since, since]
+        if until:
+            where.append("m.event_time < ?")
+            params.append(until)
+        sql = (f"SELECT m.* FROM memory m WHERE {' AND '.join(where)} "
+               "ORDER BY m.event_time DESC LIMIT ?")
+        params.append(limit)
+        rows = [dict(r) for r in self.conn.execute(sql, params)]
+        for r in rows:
+            r["score"] = 1.0  # exact hit; keeps the result shape uniform
         return rows
 
     def _resolve_embedder(self, embedder):
