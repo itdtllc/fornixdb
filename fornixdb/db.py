@@ -217,7 +217,10 @@ def default_db_path() -> Path:
 
 
 REGISTRY_ENV = "FORNIXDB_REGISTRY"
-DEFAULT_REGISTRY = "~/.fornixdb/stores.json"
+# FornixDB-branded so it's never confused with a host AI's own files (owner rule:
+# every default on-disk name begins with "fornix"). Legacy "stores.json" is
+# auto-migrated by _migrate_legacy_registry(). See decision 2026-06-21.
+DEFAULT_REGISTRY = "~/.fornixdb/fornix-stores.json"
 
 SHARED_ENV = "FORNIXDB_SHARED_DB"          # canonical here; multistore re-exports
 DEFAULT_SHARED_PATH = "~/.fornixdb/fornix-shared.db"  # FornixDB-branded; see #357
@@ -266,9 +269,29 @@ def _maybe_default_machine_budget(conn: sqlite3.Connection, path: Path) -> None:
         pass  # a default must never block creating the store
 
 
+def _migrate_legacy_registry(reg: Path) -> None:
+    """One-time rename of the pre-2026-06-21 'stores.json' registry to the
+    FornixDB-branded 'fornix-stores.json'. Acts only when reg is the default
+    name and absent while a legacy 'stores.json' sits beside it — never
+    overwrites an existing registry, never touches a custom ($FORNIXDB_REGISTRY)
+    name. Best-effort: a registry migration must never block opening a store."""
+    try:
+        if reg.name != "fornix-stores.json" or reg.exists():
+            return
+        legacy = reg.with_name("stores.json")
+        if legacy.exists():
+            legacy.rename(reg)
+    except Exception:
+        pass
+
+
 def registry_path() -> Path | None:
     raw = os.environ.get(REGISTRY_ENV, "") or DEFAULT_REGISTRY
-    return None if raw == "off" else Path(raw).expanduser()
+    if raw == "off":
+        return None
+    reg = Path(raw).expanduser()
+    _migrate_legacy_registry(reg)
+    return reg
 
 
 def _register_store(path: Path) -> None:

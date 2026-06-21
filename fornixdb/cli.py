@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -16,7 +17,7 @@ from . import __version__
 from .consolidate import mark_done
 from .consolidate import status as consolidate_status
 from .core import AUTO_CAPTURE_SOURCES, FrozenStoreError, MemoryStore
-from .db import KINDS, RELATIONS, default_db_path
+from .db import DEFAULT_DB_ENV, KINDS, RELATIONS, default_db_path
 from .multistore import (CAPTURE_MODE_HELP, get_config, multi_brief, multi_recall,
                          multi_timeline, open_stores, resolve_ref, set_config,
                          shared_db_path)
@@ -132,6 +133,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="this store only; skip the machine-level shared tier "
                         f"($FORNIXDB_SHARED_DB or {shared_db_path()})")
     p.add_argument("--json", action="store_true", help="machine-readable output")
+    p.add_argument("--create", action="store_true",
+                   help="allow creating a new store at the default path "
+                        "(otherwise only 'init' creates the default store, so a "
+                        "read-only command never litters ~/.fornixdb)")
     p.add_argument("--version", action="version", version=f"fornixdb {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -395,6 +400,24 @@ def main(argv: list[str] | None = None) -> int:
                          "(optional FILE path, else <out_dir>/FornixDB-export.md)")
 
     args = p.parse_args(argv)
+
+    # Never materialize a store as a SIDE EFFECT of falling back to the default
+    # path. Only `init` (or an explicit --create) may create the default store;
+    # any other command run with no --db / $FORNIXDB_DB and no existing store
+    # reports and exits instead of littering ~/.fornixdb with an empty store +
+    # registry (decision 2026-06-21 — `doctor`/`config` used to leave strays).
+    # An explicit --db / $FORNIXDB_DB path is the caller's choice and still
+    # creates on demand, as before.
+    if (args.db is None and not os.environ.get(DEFAULT_DB_ENV)
+            and args.cmd != "init" and not args.create):
+        dpath = default_db_path()
+        if not dpath.exists():
+            print(f"[warn] no FornixDB store at {dpath}\n"
+                  f"       create one with 'fornixdb init', or pass "
+                  f"--db <path> / set ${DEFAULT_DB_ENV} / use --create.",
+                  file=sys.stderr)
+            return 0
+
     store = MemoryStore(db_path=args.db)
     stores = open_stores(store, shared=not args.no_shared)
     try:
