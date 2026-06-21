@@ -51,6 +51,7 @@ import sys
 from .. import cadence
 from ..core import MemoryStore
 from ..multistore import get_config, set_config
+from ..proactive import active_project_from_cwd
 
 # Standalone fallback when the L3 turn counter isn't wired: a gap longer than
 # this between tool calls is treated as a new reasoning episode. Within an active
@@ -159,6 +160,7 @@ def main(argv=None) -> int:
     tool_input = payload.get("tool_input") or {}
     tool_response = payload.get("tool_response")
     session_id = payload.get("session_id")
+    cwd = payload.get("cwd")
 
     thought = build_thought(event, tool_name, tool_input, tool_response)
     if not thought:
@@ -169,7 +171,9 @@ def main(argv=None) -> int:
     try:
         with MemoryStore(db_path=args.db) as store:
             episode = load_episode(store, session_id, now)
-            block = cadence.pulse(store, thought, episode)
+            block = cadence.pulse(store, thought, episode,
+                                  active_project=active_project_from_cwd(cwd),
+                                  session_id=session_id)
             save_episode(store, session_id, episode, now)
             if block:
                 # additionalContext for tool events lands next to the tool result,

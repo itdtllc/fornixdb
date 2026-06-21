@@ -33,7 +33,8 @@ from dataclasses import dataclass, field
 from .adapters.native_memory import auto_background_enabled
 from .core import RHYTHMIC_RECALL_COS, MemoryStore
 from .multistore import get_config
-from .proactive import format_block, relevant_memories
+from .proactive import (cross_pulse_dedup_on, format_block, injected_this_session,
+                        mark_injected, relevant_memories, resolve_active_project)
 
 DEFAULT_LIMIT = 2         # tinier than L3's per-turn block — a nudge mid-thought
 DEFAULT_MAX_CHARS = 400
@@ -70,7 +71,9 @@ class Episode:
 
 def pulse(store: MemoryStore, thought: str, episode: Episode, *,
           limit: int | None = None, max_chars: int | None = None,
-          floor: float | None = None, max_pulses: int | None = None) -> str | None:
+          floor: float | None = None, max_pulses: int | None = None,
+          active_project: str | None = None,
+          session_id: str | None = None) -> str | None:
     """One metronome beat: a "possibly-relevant past" block for the CURRENT
     evolving `thought`, or None when disabled / the thought is trivial or hasn't
     moved / the episode's pulse budget is spent / nothing clears the floor.
@@ -100,15 +103,35 @@ def pulse(store: MemoryStore, thought: str, episode: Episode, *,
         floor = float(get_config(store, "rhythmic_recall_floor",
                                   str(RHYTHMIC_RECALL_COS)))
 
-    rows = relevant_memories(store, thought, limit=limit, floor=floor,
-                             exclude_ids=episode.pulsed_ids)
+    # Cross-pulse dedup: also skip anything ALREADY pushed this session by L3 or a
+    # prior L4 tick (not just this episode's pulses), so the two rungs don't repeat
+    # each other. The session set is shared with the L3 hook.
+    dedup = cross_pulse_dedup_on(store)
+    exclude = set(episode.pulsed_ids)
+    if dedup:
+        exclude |= injected_this_session(store, session_id)
+    rows = relevant_memories(
+        store, thought, limit=limit, floor=floor, exclude_ids=exclude,
+        active_project=resolve_active_project(store, active_project,
+                                              session_id=session_id))
     block = format_block(rows, max_chars)
     if not block:
         # the thought still counts as the latest query, so an unchanged next
         # step debounces against it rather than re-querying the same miss
         episode.last_query = thought
         return None
-    episode.pulsed_ids.update(r["id"] for r in rows)
+    ids = [r["id"] for r in rows]
+    episode.pulsed_ids.update(ids)
     episode.last_query = thought
     episode.pulse_count += 1
+    if dedup:
+        # add to the session-shared set so L3 and later L4 ticks won't re-push these
+        mark_injected(store, session_id, ids)
+    # count the PUSH impression — per-episode dedup (pulsed_ids) keeps a memory
+    # from being counted twice in one reasoning episode (best-effort; read-only
+    # stores skip).
+    try:
+        store.record_surfaced(ids)
+    except Exception:
+        pass
     return block

@@ -81,8 +81,11 @@ class TestUsefulnessRanking(unittest.TestCase):
         self.s.mark_helpful(self.b)
         after = {m["id"]: m["score"] for m in self.s.recall("retirement budgets")}
         self.assertGreater(after[self.b], base[self.b])   # b rose
-        self.assertEqual(after[self.a], base[self.a])      # a unchanged
         self.assertGreater(after[self.b], after[self.a])   # and now leads
+        # an endorsement dominates the small passive-recall bonus a also earns
+        # from having been recalled (RECALL_USE_WEIGHT << USEFULNESS_WEIGHT)
+        self.assertGreater(after[self.b] - base[self.b],
+                           after[self.a] - base[self.a])
 
     def test_endorsement_never_surfaces_an_irrelevant_memory(self):
         # endorse b heavily, then run a query b has nothing to do with

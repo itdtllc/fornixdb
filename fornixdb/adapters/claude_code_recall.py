@@ -53,6 +53,7 @@ from .claude_code_cadence import bump_turn as _bump_turn
 from ..proactive import (  # noqa: F401
     HEADER,
     _format_block,
+    active_project_from_cwd,
     format_block,
     proactive_recall,
     relevant_memories,
@@ -76,12 +77,13 @@ def main(argv=None) -> int:
                                      "JSON on stdin)")
     args = ap.parse_args(argv)
 
-    prompt, session_id = args.prompt, None
+    prompt, session_id, cwd = args.prompt, None, None
     if prompt is None:
         try:
             payload = json.loads(sys.stdin.read() or "{}")
             prompt = payload.get("prompt") or ""
             session_id = payload.get("session_id")
+            cwd = payload.get("cwd")
         except json.JSONDecodeError:
             prompt = ""
     if not prompt:
@@ -95,7 +97,8 @@ def main(argv=None) -> int:
             # a read-only store simply skips it.
             if session_id:
                 _bump_turn(store, session_id)
-            block = proactive_recall(store, prompt, session_id=session_id)
+            block = proactive_recall(store, prompt, session_id=session_id,
+                                     active_project=active_project_from_cwd(cwd))
             if block:
                 # stdout of a UserPromptSubmit hook is added to the model's
                 # context (the additive injection seam)
