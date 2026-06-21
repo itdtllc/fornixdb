@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 from .adapters.mcp_server import TOOLS, active_tools
@@ -71,6 +72,10 @@ def config_overview(store) -> list[tuple[str, str]]:
     tools = (f"{len(active)}/{len(TOOLS)} advertised "
              f"(~{estimate_tokens(json.dumps(active))} tok)")
     proactive = (get_config(store, "proactive_recall", "on") or "on")
+    floor_adapt = (get_config(store, "usefulness_floor_adapt", "on") or "on")
+    proj_scope = (get_config(store, "project_scoped_pulse", "on") or "on")
+    dedup = (get_config(store, "cross_pulse_dedup", "on") or "on")
+    pinned_proj = (get_config(store, "active_project", "") or "").strip()
     session_cap = (get_config(store, "session_capture", "on") or "on")
     from .levels import current_rung, level
     rung, incoherent = current_rung(store)
@@ -82,6 +87,10 @@ def config_overview(store) -> list[tuple[str, str]]:
         ("ingest_mode", f"{ingest} (background ingest: {bg}, dir: {nd or 'unset'})"),
         ("session_capture", "off" if session_cap in _OFF else "on"),
         ("proactive_recall", "off" if proactive in _OFF else "on"),
+        ("usefulness_floor_adapt", "off" if floor_adapt in _OFF else "on"),
+        ("project_scoped_pulse", "off" if proj_scope in _OFF else "on"),
+        ("cross_pulse_dedup", "off" if dedup in _OFF else "on"),
+        ("active_project", pinned_proj or "(auto: prompt / cwd)"),
         ("vectors", _vectors_setting(store)),
         ("disk_budget", budget),
         ("frozen", "yes (read-only)" if store.frozen() else "no"),
@@ -98,6 +107,10 @@ CONFIG_DEFAULTS: dict[str, str] = {
     "ingest_mode": "passive",
     "session_capture": "on",
     "proactive_recall": "on",
+    "usefulness_floor_adapt": "on",
+    "project_scoped_pulse": "on",
+    "cross_pulse_dedup": "on",
+    "active_project": "(auto: prompt / cwd)",
     "vectors": "on",
     "disk_budget": "no cap (never-delete)",
     "frozen": "no",
@@ -124,9 +137,68 @@ def host_hook_status(paths=DEFAULT_HOST_SETTINGS) -> list[dict]:
     return {"hooks": rows, "files_seen": [path for path, _ in blobs]}
 
 
+# --- config integrity: a config key with no runtime reader does nothing -------
+# A user can set ANY key (`config <key> <value>` is generic). A key nothing reads
+# is dead weight at best and a silent footgun at worst — the user thinks they
+# changed behavior and nothing happened (the "L1 was declarative-only" class of
+# bug). We catch it by comparing the keys SET in a store against the keys the code
+# actually READS, scanned from source so the reader set self-updates.
+
+# Read indirectly, so the literal source scan misses them: via a method
+# (`store.frozen()`), a named constant (`mcp_tools_disabled`), or multistore's
+# set_config side-effect handlers (the machine-budget family).
+_INDIRECT_CONFIG_READERS = frozenset({
+    "frozen", "mcp_tools_disabled",
+    "machine_budget_mb", "machine_budget_policy", "machine_budget_defaulted",
+})
+# Per-entity dynamic keys (prefix + session-id / kind), read via helper-built
+# names or a `LIKE` scan — recognized by prefix, never flagged.
+_CONFIG_READ_PREFIXES = ("decay_", "active_project_session_", "cadence_turn_",
+                         "cadence_episode_", "proactive_injected_")
+_READER_RE = re.compile(
+    r'(?:get_config\([^,]+,\s*|_setting_off\()"([a-z_][a-z0-9_]*)"')
+
+
+def _literal_config_readers() -> set[str]:
+    """Every config key read via a literal get_config/_setting_off call, scanned
+    from the package source so it stays current as readers are added."""
+    keys: set[str] = set()
+    for p in Path(__file__).parent.rglob("*.py"):
+        try:
+            keys |= set(_READER_RE.findall(p.read_text(encoding="utf-8")))
+        except OSError:
+            pass
+    return keys
+
+
+def config_readers() -> set[str]:
+    """All config keys the code reads (literal scan + the indirectly-read ones)."""
+    return _literal_config_readers() | _INDIRECT_CONFIG_READERS
+
+
+def _config_key_is_read(key: str, readers: set[str]) -> bool:
+    return key in readers or any(key.startswith(p) for p in _CONFIG_READ_PREFIXES)
+
+
+def config_integrity(store) -> list[dict]:
+    """Health rows for the store's config: each meta key SET here that NO code
+    reads — a typo, a stale/removed setting, or a key set expecting an effect it
+    can't have. Pure read; never mutates the store."""
+    readers = config_readers()
+    out: list[dict] = []
+    for (key,) in store.conn.execute("SELECT key FROM meta ORDER BY key"):
+        if not _config_key_is_read(key, readers):
+            out.append({"level": "warn",
+                        "msg": f"config '{key}' is set but no code reads it — "
+                               "a typo, a stale setting, or one with no effect; "
+                               "remove it or check the name"})
+    return out
+
+
 def diagnose(store, *, host_paths=DEFAULT_HOST_SETTINGS) -> list[dict]:
     """Health rows: {level: ok|warn|info, msg}. Ordered: schema, host hooks,
-    then config smells. Pure read — never mutates the store."""
+    config smells, then config-integrity (keys set but unread). Pure read —
+    never mutates the store."""
     out: list[dict] = []
 
     stored = get_config(store, "schema_version")
@@ -176,6 +248,7 @@ def diagnose(store, *, host_paths=DEFAULT_HOST_SETTINGS) -> list[dict]:
                     "msg": f"operating-levels ladder is incoherent — a level above "
                            f"an off level is on (set directly via `config`). "
                            f"`level {rung}` re-normalizes to a clean rung"})
+    out.extend(config_integrity(store))
     return out
 
 

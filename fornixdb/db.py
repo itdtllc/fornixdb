@@ -13,10 +13,13 @@ import os
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 6  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
+SCHEMA_VERSION = 7  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
                     # v5: writer. v6: helpful_count/last_helpful (usefulness).
                     # v4: recall_feedback (negative feedback, new table only)
                     # v5: memory.writer (shared-tier writer provenance, B3)
+                    # v7: surfaced_count/last_surfaced — proactive-PUSH impressions,
+                    #     kept distinct from recall_count (explicit PULL) so the
+                    #     usefulness loop can tell "kept getting pushed" from "used"
 
 DEFAULT_DB_ENV = "FORNIXDB_DB"
 # FornixDB-branded so a default store is never mistaken for a host AI's memory
@@ -68,6 +71,13 @@ CREATE TABLE IF NOT EXISTS memory (
                            -- usefulness signal (counterpart to recall_feedback's
                            -- query-conditional "irrelevant"); feeds ranking
     last_helpful    TEXT,  -- when the memory was last marked helpful
+    surfaced_count  INTEGER NOT NULL DEFAULT 0,  -- v7: times PUSHED unsolicited
+                           -- (proactive L3 / rhythmic L4 injection). An
+                           -- impression, NOT a use: high surfaced_count with low
+                           -- recall_count/helpful_count = "kept getting pushed
+                           -- but never used" — the implicit noise signal the
+                           -- usefulness loop raises the relevance floor against
+    last_surfaced   TEXT,  -- when the memory was last pushed proactively
     superseded_by   INTEGER REFERENCES memory(id),
     superseded_time TEXT
 );
@@ -125,11 +135,13 @@ CREATE TRIGGER IF NOT EXISTS memory_au AFTER UPDATE OF name, gist, detail ON mem
     VALUES (new.id, coalesce(new.name, ''), new.gist, coalesce(new.detail, ''));
 END;
 
--- v4: explicit negative feedback (owner decision 2026-06-12: explicit-only
--- signal, query-conditional penalty). A row says "memory X was irrelevant to
--- query Q" — recall downweights X only for queries similar to Q, never
--- globally. Retraction is a tombstone, never a delete. The query's embedding
--- (when a model is available at mark time) makes similarity associative.
+-- v4: explicit negative feedback (mark_irrelevant), query-conditional. A row
+-- says "memory X was irrelevant to query Q" — recall downweights X only for
+-- queries similar to Q, never globally. Retraction is a tombstone, never a
+-- delete. The query's embedding (when a model is available at mark time) makes
+-- similarity associative. (This is the EXPLICIT negative path; the implicit
+-- "pushed but never used" signal lives separately in memory.surfaced_count and
+-- only nudges the proactive PUSH floor, never this query-conditional penalty.)
 CREATE TABLE IF NOT EXISTS recall_feedback (
     id        INTEGER PRIMARY KEY,
     memory_id INTEGER NOT NULL REFERENCES memory(id) ON DELETE CASCADE,
@@ -194,6 +206,9 @@ def _migrate(conn: sqlite3.Connection) -> bool:
     if mem_cols and "helpful_count" not in mem_cols:  # v6
         conn.execute("ALTER TABLE memory ADD COLUMN helpful_count INTEGER NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE memory ADD COLUMN last_helpful TEXT")
+    if mem_cols and "surfaced_count" not in mem_cols:  # v7
+        conn.execute("ALTER TABLE memory ADD COLUMN surfaced_count INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE memory ADD COLUMN last_surfaced TEXT")
     return rebuild
 
 

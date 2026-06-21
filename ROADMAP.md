@@ -22,7 +22,7 @@ parallelism** in the memory↔cognition loop.
 | **L0** | **Explicit store / retrieve** | A passive keyed store. The program must *deliberately* put and get; exact lookups, no ranking, no automation. Memory does nothing on its own. | A microcontroller or embedded device; a hand-wired `put(key)` / `get(key)`. | Trivially supported (the floor). |
 | **L1** | **Associative recall on demand** | Still *pull-based* — the AI must choose to ask — but a query returns **relevance-ranked, associative** recall (vectors + full-text + a time axis), gist→detail. Human-like *retrieval*, but only when invoked. | An agent or chatbot that calls `recall` when it decides it needs context. | **Shipped** — the core query surface. |
 | **L2** | **Automatic capture** *(write-side autonomy)* | The **write** side becomes autonomous: experience is captured and consolidated after each prompt or session with no explicit "store." The read side is still pull-based. This is *storing memories after each prompt* — the foothold for everything above it. | A coding-agent or local-model session whose transcript is auto-captured and consolidated. | **Shipped — ◀ we are here.** |
-| **L3** | **Proactive recall injection** *(read-side autonomy, one pulse per turn)* | Memory **pushes** relevant context into the thinking *without being asked* — once per turn, relevance-gated, additive (never replacing the host's own memory). The first heartbeat of memory "eventing back" to the thinker. | A prompt-submit hook that surfaces a provenance-tagged "possibly-relevant past" block each turn. | **Shipped — lived-in; recall quality being tuned via usefulness feedback.** Wired into the daily loop and surfacing each turn; the relevance floor is now being tightened with the usefulness signal below so the block fires on the right memories, not merely plausible ones. |
+| **L3** | **Proactive recall injection** *(read-side autonomy, one pulse per turn)* | Memory **pushes** relevant context into the thinking *without being asked* — once per turn, relevance-gated, additive (never replacing the host's own memory). The first heartbeat of memory "eventing back" to the thinker. | A prompt-submit hook that surfaces a provenance-tagged "possibly-relevant past" block each turn. | **Shipped — lived-in; recall quality tuned via usefulness feedback.** Wired into the daily loop and surfacing each turn; the relevance floor is now per-memory, tightened by the usefulness signal below (impressions vs uses) so the block fires on the right memories, not merely plausible ones. |
 | **L4** | **Rhythmic in-thought recall** *(the "metronome")* | Memory is re-activated **many times within a single reasoning episode** — pulsed as the thought evolves, each pulse re-querying on the *current* state and steering the next step. **Event-driven cadence, not a constant beat.** The loop tightens from once-per-turn to many-per-thought. | A debounced local recall loop / inner agent that re-queries at reasoning checkpoints. | **First build landed** — a portable cadence controller (`fornixdb.cadence`: event-driven debounce, per-episode dedup, a floor a notch above L3) wired into a local model's inner tool-loop (Elira). Single-store for now; shared-tier pulse and on-task premise validation pending. |
 | **L5** | **Parallel multi-domain activation** *(the analog, human-like target)* | Many lightweight agents fire **simultaneously across different information domains** (episodic, semantic, feedback, by-project, by-person, by-salience…), **all local**, and their returns are **integrated and settle into a single pattern** that directs the next thought. Not one recall, but a *field* of simultaneous local recalls resolving into a direction. | A local orchestrator spawning N domain-scoped recall agents per reasoning step, with a settling/attractor integrator. | The vision rung — not built; the real prize. |
 | **L6** | **Federated / distributed memory** *(an extension beyond human-like)* | The parallel model extended **across endpoints** — machines, agents, eventually a household — federating many FornixDB stores behind one recall. Reached only **after L5**: a single mind is not federated, so this sits *above* the human-likeness climb as a super-human extension, not a step toward it. | A cross-machine aggregator tier; a fleet or household memory. | Far out; encryption-gated. |
@@ -63,15 +63,29 @@ memory↔cognition loop), but the rungs lean on them: a sharper relevance signal
 makes L1's ranking, L3's once-per-turn gate, and L4/L5's repeated/parallel
 pulses all fire on the *right* memories instead of merely plausible ones.
 
-- **Per-memory usefulness feedback** *(the current next build)*. Today a
-  memory's rank comes only from its content match and recency. Nothing records
-  whether a surfaced memory *actually helped*. This capability gives each
-  memory a usefulness signal — recall hit-count, last-recalled timestamp, an
-  explicit "this helped" mark, rolled up at session start — and feeds it back
-  into ranking and into the relevance floor. It is **directly downstream of L3**:
-  now that proactive recall is ambient, the system can observe which injected
-  memories the reasoning actually used and let that close the loop. Buildable
-  with no open owner decision.
+- **Per-memory usefulness feedback** *(built)*. Each memory carries a usefulness
+  signal — recall hit-count, last-recalled/last-helpful timestamps, an explicit
+  "this helped" mark, rolled up at session start — and it feeds back into both
+  ranking *and* the relevance floor. The closing move, **directly downstream of
+  L3**: a proactive PUSH is now counted as an *impression* (`surfaced_count`)
+  kept separate from a genuine PULL (`recall_count`), so the system can tell
+  "this memory keeps getting pushed but no one ever uses it" from "this memory is
+  used." That gap nudges a **per-memory** push floor — proven-useful memories
+  surface a touch more easily, chronically-ignored ones go quiet — which is the
+  implicit, additive attack on the cross-project noise observed in live
+  dogfooding. Bounded, never hides a memory, reversible via
+  `config usefulness_floor_adapt off`.
+
+- **Project-scoped pulse recall** *(built)*. The complementary half of the
+  noise fix: a pulse that knows its active context raises the push floor for
+  memories that don't *belong* to it (belonging unifies both axes — project OR
+  any topic, with aliases), so off-context memories stop leaking into the ambient
+  stream on weak matches — while a strongly-relevant one still surfaces and
+  untagged/structural-only facts are never scoped out. The active context is a
+  pinned `active_project`, else the project DECLARED in a prompt ("continue the X
+  project", sticky per session), else the host's working directory — so it works
+  even when every session shares one cwd. Push-only (explicit recall is
+  unscoped); reversible via `config project_scoped_pulse off`.
 
 ## Relationship to the rest of the design
 

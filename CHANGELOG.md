@@ -11,6 +11,53 @@ Fixes from dogfooding FornixDB as the live memory during a real (unrelated)
 work session — see the in-use session report's recommendations.
 
 ### Added
+- **`doctor` config-integrity check.** `doctor` now flags any config key SET in a
+  store that **no code reads** — a typo (`proactive_reall`), a stale/removed
+  setting, or a key set expecting an effect it can't have (the "declarative-only"
+  class, e.g. a dial that was never wired). The reader set is scanned from source
+  so it stays current; dynamic per-session keys and indirectly-read ones are
+  recognized, not flagged. A dev-time test additionally guards that every
+  operating-level dial and behavioral toggle actually has a runtime reader, so a
+  declared-but-unwired dial fails CI rather than silently doing nothing.
+- **Cross-pulse dedup (L3 + L4 share one anti-repeat set).** A memory pushed
+  once this session by *either* rung — the per-turn L3 hook or an L4 tool-call
+  tick — is no longer pushed again that session. Previously L3 deduped per
+  session and L4 only per turn, and the two didn't share, so the same memory
+  could be re-injected. They now read/write one shared per-session set, so a
+  pulse never repeats what you've already been shown (it's still in context from
+  the first push, and explicit `recall_memory` ignores the set). Reversible via
+  `config cross_pulse_dedup off`.
+- **Project-scoped pulse recall.** The other half of the cross-project noise
+  fix: when a pulse knows its active context, a memory that doesn't *belong* to
+  it clears a higher push floor — so off-context memories stop leaking into the
+  ambient stream on weak matches, while a strongly-relevant one (high cosine)
+  still surfaces. "Belongs" unifies both axes — a memory is on-context if its
+  **project OR any of its topics** matches the active label or an alias — so the
+  two signals reinforce instead of competing. Memories with no scoping tags
+  (general/curated facts) and ones tagged only with structural topics
+  (`reference`, `feedback`, …) are never penalized. PUSH-only — explicit
+  `recall_memory` still searches everything. Reversible via
+  `config project_scoped_pulse off`.
+  - **The active context is learned three ways**, by precedence: a pinned
+    `config active_project` > **what you declare in a prompt** ("continue the
+    fornixdb project" / "switch to videos" — detected from a cue phrase + a known
+    project name, then sticky for the rest of the session) > the host's working
+    directory. Declaration is what makes scoping work when every session runs
+    from one directory.
+  - **Aliases** (`config project_aliases "fornixdb=engramdb,aimemory; videos=elira"`)
+    bridge a project's messy historical names so one declaration catches them all.
+- **Usefulness-feedback loop (closes the PUSH side).** A proactively pushed
+  memory now accrues a `surfaced_count` (an *impression*) kept strictly separate
+  from `recall_count` (a genuine *pull*) — proactive candidate-gathers no longer
+  inflate the recall count (`recall(count_recall=False)`). Ranking now also gives
+  a small saturating bonus for passive recalls (well below an explicit "this
+  helped"), and the proactive/rhythmic relevance floor is now **per-memory**: a
+  proven-useful memory clears a slightly lower bar, while one pushed many times
+  but never used clears a higher one — the implicit signal that quiets
+  cross-project noise in the ambient stream. Bounded and additive; never hides a
+  memory (explicit recall ignores the push floor). Reversible via
+  `config usefulness_floor_adapt off`. Schema → v7 (`surfaced_count`,
+  `last_surfaced`; auto-migrates).
 - **`recent_writes` (MCP).** Lists the memories saved this session (this
   connection), in write order, marking any since superseded — a checkpoint view
   for end-of-session dedup/supersede review. Optional tool (trimmable via

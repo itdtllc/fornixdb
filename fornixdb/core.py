@@ -30,6 +30,49 @@ USEFULNESS_WEIGHT = 0.5   # max ranking bonus from "this helped" endorsements;
                           # saturating so the first endorsement matters and a
                           # popular memory can't drown a more relevant one
 USEFULNESS_SATURATION = 2.0  # endorsements for ~half the max bonus (1-e^-1)
+RECALL_USE_WEIGHT = 0.2   # max ranking bonus from passive recall hits — a recall
+                          # is weaker evidence of usefulness than an explicit
+                          # endorsement, so it tops out well below USEFULNESS_WEIGHT
+RECALL_USE_SATURATION = 5.0  # recalls for ~half the max recall bonus
+
+# Per-memory relevance-floor adaptation (the usefulness loop closing on the PUSH
+# side). The proactive (L3) / rhythmic (L4) push uses one cosine floor for every
+# memory; this nudges that floor PER MEMORY by proven usefulness so the ambient
+# stream learns what to keep surfacing. A memory that has been USED (explicitly
+# recalled or endorsed) earns a small DISCOUNT — easier to surface; one PUSHED
+# many times but never used earns a PENALTY — quieter. That penalty is the
+# implicit attack on cross-project noise (a wrong-project memory pulsed every
+# session, never used, fades from the stream). Bounded and additive: it never
+# hides a memory — explicit recall ignores the push floor entirely — and is fully
+# reversible via `config usefulness_floor_adapt off`.
+FLOOR_DISCOUNT_MAX = 0.05      # most a proven-useful memory lowers its push floor
+FLOOR_PENALTY_MAX = 0.15       # most a chronically-ignored memory raises it
+FLOOR_USE_SATURATION = 2.0     # uses for ~half the max discount
+FLOOR_IGNORE_SATURATION = 4.0  # ignored impressions for ~half the max penalty
+FLOOR_MIN_IMPRESSIONS = 3      # don't penalize until pushed at least this often —
+                               # a brand-new memory hasn't been "ignored" yet
+FLOOR_CAP = 0.95               # never raise a floor so high a memory can't surface
+HELPFUL_USE_WEIGHT = 2.0       # one endorsement counts as this many recalls when
+                               # tallying "uses" for the floor math
+
+# Project-scoped pulse (the other half of the cross-project noise fix). When a
+# pulse knows its active context, a memory that BELONGS to a different context
+# clears a higher push floor — a tangential off-context hit is dropped, but a
+# strongly-relevant one (high cosine) still surfaces. "Belongs" unifies both
+# axes: a memory is on-context if its project OR any of its topics matches the
+# active label (or an alias). Memories with NO scoping tags (general principles,
+# curated cross-cutting facts) are never penalized — they belong everywhere. Like
+# usefulness adaptation this only touches the PUSH floor, never explicit recall,
+# and is reversible via `config project_scoped_pulse off`.
+PROJECT_MISMATCH_PENALTY = 0.15  # floor bump for an off-context memory on a pulse
+# Topics that tag a memory's SHAPE, not its project — they must not make a memory
+# look "off-context" (a cross-cutting reference tagged only "reference" belongs
+# everywhere). Excluded from the belongs test; domain topics (fornixdb, elira,
+# security, …) still count.
+STRUCTURAL_TOPICS = frozenset({
+    "reference", "feedback", "project", "milestone", "distilled", "pickup",
+    "publication", "documentation", "roadmap", "naming",
+})
 SALIENCE_CAP = 1.0
 VECTOR_WEIGHT = 15.0      # scales cosine into the -bm25 range. Tuned 2026-06-11
                           # via the eval fence: at 6.0, OR-mode keyword noise
@@ -93,8 +136,8 @@ def recall_has_answer(rows: list[dict]) -> bool:
         return True
     return float(top["vec_cos"]) >= RECALL_ANSWER_COS
 
-# Negative feedback (owner decisions 2026-06-12: explicit-only signal,
-# query-conditional penalty). When the current query is similar to a query a
+# Negative feedback (explicit mark_irrelevant, query-conditional penalty; shipped
+# 2026-06-12). When the current query is similar to a query a
 # memory was explicitly marked irrelevant for, that memory's score is cut to
 # a quarter — feedback is an explicit "not that one", so it must displace
 # even a strongly-dominant wrong hit (a 0.5 cut survived a salient
@@ -536,6 +579,10 @@ class MemoryStore:
         related: bool = False,      # spreading activation: attach 1-hop links
         include_superseded: bool = False,
         embedder=None,  # None = auto-detect; False = keyword-only
+        count_recall: bool = True,  # False = a candidate fetch (e.g. proactive
+                                    # PUSH gathering), which must NOT inflate
+                                    # recall_count — that count is reserved for an
+                                    # explicit PULL so it stays a real "use" signal
     ) -> list[dict]:
         """Subject-axis recall: ranked gists. Keyword matching (strict AND,
         falling back to OR — people loosen, not give up), blended with vector
@@ -581,7 +628,8 @@ class MemoryStore:
             r["stale_days"] = self.stale_days(r, now)
         if related:
             self._attach_neighbors(rows)
-        self._mark_recalled([r["id"] for r in rows], reinforce=False)
+        if count_recall:
+            self._mark_recalled([r["id"] for r in rows], reinforce=False)
         return rows
 
     def _setting_off(self, key: str, default: str = "on") -> bool:
@@ -850,15 +898,63 @@ class MemoryStore:
                 + recency)
 
     def _usefulness(self, row: dict) -> float:
-        """A saturating bonus for memories explicitly marked helpful. Folded
-        into the salience multiplier (not added flat) so it scales a real
-        relevance match rather than lifting unrelated rows: an endorsed memory
-        outranks an equally-relevant un-endorsed one, but endorsement alone
-        never makes an irrelevant memory surface."""
-        n = float(row.get("helpful_count") or 0)
-        if n <= 0:
-            return 0.0
-        return USEFULNESS_WEIGHT * (1.0 - math.exp(-n / USEFULNESS_SATURATION))
+        """A saturating bonus for memories that have proven useful — explicit
+        "this helped" endorsements (strongest) plus passive recall hits (weaker).
+        Folded into the salience multiplier (not added flat) so it scales a real
+        relevance match rather than lifting unrelated rows: a used memory outranks
+        an equally-relevant unused one, but usefulness alone never makes an
+        irrelevant memory surface. recall_count only counts genuine PULLS here —
+        proactive PUSH impressions are recorded separately (surfaced_count) and
+        never inflate it (see recall(count_recall=...))."""
+        bonus = 0.0
+        h = float(row.get("helpful_count") or 0)
+        if h > 0:
+            bonus += USEFULNESS_WEIGHT * (1.0 - math.exp(-h / USEFULNESS_SATURATION))
+        r = float(row.get("recall_count") or 0)
+        if r > 0:
+            bonus += RECALL_USE_WEIGHT * (1.0 - math.exp(-r / RECALL_USE_SATURATION))
+        return bonus
+
+    def effective_floor(self, row: dict, base_floor: float,
+                        active_project: str | None = None,
+                        aliases: set[str] | tuple = ()) -> float:
+        """The PUSH relevance floor for ONE memory: `base_floor`, adjusted by two
+        independent dials (each its own config switch).
+
+        Usefulness (`usefulness_floor_adapt`, default on): used vs ignored from the
+        durable counts — uses = recall_count + HELPFUL_USE_WEIGHT*helpful_count
+        (genuine pulls and endorsements), impressions = surfaced_count (proactive
+        pushes). A used memory gets a discount (easier to surface); one pushed many
+        times but never used gets a penalty (quieter).
+
+        Project scope (`project_scoped_pulse`, default on; only when `active_project`
+        is given): a memory that does NOT belong to the active context clears a
+        higher bar, so off-context memories stop leaking into the stream on weak
+        matches while a strongly-relevant one still surfaces. "Belongs" unifies
+        project and topics — on-context if the memory's project OR any of its
+        (non-structural) topics matches the active label or one of `aliases`.
+        Memories with no scoping tags (general facts) are never penalized.
+
+        Both dials only ever move the floor within sane bounds: never above
+        FLOOR_CAP, never below 0, and explicit recall ignores it entirely."""
+        floor = base_floor
+        if not self._setting_off("usefulness_floor_adapt"):
+            uses = (float(row.get("recall_count") or 0)
+                    + HELPFUL_USE_WEIGHT * float(row.get("helpful_count") or 0))
+            impressions = float(row.get("surfaced_count") or 0)
+            floor -= FLOOR_DISCOUNT_MAX * (1.0 - math.exp(-uses / FLOOR_USE_SATURATION))
+            if impressions >= FLOOR_MIN_IMPRESSIONS:
+                ignored = max(0.0, impressions - uses)
+                floor += FLOOR_PENALTY_MAX * (1.0 - math.exp(-ignored / FLOOR_IGNORE_SATURATION))
+        if active_project and not self._setting_off("project_scoped_pulse"):
+            ctx = {active_project.strip().lower()}
+            ctx |= {str(a).strip().lower() for a in aliases}
+            proj = (row.get("project") or "").strip().lower()
+            topics = {str(t).strip().lower() for t in (row.get("topics") or [])}
+            tags = (({proj} if proj else set()) | topics) - STRUCTURAL_TOPICS
+            if tags and not (tags & ctx):     # tagged, but for another context
+                floor += PROJECT_MISMATCH_PENALTY
+        return max(0.0, min(floor, FLOOR_CAP))
 
     def timeline(
         self,
@@ -935,6 +1031,39 @@ class MemoryStore:
               else (ts, bump, SALIENCE_CAP, i)) for i in ids],
         )
         self.conn.commit()
+
+    def record_surfaced(self, ids: list[int]) -> None:
+        """Count a proactive PUSH impression: this memory was injected unsolicited
+        (L3 once-per-turn / L4 rhythmic) rather than pulled by an explicit recall.
+        Deliberately NOT a recall — it never bumps recall_count or salience, so a
+        memory the system keeps pushing but no one ever uses accrues impressions
+        without ever looking 'used'. That gap (surfaced_count vs recall_count/
+        helpful_count) is the implicit noise signal `effective_floor` acts on.
+        Frozen/read-only stores skip silently, like _mark_recalled."""
+        if not ids or self.frozen():
+            return
+        ts = now_iso()
+        self.conn.executemany(
+            """UPDATE memory SET surfaced_count = surfaced_count + 1,
+                                 last_surfaced = ? WHERE id = ?""",
+            [(ts, i) for i in ids],
+        )
+        self.conn.commit()
+
+    def topics_for(self, ids: list[int]) -> dict[int, list[str]]:
+        """Batch-fetch topic names for several memories in one query (the proactive
+        belongs test needs topics, which plain recall rows don't carry). Returns
+        {memory_id: [topic, ...]}; ids with no topics are absent."""
+        if not ids:
+            return {}
+        ph = ",".join("?" * len(ids))
+        out: dict[int, list[str]] = {}
+        for mid, name in self.conn.execute(
+                f"""SELECT mt.memory_id, t.name FROM memory_topic mt
+                    JOIN topic t ON t.id = mt.topic_id
+                    WHERE mt.memory_id IN ({ph})""", ids):
+            out.setdefault(mid, []).append(name)
+        return out
 
     # ---------------------------------------------------------------- misc
 
