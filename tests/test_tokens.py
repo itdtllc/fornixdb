@@ -51,8 +51,10 @@ class TestTokens(unittest.TestCase):
         # review_candidates, §15.2 #1) -> 1750 (mark_helpful, §15.2 #6) -> 1810
         # (export_markdown filters: query/when/since/until + single_file +
         # index_name) -> 1890 (recent_writes — session write-log for
-        # end-of-session dedup, dogfooding report §4.4) — each a deliberate
-        # raise for named tools. This measures
+        # end-of-session dedup, dogfooding report §4.4) -> 1960
+        # (remember/remember_many `project` arg — explicit capture scope, since
+        # the MCP server can't see the host's per-session declared project) —
+        # each a deliberate raise for named tools. This measures
         # ALL defined tools; the
         # live footprint is the
         # smaller ADVERTISED set after `fornixdb tools` curation (jot/review,
@@ -60,7 +62,7 @@ class TestTokens(unittest.TestCase):
         import json
 
         from fornixdb.adapters.mcp_server import INSTRUCTIONS, TOOLS
-        SCHEMA_TOKEN_BUDGET = 1890
+        SCHEMA_TOKEN_BUDGET = 1960
         INSTRUCTIONS_TOKEN_BUDGET = 260
 
         schema_tokens = estimate_tokens(json.dumps(TOOLS))

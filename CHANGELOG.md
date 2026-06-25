@@ -7,6 +7,24 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-06-25
+
+### Fixed
+- **Auto-captured sessions are scoped to the project actually worked in.** The
+  two transcript ingesters (batch back-fill and the live session-end hook) used
+  to derive a session's `project` from the `~/.claude/projects/<dir>` name,
+  which encodes the session's *launch* directory. In a setup where every session
+  launches from one home directory, that mislabeled all work with that
+  directory's name. The project is now read from the session's own recorded
+  working directory, falling back to the directory-name parse only when no cwd
+  is recorded.
+
+### Added
+- **`remember` / `remember_many` take an optional `project`.** A manually stored
+  memory can now declare the project it belongs to (the batch form scopes the
+  whole batch, with an optional per-item override). When omitted it inherits a
+  pinned `config active_project`; otherwise it is left unscoped, as before.
+
 ## [0.3.0] — 2026-06-25
 
 Recall-quality and noise-reduction work, plus a configurable operating surface —

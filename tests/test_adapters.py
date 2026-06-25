@@ -281,6 +281,22 @@ class TestTranscriptImport(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIn("Fix the login bug", rows[0]["gist"])
 
+    def test_project_from_session_cwd_not_launch_dir(self):
+        # Regression: project must come from the session's recorded cwd
+        # (/tmp/proj -> "proj"), not the ~/.claude/projects/<dir> name that
+        # encodes the LAUNCH dir. Reproduces the live mislabel where Videos
+        # work got stamped "RetirementEstimator" (the launch dir).
+        s = mem_store()
+        with tempfile.TemporaryDirectory() as d:
+            self._write_session(d)
+            r = import_project_dir(s, d)
+        self.assertEqual(r["project"], Path(d).name.split("-")[-1])  # dir fallback
+        row = s.timeline("2026-06-03T00:00:00", "2026-06-04T00:00:00")[0]
+        project = s.conn.execute(
+            "SELECT project FROM memory WHERE id = ?", (row["id"],)).fetchone()[0]
+        self.assertEqual(project, "proj")
+        self.assertNotEqual(project, Path(d).name)
+
 
 class TestSessionEndCapture(unittest.TestCase):
     """The SessionEnd hook adapter: live passive capture at session end."""
@@ -300,6 +316,9 @@ class TestSessionEndCapture(unittest.TestCase):
         self.assertEqual(st["sessions"], 1)
         rows = self.s.timeline("2026-06-03T00:00:00", "2026-06-04T00:00:00")
         self.assertIn("Fix the login bug", rows[0]["gist"])
+        project = self.s.conn.execute(
+            "SELECT project FROM memory WHERE id = ?", (rows[0]["id"],)).fetchone()[0]
+        self.assertEqual(project, "proj")  # session cwd, not the launch dir
 
     def test_resumed_session_refreshes_in_place(self):
         with tempfile.TemporaryDirectory() as d:

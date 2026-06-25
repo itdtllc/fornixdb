@@ -28,6 +28,7 @@ from pathlib import Path
 
 from ..core import MemoryStore, now_iso
 from ..multistore import get_config
+from ..proactive import active_project_from_cwd
 from .claude_code_transcripts import (MAX_DETAIL_PROMPT, MAX_GIST_PROMPT,
                                       summarize_session)
 
@@ -68,7 +69,10 @@ def capture_session(store: MemoryStore, transcript_path: str | Path,
     if s is None:
         return "empty session — skipped"
     session_id = session_id or s["session_id"]
-    project = path.parent.name.split("-")[-1] or path.parent.name
+    # The session's actual cwd is the project; path.parent encodes the LAUNCH
+    # dir, which is wrong when the session cd'd into another project.
+    project = (active_project_from_cwd(s["cwd"])
+               or path.parent.name.split("-")[-1] or path.parent.name)
     gist, detail = _compose(s, path, project)
 
     existing = store.conn.execute(

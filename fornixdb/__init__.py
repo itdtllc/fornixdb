@@ -4,4 +4,4 @@ Local, private, model-agnostic. The core is stdlib-only and vendor-neutral;
 ecosystem-specific importers live in fornixdb.adapters.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"

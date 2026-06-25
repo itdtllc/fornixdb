@@ -56,6 +56,34 @@ class TestProtocol(unittest.TestCase):
         out = self._call("forget_memory", ref="gpu-rule")
         self.assertIn("tombstoned, recoverable", out["content"][0]["text"])
 
+    def _project_of(self, name):
+        return self.srv.store.conn.execute(
+            "SELECT project FROM memory WHERE name = ?", (name,)).fetchone()[0]
+
+    def test_remember_explicit_project_arg(self):
+        # The explicit arg is the reliable per-capture scope (the MCP server
+        # can't see the host's per-session declared project).
+        self._call("remember", title="vid-note", content="A videos finding.",
+                   project="videos")
+        self.assertEqual(self._project_of("vid-note"), "videos")
+
+    def test_remember_falls_back_to_pinned_active_project(self):
+        from fornixdb.multistore import set_config
+        set_config(self.srv.store, "active_project", "fornixdb")
+        self._call("remember", title="pinned-note", content="No project arg.")
+        self.assertEqual(self._project_of("pinned-note"), "fornixdb")
+
+    def test_remember_no_project_stays_null(self):
+        self._call("remember", title="bare-note", content="Nothing pinned.")
+        self.assertIsNone(self._project_of("bare-note"))
+
+    def test_remember_many_batch_project_with_per_item_override(self):
+        self._call("remember_many", project="videos", items=[
+            {"title": "b1", "content": "batch one"},
+            {"title": "b2", "content": "batch two", "project": "fornixdb"}])
+        self.assertEqual(self._project_of("b1"), "videos")       # batch default
+        self.assertEqual(self._project_of("b2"), "fornixdb")     # per-item wins
+
     def test_recent_writes_tracks_session_and_supersede(self):
         self.assertIn("no memories written",
                       self._call("recent_writes")["content"][0]["text"])
