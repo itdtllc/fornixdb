@@ -7,8 +7,11 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
-Fixes from dogfooding FornixDB as the live memory during a real (unrelated)
-work session — see the in-use session report's recommendations.
+## [0.3.0] — 2026-06-25
+
+Recall-quality and noise-reduction work, plus a configurable operating surface —
+fixes from dogfooding FornixDB as the live memory during real (unrelated) work
+sessions. All new behavior defaults on and is reversible.
 
 ### Added
 - **`doctor` config-integrity check.** `doctor` now flags any config key SET in a
