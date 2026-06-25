@@ -26,6 +26,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..core import MemoryStore
+from ..proactive import active_project_from_cwd
 
 MAX_GIST_PROMPT = 140
 MAX_DETAIL_PROMPT = 600
@@ -117,7 +118,10 @@ def summarize_session(path: Path) -> dict | None:
 def import_project_dir(store: MemoryStore, project_dir: str | Path) -> dict:
     """Import every session transcript in one ~/.claude/projects/<project> dir."""
     project_dir = Path(project_dir).expanduser()
-    project = project_dir.name.split("-")[-1] or project_dir.name
+    # Fallback only: the ~/.claude/projects/<dir> name encodes the session's
+    # LAUNCH cwd, which is wrong when the session cd'd into another project.
+    # Prefer each session's own recorded cwd (below); fall back to this.
+    dir_project = project_dir.name.split("-")[-1] or project_dir.name
     imported = skipped = 0
 
     for path in sorted(project_dir.glob("*.jsonl")):
@@ -132,6 +136,9 @@ def import_project_dir(store: MemoryStore, project_dir: str | Path) -> dict:
         if s is None:
             skipped += 1
             continue
+        # Derive project from the session's actual working dir, not the launch
+        # dir baked into project_dir's name.
+        project = active_project_from_cwd(s["cwd"]) or dir_project
         date = s["started"][:10]
         gist = (f"Session {date} ({s['user_turns']} user turns"
                 + (f", branch {s['branch']}" if s["branch"] else "")
@@ -161,7 +168,7 @@ def import_project_dir(store: MemoryStore, project_dir: str | Path) -> dict:
                              source_ref=str(path))
         imported += 1
 
-    return {"project": project, "imported": imported, "skipped": skipped}
+    return {"project": dir_project, "imported": imported, "skipped": skipped}
 
 
 def main(argv=None) -> int:

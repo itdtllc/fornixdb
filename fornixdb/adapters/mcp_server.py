@@ -31,6 +31,7 @@ from .. import __version__
 from ..core import (AUTO_CAPTURE_SOURCES, FrozenStoreError, MemoryStore,
                     recall_has_answer)
 from ..multistore import capture_mode, multi_recall, multi_timeline, open_stores
+from ..proactive import resolve_active_project
 from ..timeparse import parse_when
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -89,7 +90,9 @@ TOOLS = [
          "title": {"type": "string"},
          "content": {"type": "string"},
          "kind": {"type": "string", "enum": ["semantic", "feedback", "reference",
-                                             "episodic"], "default": "semantic"}},
+                                             "episodic"], "default": "semantic"},
+         "project": {"type": "string", "description": "Project you're working in "
+                     "(scopes recall). Omit to inherit a pinned active_project."}},
          "required": ["title", "content"]}},
     {"name": "remember_many",
      "description": "Store several memories in one call (batch). Use when you "
@@ -101,7 +104,9 @@ TOOLS = [
              "content": {"type": "string"},
              "kind": {"type": "string", "enum": ["semantic", "feedback",
                                                  "reference", "episodic"]}},
-             "required": ["content"]}}},
+             "required": ["content"]}},
+         "project": {"type": "string", "description": "Project for the whole "
+                     "batch (scopes recall). Omit to inherit a pinned active_project."}},
          "required": ["items"]}},
     {"name": "jot",
      "description": "Stage a raw thought for later (cheap mid-work capture, no "
@@ -354,14 +359,18 @@ class FornixMCP:
             "AND superseded_time IS NULL ORDER BY salience DESC LIMIT 50")
         return "\n".join(_line(dict(r)) for r in rows) or "(no standing memories)"
 
-    def _remember_one(self, title: str, content: str, kind: str = "semantic") -> list[str]:
+    def _remember_one(self, title: str, content: str, kind: str = "semantic",
+                      project: str | None = None) -> list[str]:
         """Store one memory and return its report line(s). Shared by `remember`
         (single) and `remember_many` (batch) so both honor the same update /
-        auto-link / near-duplicate behavior."""
+        auto-link / near-duplicate behavior. `project` scopes the memory for
+        recall; when omitted it falls back to a pinned `config active_project`
+        (the MCP server can't see the host's per-session declared project)."""
+        eff_project = project or resolve_active_project(self.store, None, None)
         old = self.store.show(title, reinforce=False) if title else None
         new_id = self.store.store(content[:120], content, kind=kind,
                                   name=None if old else title or None,
-                                  source="mcp")
+                                  project=eff_project, source="mcp")
         self._session_writes.append(new_id)
         if old:
             self.store.supersede(old["id"], new_id)
@@ -387,14 +396,16 @@ class FornixMCP:
                 f"under its title to supersede; if RELATED, link {new_id} {sug['id']}.")
         return out
 
-    def remember(self, title: str, content: str, kind: str = "semantic") -> str:
-        return "\n".join(self._remember_one(title, content, kind))
+    def remember(self, title: str, content: str, kind: str = "semantic",
+                 project: str | None = None) -> str:
+        return "\n".join(self._remember_one(title, content, kind, project))
 
-    def remember_many(self, items: list) -> str:
+    def remember_many(self, items: list, project: str | None = None) -> str:
         """Store several memories in one call — the friction-reducer for an
         agent that accumulated multiple things to record (§15.2 #1). Each item
         is {title, content, kind?}; same per-item behavior as `remember`
-        (update-by-title, auto-link, near-duplicate nudge)."""
+        (update-by-title, auto-link, near-duplicate nudge). `project` scopes the
+        whole batch; a per-item `project` overrides it."""
         if not items:
             return "nothing to store (items was empty)"
         lines = []
@@ -403,7 +414,8 @@ class FornixMCP:
                 lines.append(f"{n}. skipped (needs at least content)")
                 continue
             rep = self._remember_one(it.get("title", ""), it["content"],
-                                     it.get("kind", "semantic"))
+                                     it.get("kind", "semantic"),
+                                     it.get("project") or project)
             lines.append(f"{n}. " + "; ".join(rep))
         return "\n".join(lines)
 
