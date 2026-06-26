@@ -112,7 +112,17 @@ def build_plan(store, ask, out) -> list[dict]:
             plan.append({"label": "budget_policy", "old": cur_pol, "new": new_pol,
                          "apply": lambda v=new_pol: set_config(store, "budget_policy", v)})
 
-    # 7) MCP tools — which tools this store advertises to an AI. Core tools are
+    # 7) floor log — opt-in diagnostics (default off): record each proactive/cadence
+    #    pulse's cosine vs the floor it was tested against to floor_log.jsonl beside
+    #    the store, so the relevance floor can be tuned from data (read it back with
+    #    `fornixdb floor-stats`). No effect on recall behavior; just instrumentation.
+    cur = _on(store, "floor_log", "off")
+    new = _ask_keep(ask, out, "floor log (pulse-cosine diagnostics)", cur, ("on", "off"))
+    if new != cur:
+        plan.append({"label": "floor_log", "old": cur, "new": new,
+                     "apply": lambda v=new: set_config(store, "floor_log", v)})
+
+    # 8) MCP tools — which tools this store advertises to an AI. Core tools are
     #    always on; optional ones can be trimmed (smaller per-turn prompt).
     from .adapters.mcp_server import (TOOLS, set_tool_enabled, tool_tier,
                                       tools_disabled)

@@ -113,7 +113,8 @@ def pulse(store: MemoryStore, thought: str, episode: Episode, *,
     rows = relevant_memories(
         store, thought, limit=limit, floor=floor, exclude_ids=exclude,
         active_project=resolve_active_project(store, active_project,
-                                              session_id=session_id))
+                                              session_id=session_id),
+        channel="L4")
     block = format_block(rows, max_chars)
     if not block:
         # the thought still counts as the latest query, so an unchanged next

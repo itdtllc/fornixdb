@@ -7,6 +7,20 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+### Added
+- **Floor logging — opt-in pulse-cosine instrumentation.** With `config floor_log on`
+  (also offered in the `configure` wizard; default off), every candidate evaluated at
+  the proactive/cadence relevance floor appends one JSONL record — channel (L3/L4),
+  cosine, effective vs base floor, margin, and decision — to `floor_log.jsonl` beside
+  the store. It captures below-floor near-misses too, not just what surfaced. No effect
+  on recall behavior and a true no-op when off. Driven by store config, never an
+  environment variable.
+- **`fornixdb floor-stats`** — turns the floor log into cosine distributions, floor-dial
+  activity (how often the effective floor is raised/lowered from the base), and an
+  evidence-based floor recommendation. It joins each surfaced memory to its use outcome
+  (ever used vs pushed-but-never-used) and suggests a data-driven floor — or honestly
+  reports insufficient evidence / no lossless cutoff when the data doesn't support one.
+
 ## [0.3.1] — 2026-06-25
 
 ### Fixed

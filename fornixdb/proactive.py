@@ -16,7 +16,9 @@ integration edge is host-specific.
 
 from __future__ import annotations
 
+import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 from . import context
@@ -130,9 +132,69 @@ def cross_pulse_dedup_on(store: MemoryStore) -> bool:
     return get_config(store, "cross_pulse_dedup", "on") not in ("off", "0", "false")
 
 
+# --- floor instrumentation -------------------------------------------------
+# Opt-in via STORE CONFIG (`config floor_log on`), never an env var — behavior
+# travels with the store, like every other tuning knob here. When on, every
+# candidate evaluated at the relevance floor (for BOTH the L3 per-turn hook and L4
+# cadence pulses) appends one JSONL record with its cosine, the effective floor it
+# was tested against, and the decision. This is the empirical answer to "where
+# should the floor sit / which pulses are useful vs noise" — it captures near-misses
+# too, not just what surfaced. The log sits BESIDE the store db (floor_log.jsonl) so
+# the recall hot-path never writes to the db itself (no lock contention). A true
+# no-op (one config read, no I/O) when off, so the relevance core stays pure for
+# tests and production unless instrumentation is deliberately enabled.
+def floor_log_path_for(store: MemoryStore) -> str | None:
+    """The floor log's location for THIS store (floor_log.jsonl beside the db),
+    regardless of whether logging is currently enabled — readers/analyzers use this
+    to find a log written earlier and since turned off. None for an in-memory store."""
+    try:
+        row = store.conn.execute(
+            "SELECT file FROM pragma_database_list WHERE name='main'").fetchone()
+        dbfile = (row[0] if row else "") or ""
+        if not dbfile:                 # in-memory / anonymous store: no place to log
+            return None
+        return str(Path(dbfile).with_name("floor_log.jsonl"))
+    except Exception:
+        return None
+
+
+def _floor_log_path(store: MemoryStore) -> str | None:
+    if get_config(store, "floor_log", "off") in ("off", "0", "false"):
+        return None
+    return floor_log_path_for(store)
+
+
+def _log_floor_decision(store: MemoryStore, channel: str | None, prompt: str,
+                        row: dict, cos, eff_floor: float, base_floor: float,
+                        decision: str) -> None:
+    path = _floor_log_path(store)
+    if not path:
+        return
+    c = None if cos is None else round(float(cos), 4)
+    rec = {
+        "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "channel": channel or "?",        # "L3" (per-turn) | "L4" (cadence)
+        "id": row.get("id"),
+        "kind": row.get("kind"),
+        "vec_cos": c,
+        "eff_floor": round(float(eff_floor), 4),
+        "base_floor": round(float(base_floor), 4),
+        "margin": None if c is None else round(c - float(eff_floor), 4),
+        "decision": decision,             # surfaced|below_floor|keyword_anchor|weak_vector_skip
+        "gist": (row.get("gist") or "")[:80],
+        "query": (prompt or "")[:80],
+    }
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def relevant_memories(store: MemoryStore, prompt: str, *,
                       limit: int = DEFAULT_LIMIT, floor: float | None = None,
-                      exclude_ids=(), active_project: str | None = None) -> list[dict]:
+                      exclude_ids=(), active_project: str | None = None,
+                      channel: str | None = None) -> list[dict]:
     """The relevance-gated core (testable, no I/O): rows worth injecting for
     `prompt`, best-first, or [] when nothing clears the floor. A row qualifies
     if its vector cosine clears the floor. In a KEYWORD-ONLY store (no embedder)
@@ -169,10 +231,17 @@ def relevant_memories(store: MemoryStore, prompt: str, *,
         eff_floor = store.effective_floor(r, floor, active_project=active_project,
                                           aliases=aliases)
         if cos is None:
-            if has_vectors:        # weak vector match, not a real anchor — skip
-                continue
-            out.append(r)          # keyword-only store: FTS anchor is all we have
+            # weak vector match (not a real anchor) when the store HAS vectors;
+            # otherwise a keyword-only store where the FTS anchor is all we have
+            decision = "weak_vector_skip" if has_vectors else "keyword_anchor"
         elif float(cos) >= eff_floor:
+            decision = "surfaced"
+        else:
+            decision = "below_floor"
+        _log_floor_decision(store, channel, prompt, r, cos, eff_floor, floor, decision)
+        if decision == "weak_vector_skip":
+            continue
+        if decision in ("keyword_anchor", "surfaced"):
             out.append(r)
         if len(out) >= limit:
             break
@@ -232,7 +301,7 @@ def proactive_recall(store: MemoryStore, prompt: str, *,
     active = resolve_active_project(store, active_project, session_id=session_id)
     rows = relevant_memories(store, prompt, limit=limit,
                              exclude_ids=_load_injected(store, session_id),
-                             active_project=active)
+                             active_project=active, channel="L3")
     block = format_block(rows, max_chars)
     if block:
         ids = [r["id"] for r in rows]

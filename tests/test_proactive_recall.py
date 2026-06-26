@@ -95,6 +95,39 @@ class TestProactiveRecall(unittest.TestCase):
             {"id": 2, "kind": "semantic", "gist": "strong", "vec_cos": 0.50}]
         self.assertEqual([r["id"] for r in relevant_memories(self.s, "x")], [2])
 
+    # ----------------------------------------------------- floor instrumentation
+
+    def test_floor_log_records_each_candidate_cosine(self):
+        # `config floor_log on`: every candidate evaluated at the floor is logged to
+        # floor_log.jsonl BESIDE the store, with its cosine, the floor it was tested
+        # against, and the decision — the below-floor near-miss too, not just what
+        # surfaced. No env var anywhere.
+        import json
+        set_config(self.s, "floor_log", "on")
+        log = Path(self.tmp.name) / "floor_log.jsonl"   # derived beside t.db
+        self.s.recall = lambda *a, **k: [
+            {"id": 1, "kind": "semantic", "gist": "strong hit", "vec_cos": 0.55},
+            {"id": 2, "kind": "semantic", "gist": "near miss", "vec_cos": 0.10}]
+        out = relevant_memories(self.s, "deploy config", floor=0.30, channel="L4")
+        self.assertEqual([r["id"] for r in out], [1])
+        by_id = {r["id"]: r for r in
+                 (json.loads(x) for x in log.read_text().splitlines())}
+        self.assertEqual(by_id[1]["decision"], "surfaced")
+        self.assertEqual(by_id[1]["vec_cos"], 0.55)
+        self.assertEqual(by_id[1]["channel"], "L4")
+        self.assertEqual(by_id[1]["base_floor"], 0.30)
+        self.assertGreaterEqual(by_id[1]["vec_cos"], by_id[1]["eff_floor"])
+        self.assertEqual(by_id[2]["decision"], "below_floor")
+        self.assertLess(by_id[2]["vec_cos"], by_id[2]["eff_floor"])
+
+    def test_floor_log_is_noop_when_config_off(self):
+        # default is off: no file is written
+        log = Path(self.tmp.name) / "floor_log.jsonl"
+        self.s.recall = lambda *a, **k: [
+            {"id": 1, "kind": "semantic", "gist": "x", "vec_cos": 0.9}]
+        relevant_memories(self.s, "x", floor=0.30)
+        self.assertFalse(log.exists())
+
     # ------------------------------------------------------------ budget / form
 
     def test_limit_caps_injected_rows(self):
