@@ -363,6 +363,12 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("topics", help="list topics with counts")
     sub.add_parser("stats", help="store statistics")
 
+    fsp = sub.add_parser("floor-stats",
+                         help="analyze the floor log (cosine distributions, dial "
+                              "activity, and an evidence-based floor recommendation)")
+    fsp.add_argument("--log", help="floor log path (default: floor_log.jsonl beside "
+                                   "the store)")
+
     mp = sub.add_parser("import-markdown",
                         help="import Markdown: a doc chunked by heading into "
                              "section memories (default), or --frontmatter for a "
@@ -1057,6 +1063,21 @@ def _dispatch(p, args, store, stores) -> int:
 
     elif args.cmd == "stats":
         print(json.dumps(store.stats(), indent=2, default=str))
+
+    elif args.cmd == "floor-stats":
+        from .floor_stats import (format_report, load_records,
+                                  outcomes_from_store, summarize)
+        from .proactive import floor_log_path_for
+        path = args.log or floor_log_path_for(store)
+        records = load_records(path)
+        ids = {r.get("id") for r in records if r.get("decision") == "surfaced"}
+        outcomes = outcomes_from_store(store, ids)
+        summary = summarize(records, outcomes)
+        summary["log_path"] = str(path) if path else None
+        if args.json:
+            print(json.dumps(summary, indent=2, default=str))
+        else:
+            print(format_report(summary))
 
     elif args.cmd == "import-markdown":
         target = stores[-1][1] if (args.shared and len(stores) > 1) else store
