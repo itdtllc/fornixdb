@@ -1,0 +1,6 @@
+# The macOS/Linux wizard launcher is a shell script: it MUST stay LF, or a
+# CRLF shebang (#!/usr/bin/env bash\r) breaks execution on Unix.
+fornix-config text eol=lf
+# Windows batch launcher: CRLF is the native convention for .cmd/.bat.
+*.cmd text eol=crlf
+*.bat text eol=crlf

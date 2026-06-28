@@ -1,9 +1,14 @@
 """Interactive configuration wizard: scripted-input drive of `fornixdb
 configure` — review-and-confirm timing, cumulative ladder, frozen handling."""
 
+import json
+import os
+import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 
-from fornixdb import levels, wizard
+from fornixdb import cli, levels, wizard
 from fornixdb.core import MemoryStore
 from fornixdb.multistore import capture_mode, get_config, set_config
 
@@ -112,6 +117,74 @@ class WizardCase(unittest.TestCase):
         res, _ = self._run("y", "", "", "", "", "", "", "", "")  # unfreeze, keep all
         self.assertFalse(self.s.frozen())
         self.assertFalse(res["aborted"])
+
+
+class ResolveConfigureStoreCase(unittest.TestCase):
+    """`fornix-config` runs with no args; resolve_configure_store picks which
+    registered store to configure (asking only when there is more than one)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.artist = self.dir / "fornix-artist.db"
+        self.memory = self.dir / "fornix-memory.db"
+        for p in (self.artist, self.memory):
+            MemoryStore(db_path=str(p)).close()  # materialize real store files
+        self.reg = self.dir / "fornix-stores.json"
+        self._env = {k: os.environ.get(k) for k in
+                     ("FORNIXDB_REGISTRY", "FORNIXDB_SHARED_DB", "FORNIXDB_DB")}
+        os.environ["FORNIXDB_REGISTRY"] = str(self.reg)
+        # a shared-tier path the registry will list but the picker must exclude
+        os.environ["FORNIXDB_SHARED_DB"] = str(self.dir / "fornix-shared.db")
+        os.environ.pop("FORNIXDB_DB", None)
+
+    def tearDown(self):
+        for k, v in self._env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        self.tmp.cleanup()
+
+    def _write_registry(self, *paths):
+        self.reg.write_text(json.dumps([str(p) for p in paths]))
+
+    def test_explicit_db_is_respected(self):
+        self._write_registry(self.artist, self.memory)
+        args = SimpleNamespace(db="chosen.db", cmd="configure")
+        cli.resolve_configure_store(args, ask=self._fail_ask, out=lambda *_: None)
+        self.assertEqual(args.db, "chosen.db")
+
+    def test_single_store_auto_selected_without_prompt(self):
+        self._write_registry(self.memory)
+        args = SimpleNamespace(db=None, cmd="configure")
+        cli.resolve_configure_store(args, ask=self._fail_ask, out=lambda *_: None)
+        self.assertEqual(Path(args.db), self.memory)
+
+    def test_shared_tier_excluded_from_candidates(self):
+        shared = Path(os.environ["FORNIXDB_SHARED_DB"])
+        MemoryStore(db_path=str(shared)).close()
+        self._write_registry(self.memory, shared)  # only memory is a consumer store
+        args = SimpleNamespace(db=None, cmd="configure")
+        cli.resolve_configure_store(args, ask=self._fail_ask, out=lambda *_: None)
+        self.assertEqual(Path(args.db), self.memory)
+
+    def test_multiple_stores_prompts_and_picks(self):
+        self._write_registry(self.artist, self.memory)  # 1) artist 2) memory
+        args = SimpleNamespace(db=None, cmd="configure")
+        cli.resolve_configure_store(args, ask=lambda *_: "2", out=lambda *_: None)
+        self.assertEqual(Path(args.db), self.memory)
+
+    def test_no_registry_leaves_db_none(self):
+        os.environ.pop("FORNIXDB_REGISTRY", None)
+        os.environ["FORNIXDB_REGISTRY"] = str(self.dir / "absent.json")
+        args = SimpleNamespace(db=None, cmd="configure")
+        cli.resolve_configure_store(args, ask=self._fail_ask, out=lambda *_: None)
+        self.assertIsNone(args.db)
+
+    @staticmethod
+    def _fail_ask(*_a, **_k):
+        raise AssertionError("should not prompt")
 
 
 if __name__ == "__main__":
