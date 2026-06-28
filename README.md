@@ -182,6 +182,24 @@ python3 -m fornixdb doctor                 # health check + host-hook detection
 python3 -m fornixdb doctor --apply-suggested   # apply the unmet defaults (e.g. a disk cap)
 ```
 
+### The configuration wizard
+
+`config` prints and `config <key> <value>` sets one thing at a time. If you'd
+rather be walked through every setting — with the suggested default, a short
+explanation, and the current value for each, confirming as you go — run the
+**interactive wizard**. It's the same engine (`fornixdb configure`), wrapped in
+a launcher that needs **no arguments**: it finds your store from the machine
+registry, and if you keep more than one store it asks which to configure. The
+wizard is non-destructive — it reports "No changes" when you keep everything.
+
+```bash
+./fornix-config                 # macOS / Linux / Git Bash
+fornix-config.cmd               # Windows (also double-clickable)
+
+./fornix-config --db /path/to/other.db   # advanced: target a specific store
+python3 -m fornixdb configure            # same wizard, no launcher
+```
+
 ## Disk budget
 
 Never-delete is the default: with no cap set, nothing is ever removed — forgetting is only a ranking and tier effect. On devices where that's not affordable, cap the store's **total on-disk footprint** (db + WAL + cold archives) and choose what happens at the boundary:
