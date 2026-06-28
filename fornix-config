@@ -1,35 +1,26 @@
 #!/usr/bin/env bash
-# FornixDB configuration wizard launcher.
+# FornixDB configuration wizard — launcher for macOS / Linux (and Git Bash).
 #
-#   cd /path/to/AIMemory
-#   ./fornix-config                 # run the wizard against THIS repo's store
-#   ./fornix-config --db /other.db  # explicit override
+#   ./fornix-config                 # configure your store — NO arguments needed
+#   ./fornix-config --db /other.db  # advanced: target a specific store
 #
-# No `source .venv/bin/activate` and no `export FORNIXDB_DB` needed. The store
-# ALWAYS defaults to this repo's ./store/fornix.db, deterministically — the
-# launcher deliberately ignores an ambient $FORNIXDB_DB so a stale export in
-# your shell can't redirect it to the wrong (or a non-existent) store. To point
-# somewhere else, pass --db explicitly.
+# No venv activation and no $FORNIXDB_DB needed. The wizard finds your store
+# from the machine registry; if you have more than one it asks which to
+# configure. Windows users: run fornix-config.cmd instead (double-clickable).
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Prefer the repo venv's interpreter (has the deps); fall back to system python3.
-py="$here/.venv/bin/python"
-[ -x "$py" ] || py="$(command -v python3)"
-
-# Default store = this repo's; a leading --db / --db=PATH overrides it. Extra
-# args pass through to `fornixdb configure`.
-db="$here/store/fornix.db"
-passthrough=()
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --db) db="$2"; shift 2 ;;
-        --db=*) db="${1#--db=}"; shift ;;
-        *) passthrough+=("$1"); shift ;;
-    esac
+# Prefer the repo venv interpreter (it has the deps) on either layout, then fall
+# back to a Python on PATH. -m fornixdb runs the package from this checkout.
+py=""
+for cand in "$here/.venv/bin/python" "$here/.venv/Scripts/python.exe"; do
+    [ -x "$cand" ] && { py="$cand"; break; }
 done
+[ -n "$py" ] || py="$(command -v python3 || command -v python || true)"
+[ -n "$py" ] || { echo "fornix-config: no Python interpreter found" >&2; exit 1; }
 
-# Unset any ambient FORNIXDB_DB so it cannot override the explicit --db below.
-exec env -u FORNIXDB_DB PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" \
-    "$py" -m fornixdb --db "$db" configure "${passthrough[@]+"${passthrough[@]}"}"
+# Any passthrough args (e.g. --db) are GLOBAL options, so they precede the
+# `configure` subcommand. With no args this is just: python -m fornixdb configure
+exec env PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" \
+    "$py" -m fornixdb ${1+"$@"} configure

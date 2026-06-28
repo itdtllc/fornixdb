@@ -113,6 +113,67 @@ def _print_rows(rows: list[dict], as_json: bool,
         print(f"(+{omitted} more — raise --max-chars or narrow the query)")
 
 
+def registered_consumer_stores() -> list[Path]:
+    """Existing consumer stores recorded in the machine registry, shared tier
+    excluded. Used by the `configure` wizard so it can run with NO arguments:
+    a machine usually has one store, but may have several (one per host AI).
+    Paths only; non-existent and the shared tier are filtered out."""
+    from .db import registry_path
+    reg = registry_path()
+    if reg is None or not reg.exists():
+        return []
+    try:
+        paths = json.loads(reg.read_text() or "[]")
+    except (OSError, ValueError):
+        return []
+    try:
+        shared = str(shared_db_path().resolve())
+    except OSError:
+        shared = ""
+    out: list[Path] = []
+    for raw in paths:
+        try:
+            rp = Path(raw).expanduser()
+            if not rp.exists() or str(rp.resolve()) == shared:
+                continue
+        except OSError:
+            continue
+        out.append(rp)
+    return out
+
+
+def resolve_configure_store(args, ask=input, out=print) -> None:
+    """For `configure` with no explicit store, pick which one to configure so
+    the launcher needs no arguments. Sets ``args.db`` in place.
+
+    Respects an explicit --db / $FORNIXDB_DB (no-op). With exactly one
+    registered store, selects it silently. With several, prints a numbered menu
+    and asks (the wizard is interactive anyway). With none, leaves args.db None
+    so the normal default / no-store guard handles it.
+    """
+    if args.db or os.environ.get(DEFAULT_DB_ENV):
+        return
+    stores = registered_consumer_stores()
+    if not stores:
+        return
+    if len(stores) == 1:
+        args.db = str(stores[0])
+        return
+    out("FornixDB found more than one store on this machine. Which to configure?")
+    for i, p in enumerate(stores, 1):
+        out(f"  {i}) {p.name}    ({p})")
+    while True:
+        try:
+            raw = ask(f"Choose 1-{len(stores)}: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            out("\nNo store chosen — aborted.")
+            raise SystemExit(0)
+        if raw.isdigit() and 1 <= int(raw) <= len(stores):
+            args.db = str(stores[int(raw) - 1])
+            return
+        out(f"  '{raw}' is not 1-{len(stores)} — try again")
+
+
 def main(argv: list[str] | None = None) -> int:
     # Windows consoles default to legacy code pages (cp1252) that can't print
     # the CLI's own output (e.g. the → in link lines), let alone stored CJK or
@@ -406,6 +467,13 @@ def main(argv: list[str] | None = None) -> int:
                          "(optional FILE path, else <out_dir>/FornixDB-export.md)")
 
     args = p.parse_args(argv)
+
+    # `configure` is meant to be launched argument-free (the fornix-config
+    # wrapper). With no explicit --db, resolve which store to configure from the
+    # registry (asking only if there is more than one) BEFORE the no-store guard
+    # below — otherwise the guard would short-circuit on the bare default path.
+    if args.cmd == "configure":
+        resolve_configure_store(args)
 
     # Never materialize a store as a SIDE EFFECT of falling back to the default
     # path. Only `init` (or an explicit --create) may create the default store;
