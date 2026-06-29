@@ -53,30 +53,51 @@ def resolve_active_project(store: MemoryStore, passed: str | None,
     declared = context.session_active_project(store, session_id)
     return declared or passed
 
-# Auto-captured SESSION rows whose summary was unavailable fall back to a gist
-# like "Chat 2026-06-12 (23 turns): Hello" — the opening turn, not a summary.
-# When that opening is a greeting the row is near-information-free, yet on long
-# reasoning text its embedding still drifts over the floor and leaks in as noise
-# (seen live 2026-06-19: #17 "Chat …: Hello" surfaced on three build_character_set
-# turns). Such rows are filtered from PROACTIVE surfacing only — they remain
-# fully recallable by an explicit query. The test counts distinct content words
-# in the gist (boilerplate + greetings + stopwords removed); curated
-# semantic/feedback/reference facts are exempt, so a terse real fact still pushes.
+# Auto-captured SESSION rows carry a regular scaffold —
+# "Session <date> (<n> user turns, branch <b>): <the opening user turn>" — and the
+# opening turn is very often NAVIGATIONAL ("come up to speed on X", "let's resume
+# where we left off", "what's next") rather than a recorded outcome. Stripped of
+# the scaffold and the pickup/navigation vocabulary such an opener has almost no
+# distinct content, so it is the same low-information case as the bare greeting
+# fallback ("Chat …: Hello"): noise to push proactively — its embedding drifts
+# over the floor on long reasoning text (seen live 2026-06-19, #17 on three
+# build_character_set turns) AND the openers recall against each other — yet fully
+# recallable by an explicit query. The test counts DISTINCT content words after
+# removing the scaffold + a navigation/greeting stoplist; an opener that ALSO
+# states real substance ("…finished the video pipeline between Mac and PC…") keeps
+# those words and still pushes, and curated semantic/feedback/reference facts are
+# exempt entirely, so a terse real fact still pushes.
 MIN_EPISODIC_CONTENT_WORDS = 4
+# Strips the auto-capture header up to the first "): " so only the opening turn is
+# scored (a gist without the header is left untouched).
+_SESSION_SCAFFOLD = re.compile(r"^(?:session|chat)\b.*?\):\s*", re.I | re.S)
 _LOW_INFO_STOP = frozenset("""
-chat session turns turn hello hi hey ok okay yeah yep yes no thanks thank
-the and i we a an to of in on it is are you your my me for with that this
+chat session turns turn user branch assistant main master hello hi hey ok okay
+yeah yep yes no thanks thank
+the and i we a an to of in on it is are you your my me for with that this these
+those they them their there here so than then what which who whom whose have has
+had having do does did doing be been was were will would shall should can could
+may might must about from into over under out our ours us if when while because
+get got give see look make made take put go also just now then else
+come up speed pick picking pickup resume resuming continue continuing next step
+steps load loading reload where left off last today yesterday morning evening
+night work working lets let catch caught start starting going tell tasks task
+project projects update updated recap status brief again please want need like
+read memories docs documents
 """.split())
 
 
 def _content_words(gist: str) -> set[str]:
-    return {t for t in re.findall(r"[a-z]{3,}", (gist or "").lower())
+    text = _SESSION_SCAFFOLD.sub("", gist or "")
+    return {t for t in re.findall(r"[a-z]{3,}", text.lower())
             if t not in _LOW_INFO_STOP}
 
 
 def _is_low_information(row: dict) -> bool:
-    """True for an episodic session-opener whose gist carries almost no content
-    (a greeting fallback) — noise to push proactively, fine to recall explicitly."""
+    """True for an episodic session-opener whose gist carries almost no content —
+    a greeting or a pure pickup/navigation request — once the auto-capture
+    scaffold and that vocabulary are removed. Noise to push proactively; still
+    recallable explicitly. Curated (non-episodic) memories are never low-info."""
     return (row.get("kind") == "episodic"
             and len(_content_words(row.get("gist", ""))) < MIN_EPISODIC_CONTENT_WORDS)
 

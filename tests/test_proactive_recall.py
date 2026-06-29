@@ -11,6 +11,48 @@ from fornixdb.adapters.claude_code_recall import (HEADER, _format_block,
 from fornixdb.adapters.native_memory import set_ingest_mode
 from fornixdb.core import MemoryStore
 from fornixdb.multistore import set_config
+from fornixdb.proactive import _is_low_information
+
+
+def _ep(gist):
+    return {"kind": "episodic", "gist": gist}
+
+
+class TestLowInformationFilter(unittest.TestCase):
+    def test_pickup_opener_is_low_info(self):
+        # the auto-capture scaffold + a pure navigation turn -> no real content
+        for g in [
+            "Session 2026-06-13 (1 user turns, branch ai-assistant): "
+            "what are our next tasks",
+            "Session 2026-06-25 (15 user turns, branch ai-assistant): "
+            "Let's pick up where we left off and continue",
+            "Session 2026-06-11 (22 user turns, branch ai-assistant): "
+            "come up to speed on the project",
+            "Chat 2026-06-12 (23 turns): Hello",
+        ]:
+            self.assertTrue(_is_low_information(_ep(g)), g)
+
+    def test_opener_with_substance_is_kept(self):
+        # an opener that ALSO states real work keeps its content words
+        g = ("Session 2026-05-29 (23 user turns, branch master): I finished the "
+             "video pipeline between the Mac and PC, lipsync and color matched")
+        self.assertFalse(_is_low_information(_ep(g)))
+
+    def test_topic_name_alone_is_not_enough(self):
+        # naming the project but recording no outcome is still navigational
+        g = ("Session 2026-06-19 (18 user turns, branch ai-assistant): "
+             "come up to speed on FornixDB and make fixes")
+        self.assertTrue(_is_low_information(_ep(g)))
+
+    def test_non_episodic_never_low_info(self):
+        # curated facts are exempt regardless of brevity
+        self.assertFalse(_is_low_information(
+            {"kind": "feedback", "gist": "come up to speed"}))
+
+    def test_substantive_episodic_without_scaffold_kept(self):
+        g = ("Video day: pause/resume added to segment chains; fought camera "
+             "shake and eye drift in the render")
+        self.assertFalse(_is_low_information(_ep(g)))
 
 
 def file_store(tmp):

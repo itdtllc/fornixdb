@@ -44,6 +44,30 @@ class TestBuildThought(unittest.TestCase):
         # tool name + two bounded slices; nowhere near the raw 10k
         self.assertLess(len(t), cc.THOUGHT_CHARS * 2 + 50)
 
+    def test_fornixdb_own_tool_yields_no_thought(self):
+        # A memory write/read self-matches the memory it touches — never pulse.
+        for name in ("mcp__fornixdb__remember", "mcp__fornixdb__show_memory",
+                     "mcp__fornixdb__recall_memory", "mcp__fornixdb__supersede"):
+            self.assertEqual(
+                cc.build_thought("PostToolUse", name,
+                                 {"ref": "407"}, "#407 some memory text"), "",
+                f"{name} should produce no pulse thought")
+
+    def test_renamed_server_still_caught_by_basename(self):
+        # Robust to a host that named the MCP server something other than fornixdb.
+        self.assertEqual(
+            cc.build_thought("PostToolUse", "mcp__memory__remember",
+                             {"title": "x", "content": "y"}, "stored #99"), "")
+
+    def test_non_fornixdb_tool_still_pulses(self):
+        # A like-named tool on a non-MCP path, or any ordinary tool, is unaffected.
+        self.assertNotEqual(
+            cc.build_thought("PostToolUse", "Bash",
+                             {"command": "remember the milk"}, "ok"), "")
+        self.assertNotEqual(
+            cc.build_thought("PostToolUse", "Read",
+                             {"file_path": "/x/link.py"}, "contents"), "")
+
 
 class TestTurnAndEpisode(unittest.TestCase):
     def setUp(self):
