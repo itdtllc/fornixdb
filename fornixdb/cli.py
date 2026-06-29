@@ -429,6 +429,20 @@ def main(argv: list[str] | None = None) -> int:
                               "activity, and an evidence-based floor recommendation)")
     fsp.add_argument("--log", help="floor log path (default: floor_log.jsonl beside "
                                    "the store)")
+    fsp.add_argument("--transcripts", metavar="PATH",
+                     help="session-transcript file or dir; when given, the useful/"
+                          "noise outcome join uses whether each PUSH was actually "
+                          "referenced downstream (usefulness-scan) instead of the "
+                          "lifetime-recall_count proxy")
+
+    usp = sub.add_parser("usefulness-scan",
+                         help="honest push-usefulness from session transcripts: how "
+                              "often a proactively-pushed memory was actually "
+                              "referenced downstream (cited by #id)")
+    usp.add_argument("--transcripts", metavar="PATH",
+                     default="~/.claude/projects",
+                     help="a .jsonl transcript or a directory of them "
+                          "(default: ~/.claude/projects)")
 
     rpj = sub.add_parser("reproject",
                          help="re-derive project labels from CONTENT (fixes "
@@ -1156,13 +1170,29 @@ def _dispatch(p, args, store, stores) -> int:
         path = args.log or floor_log_path_for(store)
         records = load_records(path)
         ids = {r.get("id") for r in records if r.get("decision") == "surfaced"}
-        outcomes = outcomes_from_store(store, ids)
+        if args.transcripts:
+            # honest outcome: was each PUSH actually referenced downstream, from
+            # the transcripts — not the lifetime-recall_count proxy.
+            from .usefulness_scan import outcomes_from_scan, scan
+            outcomes = outcomes_from_scan(scan(args.transcripts))
+        else:
+            outcomes = outcomes_from_store(store, ids)
         summary = summarize(records, outcomes)
         summary["log_path"] = str(path) if path else None
+        summary["outcome_source"] = "transcripts" if args.transcripts else "store_counts"
         if args.json:
             print(json.dumps(summary, indent=2, default=str))
         else:
             print(format_report(summary))
+
+    elif args.cmd == "usefulness-scan":
+        from .usefulness_scan import format_report as us_report
+        from .usefulness_scan import scan
+        result = scan(args.transcripts)
+        if args.json:
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            print(us_report(result))
 
     elif args.cmd == "reproject":
         from . import reproject as rp
