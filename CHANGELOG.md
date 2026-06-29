@@ -8,6 +8,20 @@ active development branch and can change through the day.
 ## [Unreleased]
 
 ### Added
+- **`fornixdb usefulness-scan` — an HONEST push-usefulness signal from session
+  transcripts.** The usefulness loop credits a memory as "used" only on an
+  explicit pull or endorsement, but a proactively PUSHED memory is already in
+  context — the model references it in its reasoning without ever pulling it — so
+  a useful push and an ignored one look identical to the counters, and any outcome
+  join keyed on recall_count measures "is this a frequently-pulled memory", not
+  "was THIS push used". (Live: floor-stats called 265/271 surfaced rows "useful"
+  on lifetime pulls; the real number is far lower.) The scan recovers the true
+  signal from the host's own transcripts — FornixDB's injected block and the
+  assistant's later `#id` citations are both visible there — attributing each
+  citation to the injection that preceded it. Live result: only **18%** of pushes
+  were referenced downstream. `floor-stats --transcripts PATH` now joins outcomes
+  to this real reference signal instead of the lifetime-recall proxy. Read-only
+  analysis; no schema or ranking change.
 - **`fornixdb reproject` — re-derive project labels from CONTENT.** For a store
   whose auto-captured history was mislabeled (the pre-0.3.1 launch-dir bug, or any
   single-home setup where the working directory carries no project signal), cwd is
