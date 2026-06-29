@@ -56,42 +56,64 @@ def iter_events(path: str | Path):
             continue
         t = d.get("type")
         if t == "attachment":
+            # The injected block lands in different fields per channel: L3
+            # (UserPromptSubmit) puts it in `content`; L4 (PostToolUse) puts it in
+            # `stdout` as a hookSpecificOutput JSON string. Read both.
             att = d.get("attachment") or {}
-            content = att.get("content") or ""
-            if isinstance(content, str) and BLOCK_MARKER in content:
-                ids = {int(m) for m in _ID.findall(content)}
+            text = "\n".join(att.get(k) for k in ("content", "stdout")
+                             if isinstance(att.get(k), str))
+            if BLOCK_MARKER in text:
+                ids = {int(m) for m in _ID.findall(text)}
                 if ids:
                     yield ("push", ids, att.get("hookEvent"))
         elif t == "assistant" and not d.get("isSidechain"):
             txt = _text_of((d.get("message") or {}).get("content"))
+            # An assistant message that REPRODUCES the block (quoting/summarizing
+            # it) is not citing memories — skip it so its ids aren't miscounted.
+            if BLOCK_MARKER in txt:
+                continue
             ids = {int(m) for m in _ID.findall(txt)}
             if ids:
                 yield ("cite", ids, None)
 
 
-def attribute(events) -> dict:
-    """Per-memory push/reference tally from one session's ordered events.
+def _channel(raw) -> str:
+    """Normalize a push's hookEvent to a rung label: UserPromptSubmit = L3 (one
+    pulse per turn), any tool-call seam = L4 (rhythmic in-thought)."""
+    return "L3" if raw == "UserPromptSubmit" else "L4"
 
-    Returns {id: {"impressions": n, "referenced": n}}. Each push is one
-    impression; it is `referenced` iff a later assistant citation of that id
-    occurs before the id is pushed again (precise per-injection attribution)."""
-    tally: dict[int, dict[str, int]] = {}
-    pending: dict[int, bool] = {}     # id -> an injection awaiting a citation
 
-    def slot(i):
-        return tally.setdefault(i, {"impressions": 0, "referenced": 0})
+def attribute(events) -> tuple[dict, dict]:
+    """Per-memory and per-CHANNEL push/reference tallies from one session's
+    ordered events.
 
-    for kind, ids, _chan in events:
+    Returns (per_memory, per_channel), each {key: {"impressions", "referenced"}}.
+    Each push is one impression; it is `referenced` iff a later assistant citation
+    of that id occurs before the id is pushed again (precise per-injection
+    attribution). A citation is credited to the CHANNEL of the injection it
+    satisfies, so L3 and L4 each get a fair reference rate."""
+    per_memory: dict[int, dict[str, int]] = {}
+    per_channel: dict[str, dict[str, int]] = {}
+    pending: dict[int, str] = {}      # id -> channel of an injection awaiting a cite
+
+    def slot(d, k):
+        return d.setdefault(k, {"impressions": 0, "referenced": 0})
+
+    for kind, ids, chan in events:
         if kind == "push":
+            ch = _channel(chan)
             for i in ids:
-                slot(i)["impressions"] += 1
-                pending[i] = True       # a prior un-cited push (if any) stays ignored
+                slot(per_memory, i)["impressions"] += 1
+                slot(per_channel, ch)["impressions"] += 1
+                pending[i] = ch         # a prior un-cited push (if any) stays ignored
         elif kind == "cite":
             for i in ids:
-                if pending.get(i):
-                    slot(i)["referenced"] += 1
-                    pending[i] = False
-    return tally
+                ch = pending.get(i)
+                if ch is not None:
+                    slot(per_memory, i)["referenced"] += 1
+                    slot(per_channel, ch)["referenced"] += 1
+                    pending[i] = None
+    return per_memory, per_channel
 
 
 def _merge(into: dict, more: dict) -> None:
@@ -115,15 +137,21 @@ def transcript_paths(source: str | Path) -> list[Path]:
 def scan(source: str | Path) -> dict:
     """Aggregate push-usefulness across all sessions under `source`."""
     per_memory: dict[int, dict[str, int]] = {}
+    per_channel: dict[str, dict[str, int]] = {}
     sessions = 0
     for path in transcript_paths(source):
         evs = list(iter_events(path))
         if not evs:
             continue
         sessions += 1
-        _merge(per_memory, attribute(evs))
+        pm, pc = attribute(evs)
+        _merge(per_memory, pm)
+        _merge(per_channel, pc)
     impressions = sum(c["impressions"] for c in per_memory.values())
     referenced = sum(c["referenced"] for c in per_memory.values())
+    for c in per_channel.values():
+        c["reference_rate"] = (round(c["referenced"] / c["impressions"], 4)
+                               if c["impressions"] else 0.0)
     return {
         "source": str(source),
         "sessions": sessions,
@@ -131,6 +159,7 @@ def scan(source: str | Path) -> dict:
         "impressions": impressions,
         "referenced": referenced,
         "reference_rate": round(referenced / impressions, 4) if impressions else 0.0,
+        "by_channel": per_channel,
         "per_memory": per_memory,
     }
 
@@ -157,6 +186,16 @@ def format_report(s: dict) -> str:
         return "\n".join(out)
     out.append(f"push impressions: {s['impressions']}  referenced downstream: "
                f"{s['referenced']}  ({s['reference_rate']:.0%})")
+    bc = s.get("by_channel") or {}
+    if bc:
+        out.append("by channel (L3 = per-turn, L4 = rhythmic in-thought):")
+        for ch in sorted(bc):
+            c = bc[ch]
+            out.append(f"  {ch}  pushed {c['impressions']:<5} referenced "
+                       f"{c['referenced']:<4} ({c['reference_rate']:.0%})")
+        if {"L3", "L4"} <= set(bc):
+            out.append("  (note: a citation credits the most-recent injection, so "
+                       "when L3 and L4 push the same id the split leans toward L4.)")
     pm = s["per_memory"]
     chronic = sorted(((i, c) for i, c in pm.items()
                       if c["referenced"] == 0 and c["impressions"] >= 3),

@@ -11,28 +11,36 @@ from fornixdb import usefulness_scan as us
 
 class TestAttribute(unittest.TestCase):
     def test_push_then_cite_is_referenced(self):
-        events = [("push", {36, 99}, "L3"), ("cite", {36}, None)]
-        t = us.attribute(events)
+        events = [("push", {36, 99}, "UserPromptSubmit"), ("cite", {36}, None)]
+        t, _ = us.attribute(events)
         self.assertEqual(t[36], {"impressions": 1, "referenced": 1})
         self.assertEqual(t[99], {"impressions": 1, "referenced": 0})  # never cited
 
     def test_cite_before_push_does_not_count(self):
         # a citation with no preceding push (e.g. an explicit show/pull) is no credit
-        t = us.attribute([("cite", {7}, None), ("push", {7}, "L3")])
+        t, _ = us.attribute([("cite", {7}, None), ("push", {7}, "UserPromptSubmit")])
         self.assertEqual(t[7], {"impressions": 1, "referenced": 0})
 
     def test_repush_without_citation_is_ignored(self):
         # pushed, pushed again (first injection went unused), then cited once:
         # two impressions, one referenced (only the latest injection is credited)
-        t = us.attribute([("push", {5}, "L3"), ("push", {5}, "L4"),
-                          ("cite", {5}, None)])
+        t, _ = us.attribute([("push", {5}, "UserPromptSubmit"),
+                             ("push", {5}, "PostToolUse"), ("cite", {5}, None)])
         self.assertEqual(t[5], {"impressions": 2, "referenced": 1})
 
     def test_one_citation_credits_one_injection(self):
-        t = us.attribute([("push", {5}, "L3"), ("cite", {5}, None),
-                          ("cite", {5}, None)])
+        t, _ = us.attribute([("push", {5}, "UserPromptSubmit"),
+                             ("cite", {5}, None), ("cite", {5}, None)])
         # second citation has nothing pending -> still just one referenced
         self.assertEqual(t[5], {"impressions": 1, "referenced": 1})
+
+    def test_citation_credited_to_the_injecting_channel(self):
+        # L3 pushed and cited; L4 pushed and never cited -> per-channel split
+        _, pc = us.attribute([("push", {1}, "UserPromptSubmit"),
+                              ("cite", {1}, None),
+                              ("push", {2}, "PostToolUse")])
+        self.assertEqual(pc["L3"], {"impressions": 1, "referenced": 1})
+        self.assertEqual(pc["L4"], {"impressions": 1, "referenced": 0})
 
 
 class TestParseAndScan(unittest.TestCase):

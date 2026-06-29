@@ -21,7 +21,10 @@ active development branch and can change through the day.
   citation to the injection that preceded it. Live result: only **18%** of pushes
   were referenced downstream. `floor-stats --transcripts PATH` now joins outcomes
   to this real reference signal instead of the lifetime-recall proxy. Read-only
-  analysis; no schema or ranking change.
+  analysis; no schema or ranking change. The scan also breaks the reference rate
+  down **by channel** (L3 per-turn vs L4 rhythmic in-thought), reading the L4
+  block from the PostToolUse `stdout` field as well as the L3 `content` field —
+  the data point for the operating-level decision (live: L3 13%, L4 20%).
 - **`fornixdb reproject` — re-derive project labels from CONTENT.** For a store
   whose auto-captured history was mislabeled (the pre-0.3.1 launch-dir bug, or any
   single-home setup where the working directory carries no project signal), cwd is
