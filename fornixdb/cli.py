@@ -430,6 +430,23 @@ def main(argv: list[str] | None = None) -> int:
     fsp.add_argument("--log", help="floor log path (default: floor_log.jsonl beside "
                                    "the store)")
 
+    rpj = sub.add_parser("reproject",
+                         help="re-derive project labels from CONTENT (fixes "
+                              "auto-captured memories mislabeled by launch dir / "
+                              "single-home cwd). Dry-run by default.")
+    rpj.add_argument("--apply", action="store_true",
+                     help="write the confident re-projections (records an undo set)")
+    rpj.add_argument("--undo", action="store_true",
+                     help="restore the labels changed by the last --apply")
+    rpj.add_argument("--min-margin", type=float, default=None,
+                     help="confidence threshold (vector: cosine gap, default 0.06; "
+                          "keyword: overlap gap, default 1)")
+    rpj.add_argument("--suspect", action="append", default=[], metavar="LABEL",
+                     help="also reconsider memories carrying this (unreliable) "
+                          "label — the launch-dir default the bug stamps, e.g. "
+                          "--suspect RetirementEstimator. Repeatable. By default "
+                          "only unscoped (NULL-project) memories are reconsidered.")
+
     mp = sub.add_parser("import-markdown",
                         help="import Markdown: a doc chunked by heading into "
                              "section memories (default), or --frontmatter for a "
@@ -1146,6 +1163,26 @@ def _dispatch(p, args, store, stores) -> int:
             print(json.dumps(summary, indent=2, default=str))
         else:
             print(format_report(summary))
+
+    elif args.cmd == "reproject":
+        from . import reproject as rp
+        if args.undo:
+            res = rp.undo(store)
+            print(json.dumps(res) if args.json
+                  else f"restored {res['restored']} project label(s).")
+            return 0
+        result = rp.propose(store, min_margin=args.min_margin, suspect=args.suspect)
+        applied = None
+        if args.apply and result["proposals"]:
+            try:
+                applied = rp.apply_proposals(store, result["proposals"])
+            except FrozenStoreError as e:
+                print(f"refused: {e}", file=sys.stderr)
+                return 1
+        if args.json:
+            print(json.dumps({**result, "applied": applied}, indent=2, default=str))
+        else:
+            print(rp.format_report(result, applied=applied))
 
     elif args.cmd == "import-markdown":
         target = stores[-1][1] if (args.shared and len(stores) > 1) else store

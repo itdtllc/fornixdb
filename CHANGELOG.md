@@ -8,6 +8,47 @@ active development branch and can change through the day.
 ## [Unreleased]
 
 ### Added
+- **`fornixdb reproject` — re-derive project labels from CONTENT.** For a store
+  whose auto-captured history was mislabeled (the pre-0.3.1 launch-dir bug, or any
+  single-home setup where the working directory carries no project signal), cwd is
+  the wrong thing to scope by — the portable signal is what a memory is ABOUT. The
+  tool classifies suspect memories against per-project profiles built from the
+  reliably-labeled (non-episodic) anchors: VECTOR mode (mean-centered centroids,
+  so a broad catch-all project stops attracting everything) when the store has
+  embeddings, KEYWORD mode (inverse-class-frequency weighted overlap) otherwise.
+  Safe by construction: dry-run by default; only UNSCOPED (NULL-project) memories
+  are reconsidered unless a known-bad label is named with `--suspect LABEL`, so a
+  correctly-labeled session is never overridden because its transcript mentions
+  another project; alias families are never churned; `--apply` records an undo set
+  and `--undo` restores it. Pure classifiers (`classify_vec`/`classify_words`) are
+  testable with no store.
+
+### Fixed
+- **Proactive recall now suppresses navigational session-openers, not just empty
+  greetings.** The low-information filter that keeps bland auto-captured episodics
+  out of proactive surfacing only caught near-empty greetings ("Chat …: Hello").
+  Content-bearing-but-navigational openers ("come up to speed on X", "let's resume
+  where we left off", "what's next") cleared the bar and leaked as noise — and,
+  being near-identical, recalled against each other. The filter now strips the
+  auto-capture scaffold ("Session <date> (<n> turns, branch <b>): …") and a
+  navigation/greeting stoplist before counting distinct content words, so a pure
+  pickup turn reads as low-information while an opener that ALSO states real work
+  ("…finished the video pipeline between Mac and PC…") keeps its words and still
+  surfaces. Curated (non-episodic) memories remain exempt. On the live store this
+  drops 28 of 133 episodics from proactive push (was 0); all stay explicitly
+  recallable.
+- **L4 no longer pulses on FornixDB's own memory operations (self-recall guard).**
+  The Claude Code rhythmic-recall adapter built its query from each tool call,
+  including FornixDB's own MCP tools — so a `remember` self-matched the text it
+  had just stored and a `show_memory {ref: N}` self-matched `#N`, surfacing the
+  memory right back at cosine ~0.9. These degenerate hits were never useful and
+  skewed the floor log's noise picture. `build_thought` now returns no thought
+  for any FornixDB memory operation (matched by the `mcp__fornixdb__*` prefix, or
+  by tool basename so a renamed MCP server is still caught), so the pulse is
+  skipped. On a 3-day live floor log this removes 19 spurious surfacings (cos
+  0.68–0.92) and stops 37 pulses from firing at all.
+
+### Added
 - **Floor logging — opt-in pulse-cosine instrumentation.** With `config floor_log on`
   (also offered in the `configure` wizard; default off), every candidate evaluated at
   the proactive/cadence relevance floor appends one JSONL record — channel (L3/L4),

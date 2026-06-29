@@ -126,11 +126,43 @@ def save_episode(store: MemoryStore, session_id: str | None,
         pass
 
 
+# FornixDB's OWN MCP tools. Pulsing on one of these is degenerate self-recall:
+# the query (the act of writing or reading a memory) trivially matches the very
+# memory being touched — a `remember` self-matches the text it just stored, a
+# `show_memory {ref: N}` self-matches #N — surfacing it right back at cosine ~0.9.
+# Never useful, and it skews the floor log's noise picture. So a memory operation
+# is not a "thought that moved"; it does not earn a pulse.
+_FORNIXDB_TOOL_NAMES = frozenset({
+    "recall_memory", "recall_timeline", "show_memory", "list_memories",
+    "remember", "remember_many", "jot", "review_candidates", "recent_writes",
+    "forget_memory", "mark_irrelevant", "mark_helpful", "memory_usage",
+    "shrink_memory", "startup_context", "dream", "supersede", "link",
+    "import_markdown", "export_markdown", "fornixdb",
+})
+
+
+def _is_fornixdb_tool(tool_name: str) -> bool:
+    """True for one of FornixDB's own MCP tools. Matches the canonical
+    `mcp__fornixdb__*` prefix, and — robust to a server the host renamed — any
+    MCP tool whose basename is in our advertised surface."""
+    if not tool_name:
+        return False
+    if tool_name.startswith("mcp__fornixdb__"):
+        return True
+    if tool_name.startswith("mcp__"):
+        return tool_name.rsplit("__", 1)[-1] in _FORNIXDB_TOOL_NAMES
+    return False
+
+
 def build_thought(event: str, tool_name: str, tool_input: dict,
                   tool_response) -> str:
     """The evolving-thought query for this tool-call checkpoint: the tool and its
     arguments, plus — on PostToolUse — what it returned (the cue usually lives in
-    the result). Bounded so a whole-file input/result can't blow up the query."""
+    the result). Bounded so a whole-file input/result can't blow up the query.
+    Returns "" for a FornixDB-own memory operation so the caller skips the pulse
+    (no self-recall)."""
+    if _is_fornixdb_tool(tool_name):
+        return ""
     parts = [tool_name or ""]
     if tool_input:
         parts.append(json.dumps(tool_input, default=str)[:THOUGHT_CHARS])
