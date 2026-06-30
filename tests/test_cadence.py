@@ -32,6 +32,7 @@ class TestPulse(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.s = file_store(self.tmp.name)
+        set_config(self.s, "rhythmic_recall", "on")  # L4 is opt-in; enable to test it
         self.s.store("Octopus logo lives at assets/fornixdb_icon.png",
                      kind="reference")
         self.s.store("Flux Redux preserves the reference background",

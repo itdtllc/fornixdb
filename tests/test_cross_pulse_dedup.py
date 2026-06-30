@@ -25,6 +25,7 @@ class TestCrossPulseDedup(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.s = file_store(self.tmp.name)
+        set_config(self.s, "rhythmic_recall", "on")  # L4 is opt-in; enable to test it
         self.mid = self.s.store("Octopus logo lives at assets/fornixdb_icon.png",
                                 kind="reference")
 

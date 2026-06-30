@@ -80,7 +80,9 @@ def pulse(store: MemoryStore, thought: str, episode: Episode, *,
     Mutates `episode` only when it actually returns a block."""
     if not auto_background_enabled(store):              # ingest_mode=explicit
         return None
-    if get_config(store, "rhythmic_recall", "on") in ("off", "0", "false"):
+    # L4 is a DOGFOOD rung — OPT-IN, not a published default (gate #339). A fresh
+    # store ships at L3; `config rhythmic_recall on` (or `level L4`) enables this.
+    if get_config(store, "rhythmic_recall", "off") in ("off", "0", "false"):
         return None
     if not thought or len(thought.strip()) < MIN_THOUGHT_CHARS:
         return None
