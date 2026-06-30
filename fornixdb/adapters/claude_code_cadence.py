@@ -28,10 +28,12 @@ UserPromptSubmit hook bumps a per-session turn counter (see claude_code_recall),
 and a turn change (or, as a standalone fallback when L3 isn't wired, a long idle
 gap) starts a fresh episode so pulse_count/dedup are per-turn, matching Elira.
 
-ADDITIVE and gated exactly like L3 (#2/#276): ingest_mode=explicit turns it off;
-`config rhythmic_recall off` turns it off on its own; it only ADDS context.
+OPT-IN: L4 is a DOGFOOD rung and ships OFF (gate #339) — a fresh store sits at L3.
+Enable with `config rhythmic_recall on` (or `level L4`); ingest_mode=explicit also
+turns it off. ADDITIVE like L3 (#2/#276): it only ADDS context, never replaces.
 Silence is the default — unsolicited mid-task interruption gates HARDER than the
-per-turn push (RHYTHMIC_RECALL_COS), so most tool calls inject nothing.
+per-turn push (RHYTHMIC_RECALL_COS), so even when enabled most tool calls inject
+nothing.
 
 Wire it in Claude Code settings.json (matcher "*" = every tool):
 

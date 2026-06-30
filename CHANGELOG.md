@@ -7,6 +7,19 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+### Changed
+- **A fresh store now ships at L3, not L4 — rhythmic in-thought recall (L4) is
+  opt-in.** Every operating-level rung previously defaulted ON, so a fresh install
+  sat at L4 — contradicting the ROADMAP (L4 is `DOGFOOD`, "not yet a published
+  default") and gate #339. The published default is now **L3** (proactive recall,
+  once per turn); `rhythmic_recall` defaults off. Enable L4 with `level L4` or
+  `config rhythmic_recall on`. Measurement that informed the call (via the new
+  per-channel `usefulness-scan`): L4 actually references *better* per push than L3
+  (20% vs 13%), so L4 is kept and now evidenced — but it ships opt-in because it
+  pulses far more often (per tool-call) and ~80% of those pushes go unreferenced,
+  a token cost a host should choose deliberately. No existing store that has set
+  the dial is affected.
+
 ### Added
 - **`fornixdb usefulness-scan` — an HONEST push-usefulness signal from session
   transcripts.** The usefulness loop credits a memory as "used" only on an
