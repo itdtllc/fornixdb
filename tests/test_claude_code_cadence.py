@@ -18,7 +18,6 @@ os.environ["FORNIXDB_VECTORS"] = "off"
 from fornixdb.adapters import claude_code_cadence as cc
 from fornixdb.adapters.native_memory import set_ingest_mode
 from fornixdb.core import MemoryStore
-from fornixdb.multistore import set_config
 
 
 def file_store(tmp):
@@ -123,7 +122,6 @@ class TestMain(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = str(Path(self.tmp.name) / "t.db")
         s = file_store(self.tmp.name)
-        set_config(s, "rhythmic_recall", "on")  # L4 is opt-in; enable to test it
         s.store("DEPLOY RULE: always run the migration script before deploy.",
                 kind="semantic", name="deploy-migration-rule")
         s.close()

@@ -15,14 +15,12 @@ class LevelsCase(unittest.TestCase):
     def tearDown(self):
         self.s.close()
 
-    # ---- defaults: a fresh store is at the top DEFAULT-ON rung (L3) --------
-    def test_fresh_store_defaults_to_l3_l4_opt_in(self):
-        # capture suggest + proactive on are defaults; L4 (dogfood) ships OFF
+    # ---- defaults: a fresh store is at the top built rung (L4 dogfood) -----
+    def test_fresh_store_defaults_to_top_built_rung(self):
+        # capture suggest + proactive on + rhythmic on are all defaults
         rung, incoherent = levels.current_rung(self.s)
-        self.assertEqual(rung, "L3")
+        self.assertEqual(rung, "L4")
         self.assertFalse(incoherent)
-        self.assertTrue(levels.is_on(self.s, "L3"))
-        self.assertFalse(levels.is_on(self.s, "L4"))
 
     def test_only_l0_is_locked(self):
         # L0 (the keyed store floor) is always on and cannot be turned off
