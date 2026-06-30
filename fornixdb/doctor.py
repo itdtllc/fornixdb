@@ -104,7 +104,7 @@ def config_overview(store) -> list[tuple[str, str]]:
 # run shows what each option *would* be if never touched. Keys MUST stay in step
 # with config_overview labels (test_doctor enforces full coverage).
 CONFIG_DEFAULTS: dict[str, str] = {
-    "operating_level": "L3 — Proactive recall injection (L4 opt-in)",
+    "operating_level": "L4 (every built rung on)",
     "capture_mode": "suggest",
     "ingest_mode": "passive",
     "session_capture": "on",

@@ -43,22 +43,21 @@ class WizardCase(unittest.TestCase):
         res = wizard.run_configure(self.s, ask=sc.ask, out=sc.out, db_label="x")
         return res, sc
 
-    # default fresh store sits at L3 with capture=suggest (L4 is opt-in); the
-    # build prompts are rung, capture-style, session, vectors, ingest, budget (no
-    # policy when off), floor-log, then the MCP-tools mode (keep/minimal/custom)
+    # default fresh store sits at L4 with capture=suggest; the build prompts are
+    # rung, capture-style, session, vectors, ingest, budget (no policy when off),
+    # floor-log, then the MCP-tools mode (keep/minimal/custom)
 
     def test_keep_everything_writes_nothing(self):
         res, _ = self._run("", "", "", "", "", "", "", "")  # all kept, no confirm
         self.assertEqual(res["applied"], [])
         self.assertFalse(res["aborted"])
-        self.assertEqual(levels.current_rung(self.s)[0], "L3")
-
-    def test_raise_rung_and_confirm(self):
-        # from the L3 default, opt into L4 (the dogfood rung)
-        res, _ = self._run("L4", "", "", "", "", "", "", "", "y")
-        self.assertIn("operating_level", res["applied"])
         self.assertEqual(levels.current_rung(self.s)[0], "L4")
-        self.assertTrue(levels.is_on(self.s, "L4"))
+
+    def test_lower_rung_and_confirm(self):
+        res, _ = self._run("L3", "", "", "", "", "", "", "", "y")
+        self.assertIn("operating_level", res["applied"])
+        self.assertEqual(levels.current_rung(self.s)[0], "L3")
+        self.assertFalse(levels.is_on(self.s, "L4"))
         self.assertTrue(levels.is_on(self.s, "L3"))
 
     def test_decline_at_confirm_writes_nothing(self):
@@ -70,7 +69,7 @@ class WizardCase(unittest.TestCase):
     def test_change_capture_flavor(self):
         res, _ = self._run("", "auto", "", "", "", "", "", "", "y")
         self.assertEqual(capture_mode(self.s), "auto")
-        self.assertEqual(levels.current_rung(self.s)[0], "L3")  # rung untouched
+        self.assertEqual(levels.current_rung(self.s)[0], "L4")  # rung untouched
 
     def test_drop_to_l1_skips_capture_flavor(self):
         # rung, session, vectors, ingest, budget, floor-log, tools, confirm — NO capture ask

@@ -46,8 +46,6 @@ class Level:
     status: str      # BUILT | DOGFOOD | PLANNED
     locked_on: bool  # L0/L1 — capability always present; cannot be turned off
     dial: str | None  # config key this rung toggles, or None (locked/planned)
-    default_on: bool = True  # a fresh store's state for this rung's dial; a
-    #                          DOGFOOD rung ships OFF (opt-in), not as a default
 
 
 # Single source of truth — ordered floor → top. Keep in step with ROADMAP.md.
@@ -66,7 +64,7 @@ LEVELS: tuple[Level, ...] = (
           BUILT, locked_on=False, dial="proactive_recall"),
     Level("L4", "Rhythmic in-thought recall",
           "memory re-activates many times within one reasoning episode",
-          DOGFOOD, locked_on=False, dial="rhythmic_recall", default_on=False),
+          DOGFOOD, locked_on=False, dial="rhythmic_recall"),
     Level("L5", "Parallel multi-domain activation",
           "many domain-scoped recalls fire at once and settle into a direction",
           PLANNED, locked_on=False, dial=None),
@@ -100,8 +98,7 @@ def is_on(store: MemoryStore, level_id: str) -> bool:
         return False
     if lv.dial == "capture_mode":
         return capture_mode(store) in ("suggest", "auto")
-    default = "on" if lv.default_on else "off"
-    val = (get_config(store, lv.dial, default) or default).strip().lower()
+    val = (get_config(store, lv.dial, "on") or "on").strip().lower()
     return val not in _OFF
 
 
