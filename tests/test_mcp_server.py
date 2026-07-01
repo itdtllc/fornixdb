@@ -39,7 +39,7 @@ class TestProtocol(unittest.TestCase):
         self.assertIn("recall_timeline", r["instructions"])
         tools = self.srv.handle(req(2, "tools/list"))["result"]["tools"]
         self.assertEqual({t["name"] for t in tools}, {t["name"] for t in TOOLS})
-        self.assertEqual(len(tools), 20)
+        self.assertEqual(len(tools), 21)
 
     def test_remember_recall_show_forget_cycle(self):
         out = self._call("remember", title="gpu-rule",
