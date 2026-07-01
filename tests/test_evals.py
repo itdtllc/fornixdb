@@ -40,6 +40,22 @@ class TestEvals(unittest.TestCase):
         self.assertEqual(report["mrr"], 1.0)
         self.assertEqual(report["misses"], [])
 
+    def test_eval_run_does_not_perturb_use_signals(self):
+        # the fence must not move what it measures: recall_count feeds the
+        # _usefulness ranking bonus and the push floor, and an eval sweep is
+        # not genuine use — repeated fence runs were silently inflating it.
+        path = self._golden([
+            {"query": "tax filing deadline", "expect": ["tax-deadline"]},
+        ])
+        before = self.s.conn.execute(
+            "SELECT recall_count, last_recalled FROM memory WHERE id = ?",
+            (self.alpha,)).fetchone()
+        run(self.s, path, embedder=False)
+        after = self.s.conn.execute(
+            "SELECT recall_count, last_recalled FROM memory WHERE id = ?",
+            (self.alpha,)).fetchone()
+        self.assertEqual(tuple(before), tuple(after))
+
     def test_miss_is_reported_with_what_ranked(self):
         path = self._golden([
             {"query": "grocery list", "expect": [self.alpha], "note": "wrong on purpose"},

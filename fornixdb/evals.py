@@ -79,8 +79,12 @@ def run_case(store: MemoryStore, case: dict, embedder=None) -> dict:
         from .timeparse import parse_when
         s, e = parse_when(case["when"])
         since, until = s.isoformat(), e.isoformat()
+    # count_recall=False: the fence must not perturb what it measures —
+    # recall_count is a genuine-use signal (it feeds _usefulness ranking and
+    # the push floor), and an eval sweep is not use.
     rows = store.recall(case["query"], limit=k, kind=case.get("kind"),
-                        since=since, until=until, embedder=embedder)
+                        since=since, until=until, embedder=embedder,
+                        count_recall=False)
     if case.get("expect_abstain"):
         # negative case: recall SHOULD report nothing relevant (abstention gate)
         has = recall_has_answer(rows)

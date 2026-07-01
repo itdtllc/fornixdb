@@ -428,17 +428,28 @@ class MemoryStore:
         self.conn.execute("UPDATE memory SET name = ? WHERE id = ?", (name, memory_id))
         self.conn.commit()
 
-    def set_gist(self, memory_id: int, gist: str) -> None:
+    def set_gist(self, memory_id: int, gist: str, embedder=None) -> None:
         """In-place gist rewrite (consolidation, Design §13.5 decision 2): the
         gist is derived presentation, the detail/source is the record, so no
         supersession. A meaning change is a new memory + supersede, not this.
-        The FTS index updates via trigger; the stale vector is dropped so the
-        next `embed` re-embeds the row."""
+        The FTS index updates via trigger; the vector is re-embedded in place
+        (embed-on-write parity with store() — a bulk consolidation pass must
+        not leave rows semantically invisible until someone remembers to run
+        `embed`: a 2026-07-01 distill pass dropped 250/317 live rows' vectors
+        that way). With no embedder the stale vector is still dropped so
+        backfill re-embeds the row later."""
         self._check_writable()
         self.conn.execute("UPDATE memory SET gist = ? WHERE id = ?",
                           (gist, memory_id))
         self.conn.execute("DELETE FROM embedding WHERE memory_id = ?", (memory_id,))
         self.conn.commit()
+        emb = self._resolve_embedder(embedder)
+        if emb is not None:
+            try:
+                from .vectors import embed_memory
+                embed_memory(self, emb, memory_id)
+            except Exception:
+                pass  # embedding never blocks the rewrite; backfill heals
 
     # ---------------------------------------------------- negative feedback
 
@@ -685,23 +696,30 @@ class MemoryStore:
         return self._auto_embedder
 
     def _maybe_backfill_vectors(self, emb):
-        """One-time, on first real vector use: a store that predates vectors
-        (memories present, NO embeddings) gets embedded so semantic recall finds
-        its old memories too — no manual `embed` needed after enabling vectors.
-        No-op the moment any embedding exists (embed-on-write maintains it from
-        there), and on incapable/keyword-only stores. Never blocks or raises;
-        it triggers on store()/recall(), not on bare open or admin commands."""
+        """Self-healing, on first real vector use per store open: any memory
+        lacking vectors for this model gets embedded. That covers both the
+        store that predates vectors (nothing embedded yet) and the store that
+        LOST coverage — vector-dropping edits (set_gist before it re-embedded,
+        writes from an environment without the model) used to leave permanent
+        holes, because this guard bailed the moment ANY embedding existed.
+        Semantic recall is silently blind to an unembedded row, so gaps must
+        close themselves rather than wait for a manual `embed`. Cost: one
+        indexed lookup when coverage is full; embedding work only for the gap
+        rows (backfill is incremental). Never blocks or raises; it triggers on
+        store()/recall(), not on bare open or admin commands."""
         try:
-            if self.conn.execute("SELECT 1 FROM embedding LIMIT 1").fetchone():
-                return  # already a vector store — nothing to upgrade
-            if not self.conn.execute("SELECT 1 FROM memory LIMIT 1").fetchone():
-                return  # fresh/empty store — nothing to backfill
+            gap = self.conn.execute(
+                """SELECT 1 FROM memory m
+                   LEFT JOIN embedding e ON e.memory_id = m.id AND e.model = ?
+                   WHERE e.memory_id IS NULL LIMIT 1""", (emb.name,)).fetchone()
+            if gap is None:
+                return  # full coverage — embed-on-write maintains it from here
             from .vectors import backfill
             n = backfill(self, emb)
             if n:
                 import sys
-                print(f"FornixDB: embedded {n} existing memories for semantic "
-                      f"recall ({emb.name}) — one-time after enabling vectors.",
+                print(f"FornixDB: embedded {n} memories that were missing "
+                      f"vectors ({emb.name}) — semantic recall now covers them.",
                       file=sys.stderr)
         except Exception:
             pass  # backfill is best-effort; never break a store/recall over it

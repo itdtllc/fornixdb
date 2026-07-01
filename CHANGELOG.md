@@ -7,6 +7,25 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+### Fixed
+- **Vector coverage can no longer silently rot.** `set_gist` dropped the row's
+  stale embedding and waited for a manual `embed` run to re-embed it — so a bulk
+  consolidation pass left most of the store semantically invisible until someone
+  remembered (live store 2026-07-01: 250 of 317 live rows had NO vector after a
+  distill pass; the recall eval fell from hit@1 79%/MRR 0.882 to 54%/0.616 and
+  the abstention gate false-abstained on 9 of 28 golden positives). Two-sided
+  fix: `set_gist` now re-embeds in place when a model is available (embed-on-write
+  parity with `store()`; still drop-only without one), and the first-use auto-
+  backfill now heals any coverage GAP instead of bailing the moment one embedding
+  exists — one indexed lookup when coverage is full, incremental embedding of
+  just the gap rows when it is not. Post-repair eval on the same store:
+  hit@1 64% / hit@k 89% / MRR 0.741, false-abstains 9 → 1 (the residual gap vs
+  the 188-memory baseline is store growth, tracked in `eval --record` history).
+- **The recall-quality eval no longer perturbs what it measures.** Each fence
+  run counted its sweep as genuine recalls, inflating `recall_count` (a use
+  signal feeding the `_usefulness` ranking bonus and the push floor) on every
+  row it returned. Eval recall now passes `count_recall=False`.
+
 ## [0.4.0] — 2026-07-01
 
 ### Added
