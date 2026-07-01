@@ -785,6 +785,22 @@ class MemoryStore:
                     params):
                 by_id[r["id"]] = dict(r)
 
+        # Top-up: keyword candidates that didn't make the neighbor shortlist
+        # still need their TRUE cosine — reading them as 0.0 stripped their
+        # vector relevance, made rankings shift with `limit` (the shortlist
+        # scales with it), and false-abstained the gate on keyword-anchored
+        # rank-1 hits (seen live: a 0.37-cosine top hit read as 0.0 < gate).
+        # The same VECTOR_MIN_COS noise floor applies as for the shortlist.
+        unscored = [mid for mid in by_id if mid not in neighbors]
+        if unscored:
+            try:
+                from .vectors import cosines_for
+                for mid, cos in cosines_for(self, emb, query, unscored).items():
+                    if cos >= VECTOR_MIN_COS:
+                        neighbors[mid] = cos
+            except Exception:
+                pass  # exact-cosine top-up is an upgrade, never a requirement
+
         now = datetime.now()
         out = []
         for mid, row in by_id.items():

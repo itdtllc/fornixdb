@@ -8,9 +8,10 @@ import zlib
 # back locally (the env switch only gates the auto path, not explicit embedders).
 os.environ["FORNIXDB_VECTORS"] = "off"
 
-from fornixdb.core import MemoryStore
+from fornixdb.core import MemoryStore, recall_has_answer
 from fornixdb.db import connect
-from fornixdb.vectors import backfill, cosine, from_blob, similar, to_blob
+from fornixdb.vectors import (backfill, cosine, cosines_for, from_blob,
+                              similar, to_blob)
 
 # Deterministic fake embedder: tokens hash to one-hot dimensions, with a
 # synonym table so semantically-related words share a direction — letting us
@@ -269,6 +270,34 @@ class TestVectorsDefaultOn(unittest.TestCase):
         s.recall("vehicle")                      # first real vector use
         self.assertGreater(self._emb(s, a), 0)   # old memories embedded
         self.assertGreater(self._emb(s, b), 0)
+
+    def test_cosines_for_returns_exact_best_chunk_values(self):
+        s = mem_store()
+        a = s.store("the automobile stalled")
+        got = cosines_for(s, FakeEmbedder(), "vehicle", [a])
+        self.assertIn(a, got)
+        self.assertGreater(got[a], 0.5)   # synonym direction, real similarity
+        self.assertEqual(cosines_for(s, FakeEmbedder(), "vehicle", []), {})
+
+    def test_keyword_hit_outside_shortlist_keeps_true_cosine(self):
+        # 30 decoys sit CLOSER to the query in vector space, so the keyword-
+        # anchored answer never makes the 25-slot neighbor shortlist. Its
+        # true cosine must still reach the blend and the abstention gate —
+        # it used to read as 0.0 (no vector term, gate false-abstained on a
+        # correct rank-1 hit, and rankings shifted with `limit`).
+        s = mem_store()
+        emb = FakeEmbedder()
+        for i in range(30):
+            s.store(f"vehicle stalled report {i}", embedder=emb)
+        target = s.store("automobile stalled dock pier rope anchor mast",
+                         embedder=emb)
+        rows = s.recall("automobile stalled dock", limit=8, embedder=emb,
+                        count_recall=False)
+        hit = next((r for r in rows if r["id"] == target), None)
+        self.assertIsNotNone(hit, "keyword-anchored row missing from results")
+        self.assertGreaterEqual(float(hit["vec_cos"]), 0.30)  # true cosine, not 0.0
+        self.assertEqual(rows[0]["id"], target)   # unique 3-token AND anchor wins
+        self.assertTrue(recall_has_answer(rows))  # gate no longer false-abstains
 
     def test_partial_coverage_gap_heals_on_first_use(self):
         # a store that LOST coverage (a vector-dropping edit with no model in
