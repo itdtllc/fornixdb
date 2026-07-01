@@ -13,13 +13,17 @@ import os
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 7  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
+SCHEMA_VERSION = 8  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
                     # v5: writer. v6: helpful_count/last_helpful (usefulness).
                     # v4: recall_feedback (negative feedback, new table only)
                     # v5: memory.writer (shared-tier writer provenance, B3)
                     # v7: surfaced_count/last_surfaced — proactive-PUSH impressions,
                     #     kept distinct from recall_count (explicit PULL) so the
                     #     usefulness loop can tell "kept getting pushed" from "used"
+                    # v8: referenced_count/last_referenced — a PUSH that was actually
+                    #     used in reasoning (cited downstream, honest transcript
+                    #     signal). A pushed memory sits in context and is used without
+                    #     a PULL, so recall_count can't see it; this closes that loop.
 
 DEFAULT_DB_ENV = "FORNIXDB_DB"
 # FornixDB-branded so a default store is never mistaken for a host AI's memory
@@ -78,6 +82,15 @@ CREATE TABLE IF NOT EXISTS memory (
                            -- but never used" — the implicit noise signal the
                            -- usefulness loop raises the relevance floor against
     last_surfaced   TEXT,  -- when the memory was last pushed proactively
+    referenced_count INTEGER NOT NULL DEFAULT 0,  -- v8: PUSH impressions that were
+                           -- actually USED — cited downstream in reasoning (the
+                           -- honest usefulness-scan signal). A pushed memory is
+                           -- already in context, so it's used WITHOUT a pull;
+                           -- recall_count never sees it. Folded into effective_floor
+                           -- as a use-credit so a proven-useful push isn't treated
+                           -- as ignored noise. Materialized by `usefulness-scan
+                           -- --apply` from session transcripts (absolute set).
+    last_referenced TEXT,  -- when a push of this memory was last used downstream
     superseded_by   INTEGER REFERENCES memory(id),
     superseded_time TEXT
 );
@@ -209,6 +222,9 @@ def _migrate(conn: sqlite3.Connection) -> bool:
     if mem_cols and "surfaced_count" not in mem_cols:  # v7
         conn.execute("ALTER TABLE memory ADD COLUMN surfaced_count INTEGER NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE memory ADD COLUMN last_surfaced TEXT")
+    if mem_cols and "referenced_count" not in mem_cols:  # v8
+        conn.execute("ALTER TABLE memory ADD COLUMN referenced_count INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE memory ADD COLUMN last_referenced TEXT")
     return rebuild
 
 

@@ -177,6 +177,16 @@ def outcomes_from_scan(scan_result: dict) -> dict:
     return out
 
 
+def referenced_counts_from_scan(scan_result: dict) -> dict[int, int]:
+    """Map each pushed id to how many of its pushes were referenced downstream —
+    the use-credit `MemoryStore.record_referenced` materializes into the store so
+    `effective_floor` stops treating proven-useful pushes as ignored noise. Every
+    pushed id is included (0 for never-referenced) so an `--apply` pass also resets
+    the credit of a memory that has since gone quiet (idempotent absolute set)."""
+    return {int(i): int(c["referenced"])
+            for i, c in scan_result.get("per_memory", {}).items()}
+
+
 def format_report(s: dict) -> str:
     out = [f"usefulness scan: {s['source']}",
            f"sessions: {s['sessions']}  memories pushed: {s['memories_pushed']}"]

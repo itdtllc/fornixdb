@@ -11,7 +11,7 @@ os.environ["FORNIXDB_VECTORS"] = "off"  # deterministic keyword recall, no model
 
 from fornixdb.core import (FLOOR_CAP, FLOOR_DISCOUNT_MAX, FLOOR_MIN_IMPRESSIONS,
                            FLOOR_PENALTY_MAX, PROJECT_MISMATCH_PENALTY,
-                           FrozenStoreError, MemoryStore)
+                           REFERENCED_USE_WEIGHT, FrozenStoreError, MemoryStore)
 from fornixdb.db import connect
 from fornixdb.multistore import set_config
 from fornixdb.proactive import (active_project_from_cwd, proactive_recall,
@@ -334,6 +334,134 @@ class TestProactiveRecallRecordsImpressions(unittest.TestCase):
         proactive_recall(self.s, q, session_id="s1")
         proactive_recall(self.s, q, session_id="s1")  # same session → deduped
         self.assertEqual(self._row(mid)["surfaced_count"], 1)
+
+
+class TestReferencedUseCredit(unittest.TestCase):
+    """v8 close-the-loop: a PUSH that was actually used downstream (referenced_count)
+    counts as a use in effective_floor, so a proven-useful push isn't scored as
+    ignored noise — while never-referenced noise (referenced=0) is untouched."""
+
+    BASE = 0.45
+
+    def setUp(self):
+        self.s = mem_store()
+
+    def tearDown(self):
+        self.s.close()
+
+    def test_referenced_push_gets_a_discount(self):
+        plain = {"recall_count": 0, "helpful_count": 0, "surfaced_count": 0,
+                 "referenced_count": 0}
+        used = {"recall_count": 0, "helpful_count": 0, "surfaced_count": 0,
+                "referenced_count": 5}
+        self.assertLess(self.s.effective_floor(used, self.BASE),
+                        self.s.effective_floor(plain, self.BASE))
+
+    def test_reference_counts_like_a_recall(self):
+        # REFERENCED_USE_WEIGHT == 1.0: one reference == one pull for the floor math
+        self.assertEqual(REFERENCED_USE_WEIGHT, 1.0)
+        recalled = {"recall_count": 3, "helpful_count": 0, "surfaced_count": 0,
+                    "referenced_count": 0}
+        referenced = {"recall_count": 0, "helpful_count": 0, "surfaced_count": 0,
+                      "referenced_count": 3}
+        self.assertAlmostEqual(self.s.effective_floor(recalled, self.BASE),
+                               self.s.effective_floor(referenced, self.BASE), places=6)
+
+    def test_referenced_push_offsets_its_impressions(self):
+        # pushed 20x: the ignored-noise copy is penalized, the referenced copy is not
+        ignored = {"recall_count": 0, "helpful_count": 0, "surfaced_count": 20,
+                   "referenced_count": 0}
+        useful = {"recall_count": 0, "helpful_count": 0, "surfaced_count": 20,
+                  "referenced_count": 20}
+        self.assertGreater(self.s.effective_floor(ignored, self.BASE), self.BASE)
+        self.assertLess(self.s.effective_floor(useful, self.BASE),
+                        self.s.effective_floor(ignored, self.BASE))
+
+    def test_noise_untouched_by_the_credit(self):
+        # referenced=0 → floor identical to the pre-v8 behavior (only ever lowers)
+        noise = {"recall_count": 0, "helpful_count": 0, "surfaced_count": 20,
+                 "referenced_count": 0}
+        self.assertGreater(self.s.effective_floor(noise, self.BASE), self.BASE)
+
+    def test_toggle_off_ignores_the_credit(self):
+        set_config(self.s, "usefulness_floor_adapt", "off")
+        used = {"recall_count": 0, "helpful_count": 0, "surfaced_count": 0,
+                "referenced_count": 50}
+        self.assertEqual(self.s.effective_floor(used, self.BASE), self.BASE)
+
+
+class TestRecordReferenced(unittest.TestCase):
+    def setUp(self):
+        self.s = mem_store()
+        self.m = self.s.store("a fact", name="m")
+
+    def tearDown(self):
+        self.s.close()
+
+    def _row(self):
+        return dict(self.s.conn.execute(
+            "SELECT * FROM memory WHERE id = ?", (self.m,)).fetchone())
+
+    def test_sets_absolute_and_stamps(self):
+        self.assertEqual(self._row()["referenced_count"], 0)
+        credited = self.s.record_referenced({self.m: 3})
+        self.assertEqual(credited, 1)
+        r = self._row()
+        self.assertEqual(r["referenced_count"], 3)
+        self.assertIsNotNone(r["last_referenced"])
+
+    def test_idempotent_absolute_not_incremented(self):
+        self.s.record_referenced({self.m: 3})
+        self.s.record_referenced({self.m: 3})   # re-run: same scan, no double-count
+        self.assertEqual(self._row()["referenced_count"], 3)
+
+    def test_reset_to_zero_clears_count_but_keeps_timestamp(self):
+        self.s.record_referenced({self.m: 5})
+        stamp = self._row()["last_referenced"]
+        self.s.record_referenced({self.m: 0})   # memory has gone quiet
+        r = self._row()
+        self.assertEqual(r["referenced_count"], 0)
+        self.assertEqual(r["last_referenced"], stamp)  # positive-use stamp preserved
+
+    def test_empty_is_a_noop(self):
+        self.assertEqual(self.s.record_referenced({}), 0)
+
+    def test_frozen_store_skips_silently(self):
+        set_config(self.s, "frozen", "1")
+        self.s.__dict__.pop("_frozen_cache", None)
+        self.assertEqual(self.s.record_referenced({self.m: 9}), 0)  # no raise
+        set_config(self.s, "frozen", "0")
+        self.s.__dict__.pop("_frozen_cache", None)
+        self.assertEqual(self._row()["referenced_count"], 0)
+
+
+class TestReferencedCreditEndToEnd(unittest.TestCase):
+    """A referenced-but-never-pulled memory surfaces where the same never-referenced
+    one drops — the whole point of closing the loop for pushed memories."""
+
+    def setUp(self):
+        self.s = mem_store()
+        self.s._resolve_embedder = lambda *a, **k: object()  # vectors "on"
+
+    def tearDown(self):
+        self.s.close()
+
+    def test_referenced_push_surfaces_just_below_base(self):
+        # cosine 0.44 misses base 0.45, but the row was pushed and USED (referenced)
+        # though never explicitly pulled → its discount pulls the floor under 0.44.
+        self.s.recall = lambda *a, **k: [
+            {"id": 1, "kind": "semantic", "gist": "loved",
+             "vec_cos": 0.44, "recall_count": 0, "helpful_count": 0,
+             "surfaced_count": 30, "referenced_count": 30}]
+        self.assertEqual([r["id"] for r in relevant_memories(self.s, "x", floor=0.45)],
+                         [1])
+
+    def test_same_memory_without_references_drops(self):
+        self.s.recall = lambda *a, **k: [
+            {"id": 1, "kind": "semantic", "gist": "noisy",
+             "vec_cos": 0.44, "recall_count": 0, "helpful_count": 0,
+             "surfaced_count": 30, "referenced_count": 0}]
+        self.assertEqual(relevant_memories(self.s, "x", floor=0.45), [])
 
 
 if __name__ == "__main__":

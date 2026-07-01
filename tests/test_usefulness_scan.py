@@ -93,5 +93,17 @@ class TestParseAndScan(unittest.TestCase):
         self.assertIn("no injected blocks", us.format_report(s))
 
 
+class TestReferencedCountsFromScan(unittest.TestCase):
+    def test_maps_every_pushed_id_to_its_reference_count(self):
+        s = {"per_memory": {36: {"impressions": 3, "referenced": 2},
+                            99: {"impressions": 4, "referenced": 0}}}
+        # every pushed id is present (0 included) so --apply also resets memories
+        # that have gone quiet — an idempotent absolute set.
+        self.assertEqual(us.referenced_counts_from_scan(s), {36: 2, 99: 0})
+
+    def test_empty_scan(self):
+        self.assertEqual(us.referenced_counts_from_scan({}), {})
+
+
 if __name__ == "__main__":
     unittest.main()
