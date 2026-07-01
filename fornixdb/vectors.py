@@ -212,6 +212,30 @@ def backfill(store, embedder: Embedder, batch: int = 64) -> int:
     return done
 
 
+def cosines_for(store, embedder: Embedder, query: str,
+                ids: list[int]) -> dict[int, float]:
+    """Exact query↔memory cosine (best chunk) for SPECIFIC rows. The blend
+    needs a real similarity for EVERY candidate, not just the ones that made
+    the nearest-neighbor shortlist: a keyword-anchored row outside the
+    shortlist used to read as cosine 0.0 — no vector term in its relevance,
+    rankings that changed with `limit` (the shortlist scales with it), and
+    the abstention gate mistaking "not shortlisted" for "nothing similar"
+    (false-abstaining on rank-1 hits whose true cosine cleared the gate)."""
+    if not ids:
+        return {}
+    qvec = embedder.embed([query])[0]
+    ph = ",".join("?" * len(ids))
+    best: dict[int, float] = {}
+    for r in store.conn.execute(
+            f"SELECT e.memory_id, e.vector FROM embedding e "
+            f"WHERE e.model = ? AND e.memory_id IN ({ph})",
+            (embedder.name, *ids)):
+        cos = cosine(qvec, from_blob(r["vector"]))
+        if cos > best.get(r["memory_id"], -1.0):
+            best[r["memory_id"]] = cos
+    return best
+
+
 def similar(store, embedder: Embedder, query: str, *, limit: int = 25,
             include_superseded: bool = False) -> list[tuple[int, float]]:
     """(memory_id, cosine) nearest the query, best first — a memory scores

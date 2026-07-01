@@ -8,6 +8,15 @@ active development branch and can change through the day.
 ## [Unreleased]
 
 ### Fixed
+- **Every recall candidate now carries its TRUE cosine.** The hybrid blend only
+  had similarity scores for rows on the nearest-neighbor shortlist (25–3×limit
+  rows); a keyword-anchored candidate outside it read as cosine 0.0 — it lost
+  its whole vector relevance term, results shifted with `limit` (the shortlist
+  scales with it), and the abstention gate mistook "not shortlisted" for
+  "nothing similar", false-abstaining on correct rank-1 hits whose real cosine
+  cleared the gate. `cosines_for()` now tops up exact best-chunk cosines for
+  the rest of the candidate set (same noise floor); on the live golden set this
+  eliminated every remaining false-abstain with ranking aggregates unchanged.
 - **Vector coverage can no longer silently rot.** `set_gist` dropped the row's
   stale embedding and waited for a manual `embed` run to re-embed it — so a bulk
   consolidation pass left most of the store semantically invisible until someone
