@@ -443,6 +443,11 @@ def main(argv: list[str] | None = None) -> int:
                      default="~/.claude/projects",
                      help="a .jsonl transcript or a directory of them "
                           "(default: ~/.claude/projects)")
+    usp.add_argument("--apply", action="store_true",
+                     help="close the loop: write each memory's downstream-reference "
+                          "count into the store as a use-credit, so effective_floor "
+                          "stops scoring proven-useful pushes as ignored noise "
+                          "(idempotent absolute set)")
 
     rpj = sub.add_parser("reproject",
                          help="re-derive project labels from CONTENT (fixes "
@@ -1187,12 +1192,20 @@ def _dispatch(p, args, store, stores) -> int:
 
     elif args.cmd == "usefulness-scan":
         from .usefulness_scan import format_report as us_report
-        from .usefulness_scan import scan
+        from .usefulness_scan import referenced_counts_from_scan, scan
         result = scan(args.transcripts)
+        if args.apply:
+            counts = referenced_counts_from_scan(result)
+            credited = store.record_referenced(counts)
+            result["applied"] = {"memories_scanned": len(counts), "credited": credited}
         if args.json:
             print(json.dumps(result, indent=2, default=str))
         else:
             print(us_report(result))
+            if args.apply:
+                print(f"\napplied: use-credit written for {result['applied']['credited']} "
+                      f"memory(ies) referenced downstream "
+                      f"(of {result['applied']['memories_scanned']} pushed).")
 
     elif args.cmd == "reproject":
         from . import reproject as rp
