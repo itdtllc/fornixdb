@@ -7,7 +7,22 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-01
+
 ### Added
+- **Close the loop: a pushed memory that gets USED now counts as used.** The
+  per-memory usefulness floor scored a proactive push as ignored noise whenever
+  `surfaced_count` outran `recall_count` — but a pushed memory sits in context and
+  is used in reasoning WITHOUT ever being pulled, so a proven-useful push looked
+  identical to genuine noise. Schema **v8** adds `referenced_count`/`last_referenced`;
+  `effective_floor` folds a per-memory reference use-credit into `uses`, so a push
+  that was actually referenced downstream sheds the ignored-noise penalty while a
+  never-referenced one stays quiet (the credit only ever LOWERS a floor — noise,
+  referenced=0, is untouched). `usefulness-scan --apply` materializes the honest
+  transcript reference signal into the store (idempotent absolute set). The credit
+  reads per-memory reference totals, so it is immune to the L3/L4 channel-attribution
+  bias. Idempotent auto-migration; the recall/PULL path never touches the floor, so
+  the recall-quality eval fence is unaffected.
 - **`fornixdb usefulness-scan` — an HONEST push-usefulness signal from session
   transcripts.** The usefulness loop credits a memory as "used" only on an
   explicit pull or endorsement, but a proactively PUSHED memory is already in
