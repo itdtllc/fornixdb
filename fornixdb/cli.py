@@ -449,6 +449,18 @@ def main(argv: list[str] | None = None) -> int:
                           "stops scoring proven-useful pushes as ignored noise "
                           "(idempotent absolute set)")
 
+    vp = sub.add_parser("value",
+                        help="one-shot 'how useful has FornixDB been?': cost (token "
+                             "footprint) + reach (vs flat memory) + used (referenced-"
+                             "push rate from transcripts)")
+    vp.add_argument("--transcripts", metavar="PATH", default="~/.claude/projects",
+                    help="transcript file/dir for the used-signal "
+                         "(default: ~/.claude/projects; empty string to skip)")
+    vp.add_argument("--memory-md", metavar="PATH",
+                    help="flat MEMORY.md, to also measure REACH vs the flat memory")
+    vp.add_argument("--memory-dir", metavar="PATH",
+                    help="flat memory dir (with --memory-md) for the REACH measure")
+
     rpj = sub.add_parser("reproject",
                          help="re-derive project labels from CONTENT (fixes "
                               "auto-captured memories mislabeled by launch dir / "
@@ -1108,6 +1120,13 @@ def _dispatch(p, args, store, stores) -> int:
         r = report(store)
         print(json.dumps(r, indent=2, default=str) if args.json
               else format_report(r))
+
+    elif args.cmd == "value":
+        from . import value
+        r = value.report(store, transcripts=(args.transcripts or None),
+                         memory_md=args.memory_md, memory_dir=args.memory_dir)
+        print(json.dumps(r, indent=2, default=str) if args.json
+              else value.format_report(r))
 
     elif args.cmd == "tools":
         import json as _json

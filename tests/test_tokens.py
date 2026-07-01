@@ -21,7 +21,7 @@ class TestTokens(unittest.TestCase):
         r = report(self.s)
         fixed = r["fixed_per_session"]
         self.assertGreater(fixed["mcp_tool_schemas"]["tokens"], 100)
-        self.assertEqual(fixed["mcp_tool_schemas"]["tools"], 20)
+        self.assertEqual(fixed["mcp_tool_schemas"]["tools"], 21)
         self.assertEqual(fixed["total_tokens"],
                          fixed["mcp_tool_schemas"]["tokens"]
                          + fixed["mcp_instructions"]["tokens"]
@@ -62,7 +62,7 @@ class TestTokens(unittest.TestCase):
         import json
 
         from fornixdb.adapters.mcp_server import INSTRUCTIONS, TOOLS
-        SCHEMA_TOKEN_BUDGET = 1960
+        SCHEMA_TOKEN_BUDGET = 2050  # raised for memory_value (the value summary tool)
         INSTRUCTIONS_TOKEN_BUDGET = 260
 
         schema_tokens = estimate_tokens(json.dumps(TOOLS))

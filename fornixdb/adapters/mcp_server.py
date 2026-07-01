@@ -151,6 +151,11 @@ TOOLS = [
      "description": "Disk space used (db + archives), any budget cap, and memory "
                     "count. Answers 'how much space is FornixDB taking'.",
      "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "memory_value",
+     "description": "'How useful has FornixDB been?' — one summary of token cost, "
+                    "reach vs the flat memory index, and the referenced-push rate "
+                    "(the honest 'did pushed memory actually get used' signal).",
+     "inputSchema": {"type": "object", "properties": {}}},
     {"name": "shrink_memory",
      "description": "PERMANENTLY shrink the store to a target MB — true deletion, "
                     "least-salient first, not recoverable. Only on the owner's "
@@ -484,6 +489,10 @@ class FornixMCP:
             return f"no memory: {ref}"
         return (f"#{m['id']} endorsed (helpful x{m['helpful_count']}) — ranks "
                 f"higher everywhere now, reinforced against staleness")
+
+    def memory_value(self) -> str:
+        from ..value import format_report, report
+        return format_report(report(self.store, transcripts="~/.claude/projects"))
 
     def memory_usage(self) -> str:
         from ..budget import machine_usage, status
