@@ -11,7 +11,7 @@ from fornixdb.consolidate import (RESOLUTION_COSINE, _dream_narrative,
                                   supersede_suggestion)
 from fornixdb.core import FrozenStoreError, MemoryStore
 from fornixdb.multistore import set_config
-from fornixdb.vectors import cosine, embed_memory, from_blob
+from fornixdb.vectors import cosine, embed_memory, from_blob, similar
 
 from test_vectors import FakeEmbedder
 
@@ -179,13 +179,25 @@ class TestPropose(unittest.TestCase):
 
     # -------------------------------------------------------- new primitives
 
-    def test_set_gist_updates_fts_and_drops_vector(self):
+    def test_set_gist_reembeds_in_place_when_model_available(self):
+        mid = self.s.store("wrong words here", "stable detail")
+        embed_memory(self.s, self.emb, mid)
+        self.s.set_gist(mid, "rocketship launch checklist", embedder=self.emb)
+        hits = self.s.recall("rocketship", embedder=False)
+        self.assertEqual([h["id"] for h in hits], [mid])       # FTS updated
+        self.assertEqual(self.s.recall("wrong words", embedder=False), [])
+        # the vector now carries the NEW meaning — no window where a bulk
+        # consolidation pass leaves the row semantically invisible
+        best = dict(similar(self.s, self.emb, "rocketship launch"))
+        self.assertGreater(best.get(mid, 0.0), 0.5)
+
+    def test_set_gist_without_model_drops_stale_vector(self):
+        # no embedder resolvable (vectors off here): the stale vector must
+        # still go — a wrong vector is worse than none — and the row waits
+        # for backfill / the gap auto-heal to re-embed it.
         mid = self.s.store("wrong words here", "stable detail")
         embed_memory(self.s, self.emb, mid)
         self.s.set_gist(mid, "rocketship launch checklist")
-        hits = self.s.recall("rocketship", embedder=False)
-        self.assertEqual([h["id"] for h in hits], [mid])
-        self.assertEqual(self.s.recall("wrong words", embedder=False), [])
         left = self.s.conn.execute(
             "SELECT count(*) c FROM embedding WHERE memory_id=?", (mid,)).fetchone()
         self.assertEqual(left["c"], 0)

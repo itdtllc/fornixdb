@@ -270,6 +270,23 @@ class TestVectorsDefaultOn(unittest.TestCase):
         self.assertGreater(self._emb(s, a), 0)   # old memories embedded
         self.assertGreater(self._emb(s, b), 0)
 
+    def test_partial_coverage_gap_heals_on_first_use(self):
+        # a store that LOST coverage (a vector-dropping edit with no model in
+        # the environment — the 2026-07-01 bulk distill left 250/317 rows
+        # unembedded this way) must close the holes itself: the old guard
+        # bailed the moment ANY embedding existed, so gaps were permanent
+        # unless someone remembered to run `embed`.
+        s = mem_store()
+        a = s.store("the automobile stalled")
+        b = s.store("her eyes sparkled")
+        self.assertGreater(self._emb(s, a), 0)   # embed-on-write covered both
+        s.conn.execute("DELETE FROM embedding WHERE memory_id = ?", (a,))
+        s.conn.commit()
+        del s._auto_embedder                     # next use re-resolves
+        s.recall("vehicle")                      # first real vector use
+        self.assertGreater(self._emb(s, a), 0)   # the hole closed itself
+        self.assertGreater(self._emb(s, b), 0)   # untouched row still covered
+
     def test_env_switch_off_disables(self):
         os.environ["FORNIXDB_VECTORS"] = "off"
         s = mem_store()
