@@ -269,22 +269,26 @@ def relevant_memories(store: MemoryStore, prompt: str, *,
     return out
 
 
+def row_line(m: dict) -> str:
+    """One provenance-flagged block line for a memory — the single line shape
+    every push rung (L3 hook, L4 pulse, L5 field) emits."""
+    flag = ""
+    if m.get("source") in AUTO_CAPTURE_SOURCES:
+        flag += " [auto-captured]"
+    if m.get("writer"):
+        flag += f" [by {m['writer']}]"
+    if m.get("stale_days"):
+        flag += f" [stale {m['stale_days']}d]"
+    sid = f"{m['_store']}:{m['id']}" if m.get("_store") else m["id"]
+    gist = (m.get("gist") or "")[:MAX_GIST]
+    return (f"#{sid} {(m.get('event_time') or '')[:10]} "
+            f"{m['kind'][:3]}{flag}  {gist}")
+
+
 def format_block(rows: list[dict], max_chars: int) -> str | None:
     if not rows:
         return None
-    lines = [HEADER]
-    for m in rows:
-        flag = ""
-        if m.get("source") in AUTO_CAPTURE_SOURCES:
-            flag += " [auto-captured]"
-        if m.get("writer"):
-            flag += f" [by {m['writer']}]"
-        if m.get("stale_days"):
-            flag += f" [stale {m['stale_days']}d]"
-        sid = f"{m['_store']}:{m['id']}" if m.get("_store") else m["id"]
-        gist = (m.get("gist") or "")[:MAX_GIST]
-        lines.append(f"#{sid} {(m.get('event_time') or '')[:10]} "
-                     f"{m['kind'][:3]}{flag}  {gist}")
+    lines = [HEADER] + [row_line(m) for m in rows]
     # final budget guard: drop whole trailing lines rather than cut mid-line
     while len(lines) > 1 and len("\n".join(lines)) > max_chars:
         lines.pop()

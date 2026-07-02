@@ -424,6 +424,24 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("topics", help="list topics with counts")
     sub.add_parser("stats", help="store statistics")
 
+    fdp = sub.add_parser("field",
+                         help="L5 debug view: fire the parallel multi-domain field "
+                              "on a thought and show every domain's returns, the "
+                              "corroboration scores, the clusters, and the settled "
+                              "block")
+    fdp.add_argument("thought", help="the evolving-thought text to fire the field on")
+    fdp.add_argument("--project", help="active project context (default: none)")
+    fdp.add_argument("--lit", metavar="IDS",
+                     help="comma-separated memory ids already active this episode "
+                          "(seeds the neighborhood domain)")
+
+    fbp = sub.add_parser("field-stats",
+                         help="analyze the L5 field log (settle rate, which domains "
+                              "light winners, link-vs-topic glue, dissent shadow, "
+                              "per-beat cost)")
+    fbp.add_argument("--log", help="field log path (default: field_log.jsonl "
+                                   "beside the store)")
+
     fsp = sub.add_parser("floor-stats",
                          help="analyze the floor log (cosine distributions, dial "
                               "activity, and an evidence-based floor recommendation)")
@@ -1199,6 +1217,23 @@ def _dispatch(p, args, store, stores) -> int:
 
     elif args.cmd == "stats":
         print(json.dumps(store.stats(), indent=2, default=str))
+
+    elif args.cmd == "field":
+        from .field import format_field_debug
+        lit = {int(x) for x in (args.lit or "").split(",") if x.strip().isdigit()}
+        print(format_field_debug(store, args.thought,
+                                 active_project=args.project, episode_ids=lit))
+
+    elif args.cmd == "field-stats":
+        from .field import field_log_path_for
+        from .field_stats import format_report, load_beats, summarize
+        path = args.log or field_log_path_for(store)
+        summary = summarize(load_beats(path))
+        if args.json:
+            summary["log_path"] = str(path) if path else None
+            print(json.dumps(summary, indent=2))
+        else:
+            print(format_report(summary, str(path) if path else None))
 
     elif args.cmd == "floor-stats":
         from .floor_stats import (format_report, load_records,

@@ -5,6 +5,49 @@ versioning. While the project is pre-1.0 the public API may still evolve between
 minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
 active development branch and can change through the day.
 
+## [Unreleased]
+
+### Added
+- **L5 parallel multi-domain activation — the field (first build, default OFF).**
+  With `config parallel_recall on`, each L4 beat gathers through `fornixdb.field`
+  instead of a single recall: seven domain-scoped recalls (semantic knowledge /
+  recent episodes / deep past / feedback guidance / reference / active-project
+  context / 1-hop link-spread neighborhood) fire on the same evolving thought
+  sharing ONE query embedding, then settle by corroboration clustering — rows
+  several domains return, or that link/topic-connect across domains, form the
+  pattern, emitted under a descriptive `settled:` direction line. Honesty
+  properties: every row clears the same per-memory effective floor as an L4
+  pulse; the neighborhood is corroboration-only (query-free rows can never
+  surface alone); no corroboration degrades to plain L4 behavior; nothing
+  clearing the floors stays silent. L4 owns WHEN (debounce, episode budget,
+  dedup — unchanged); L5 owns HOW WIDE. The dial ships off while L5 walks the
+  same scan-verified usefulness gate L4 passed before its default flipped.
+- **`fornixdb field "<thought>"`** — debug view of one field beat: every
+  domain's returns, corroboration scores, clusters, and the block it would
+  inject (read-only).
+- **Per-beat field telemetry + `fornixdb field-stats`.** With `floor_log on`,
+  each field beat appends one record to `field_log.jsonl` beside the store:
+  settle/degrade/abstain, which domains lit the winning cluster, link-vs-topic
+  glue, the dissent *shadow* (what the minority-report line would have shown
+  while `parallel_dissent` is off — so that decision can be made from data),
+  emitted ids, and wall time. `field-stats` renders settle rate, domain
+  contribution, glue split, shadow counts, and cost.
+- **L5 instrumentation is channel-aware end to end**: field floor decisions log
+  `channel="L5"` (with the L5-specific `cleared_not_settled` outcome so
+  "surfaced" keeps meaning *actually injected*), and the usefulness scan
+  tallies SETTLED field blocks as channel L5 — a degraded field block is L4
+  behavior and is credited to L4.
+- **Ladder and config surfaces know the new rung**: `level` shows L5 (dogfood,
+  dial `parallel_recall`, reads off when unset), the `configure` wizard derives
+  its rung menu from the ladder (every built rung offered; planned stay off the
+  menu) and asks the one L5 behavior choice (`parallel_dissent`) only at L5,
+  and the read-only `config` view gained the `parallel_dissent` row.
+
+### Changed
+- **L4 rhythmic recall is marked BUILT** (was "under evaluation"): its
+  usefulness gate resolved — scan-verified downstream reference rate for L4
+  pushes beats the per-turn L3 channel (20% vs 13%) on lived-in usage.
+
 ## [0.4.2] - 2026-07-02
 
 ### Fixed

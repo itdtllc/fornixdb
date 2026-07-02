@@ -58,6 +58,23 @@ class WizardCase(unittest.TestCase):
         self.assertIn("operating_level", res["applied"])
         self.assertEqual(levels.current_rung(self.s)[0], "L3")
         self.assertFalse(levels.is_on(self.s, "L4"))
+
+    def test_l5_offered_and_asks_dissent(self):
+        # rung L5 → the dissent question appears (extra answer), everything else
+        # kept: rung, dissent, capture, session, vectors, ingest, budget,
+        # floor-log, tools, confirm
+        res, sc = self._run("L5", "on", "", "", "", "", "", "", "", "y")
+        self.assertIn("operating_level", res["applied"])
+        self.assertIn("parallel_dissent", res["applied"])
+        self.assertEqual(levels.current_rung(self.s)[0], "L5")
+        self.assertEqual(get_config(self.s, "parallel_recall"), "on")
+        self.assertEqual(get_config(self.s, "parallel_dissent"), "on")
+        self.assertIn("dissent", sc.text())
+
+    def test_below_l5_never_asks_dissent(self):
+        # staying at L4: same prompt count as before L5 existed — no dissent ask
+        _, sc = self._run("", "", "", "", "", "", "", "")
+        self.assertNotIn("dissent", sc.text())
         self.assertTrue(levels.is_on(self.s, "L3"))
 
     def test_decline_at_confirm_writes_nothing(self):
