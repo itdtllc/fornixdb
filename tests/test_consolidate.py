@@ -504,5 +504,63 @@ class TestResolutionHeal(unittest.TestCase):
         self.assertIsNone(sug)
 
 
+# Reality check (2026-07-01): the dream verifies file-path claims against the
+# world. Motivating case: the project's own design doc vanished in a disk
+# reorg and its pointer memories sat stale for two weeks.
+class TestRealityCheck(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.s = file_store(self.tmp.name)
+        # a real, existing anchor under HOME (the scan only judges home paths)
+        self.home_dir = Path(os.path.expanduser("~")) / f".fornixdb_test_{os.getpid()}"
+        self.home_dir.mkdir(exist_ok=True)
+        self.existing = self.home_dir / "present.md"
+        self.existing.write_text("here")
+        self.missing = str(self.home_dir / "vanished" / "doc.md")
+
+    def tearDown(self):
+        self.existing.unlink(missing_ok=True)
+        self.home_dir.rmdir()
+        self.s.close()
+        self.tmp.cleanup()
+
+    def _flagged(self):
+        from fornixdb.consolidate import _reality_scan
+        return {(m["id"], m["path"]) for m in _reality_scan(self.s)}
+
+    def test_missing_home_path_in_live_claim_is_flagged(self):
+        mid = self.s.store(f"design doc lives at {self.missing}.", kind="reference")
+        flagged = self._flagged()
+        self.assertIn((mid, self.missing), flagged)   # trailing '.' stripped too
+
+    def test_existing_path_and_episodic_history_are_not_flagged(self):
+        self.s.store(f"the doc is at {self.existing}", kind="reference")
+        self.s.store(f"Session: worked on {self.missing} all day",
+                     kind="episodic")            # history, not a claim
+        self.assertEqual(self._flagged(), set())
+
+    def test_paths_outside_this_home_are_never_judged(self):
+        self.s.store("PC copy at /Users/pcuser/definitely/not/here.md and "
+                     "share at /Volumes/Relay/gone.md", kind="reference")
+        self.assertEqual(self._flagged(), set())
+
+    def test_unjudgeable_patterns_are_skipped(self):
+        # each pattern produced live noise on the first run (2026-07-01)
+        home = str(Path(os.path.expanduser("~")))
+        self.s.store(f"elided {home}/dev/.../Test and template "
+                     f"{home}/dev/backups/fornixdb_backup_ and ephemeral "
+                     f"{home}/Library/Developer/CoreSimulator/Devices/X/data.csv",
+                     kind="reference")
+        self.assertEqual(self._flagged(), set())
+
+    def test_propose_and_dream_carry_the_reality_section(self):
+        mid = self.s.store(f"pointer to {self.missing}", kind="reference")
+        work = propose(self.s)
+        self.assertEqual([m["id"] for m in work["reality"]], [mid])
+        rep = dream(self.s)
+        self.assertEqual(rep["counts"]["reality"], 1)
+        self.assertIn("missing file", rep["narrative"])
+
+
 if __name__ == "__main__":
     unittest.main()

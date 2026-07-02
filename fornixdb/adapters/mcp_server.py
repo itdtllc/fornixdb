@@ -617,6 +617,9 @@ class FornixMCP:
         section("contradictions", "outdated? supersede the stale one",
                 lambda m: f"#{m['ids'][0]} ~ #{m['ids'][1]} ({m['kind']}): "
                           f"{m['gists'][0][:45]} | {m['gists'][1][:45]}")
+        section("reality", "reality check — memory points at a MISSING file "
+                           "(moved? deleted? supersede?)",
+                lambda m: f"#{m['id']} MISSING {m['path']}")
         section("associations", "wove" if weave else "weave new links",
                 lambda m: f"#{m['ids'][0]} <-> #{m['ids'][1]} "
                           f"({m['kinds'][0]}/{m['kinds'][1]})")

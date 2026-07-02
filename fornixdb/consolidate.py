@@ -252,6 +252,76 @@ def _resolution_scan(store: MemoryStore, exclude_ids: set[int]) -> list:
     return out[:MAX_PAIR_PROPOSALS]
 
 
+# ------------------------------------------------------------ reality check
+# A memory that points at the filesystem can silently rot: the file moves or
+# is deleted and the pointer stays live and recallable. (The motivating case,
+# 2026-07-01: the project's own design doc vanished in a disk reorg and its
+# pointer memories sat stale for two weeks until someone happened to reach for
+# it.) Human memory is embedded in perception — you notice the gap the next
+# time you look at the shelf. This scan is that primitive sense organ: during
+# a dream, verify file-path claims against the world and surface what is
+# missing. Propose-not-dispose (§6.5): a missing path may be an unmounted
+# volume, a moved file, or a memory worth superseding — judgment stays with
+# the reviewing AI/owner. Episodic rows are exempt for the same reason they
+# never carry a staleness flag: they are history, not claims about the
+# present. Only paths under THIS machine's home are checked, so pointers to
+# other machines (the PC, network shares) never false-positive.
+
+_FS_PATH_RE = re.compile(r"(?:~|/Users)/[^\s`'\"()\[\]{}<>*,;|]+")
+_PATH_STRIP = ".,;:!?…"          # sentence punctuation that rides a path's tail
+MAX_REALITY_PER_MEMORY = 5       # a pathological detail can't flood the list
+# Paths that are missing by NATURE, not by rot — flagging them is noise
+# (measured on the live store's first run, 2026-07-01):
+_EPHEMERAL_SEGMENTS = ("Library/Developer/CoreSimulator/",  # sim containers
+                       "Library/Caches/")                    # caches
+
+
+def _extract_paths(text: str) -> list[str]:
+    """Candidate filesystem paths in prose: `~/...` or `/Users/...`, trailing
+    sentence punctuation stripped. Excluded as unjudgeable (first live run
+    showed each pattern): elided paths (`/Users/dad/.../x`), template
+    prefixes whose last segment ends `_`/`-` (`fornixdb_backup_<stamp>` with
+    the placeholder eaten by the regex), and ephemeral OS containers."""
+    out = []
+    for m in _FS_PATH_RE.findall(text or ""):
+        p = m.rstrip(_PATH_STRIP)
+        if p.rstrip("/").count("/") < 2:      # bare "~/x" is too generic to judge
+            continue
+        if "..." in p:                        # prose elision, never a real name
+            continue
+        if p.rstrip("/").rsplit("/", 1)[-1].endswith(("_", "-")):
+            continue
+        if any(seg in p for seg in _EPHEMERAL_SEGMENTS):
+            continue
+        out.append(p)
+    return out
+
+
+def _reality_scan(store: MemoryStore) -> list:
+    """Live non-episodic memories whose gist/detail names a path under this
+    machine's home that no longer exists."""
+    import os
+    home = os.path.expanduser("~")
+    out = []
+    for r in store.conn.execute(
+            """SELECT id, gist, detail FROM memory
+               WHERE superseded_time IS NULL AND kind != 'episodic'
+               ORDER BY id"""):
+        missing, seen = [], set()
+        for p in _extract_paths(f"{r['gist'] or ''}\n{r['detail'] or ''}"):
+            full = os.path.expanduser(p)
+            if not full.startswith(home + os.sep) or full in seen:
+                continue
+            seen.add(full)
+            if not os.path.exists(full):
+                missing.append(p)
+            if len(missing) >= MAX_REALITY_PER_MEMORY:
+                break
+        for p in missing:
+            out.append({"id": r["id"], "path": p, "gist": r["gist"]})
+    return out
+
+
 def propose(store: MemoryStore) -> dict:
     """Emit the §13.3 worklist. Read-only: nothing is tagged, rewritten, or
     embedded here — the reviewing AI applies what survives its judgment."""
@@ -296,7 +366,7 @@ def propose(store: MemoryStore) -> dict:
 
     return {"distill": distill, "gists": gists, "merges": merges,
             "contradictions": contradictions, "associations": associations,
-            "resolutions": resolutions}
+            "resolutions": resolutions, "reality": _reality_scan(store)}
 
 
 # ------------------------------------------------------------- sleep / dream
@@ -325,6 +395,11 @@ def _dream_narrative(st: dict, counts: dict, woven: int = 0) -> str:
         parts.append(plural(counts["contradictions"],
                             "possible outdated memory to reconcile",
                             "possible outdated memories to reconcile"))
+    if counts.get("reality"):
+        # memory vs world: a live memory points at a file that isn't there
+        parts.append(plural(counts["reality"],
+                            "pointer to a missing file to verify",
+                            "pointers to missing files to verify"))
     if counts["associations"] and not woven:
         # the generative half: connections that didn't exist before the dream
         # (when woven, the woke-clause below reports them instead)
@@ -425,7 +500,7 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
             woven += 1
     counts = {k: len(work[k]) for k in ("distill", "gists", "merges",
                                         "contradictions", "associations",
-                                        "resolutions")}
+                                        "resolutions", "reality")}
     counts["total"] = sum(counts.values())
     counts["woven"] = woven
 

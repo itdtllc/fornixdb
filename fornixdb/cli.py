@@ -664,6 +664,11 @@ def _dispatch(p, args, store, stores) -> int:
                     print(f"#{m['ids'][0]} ~ #{m['ids'][1]} cos {m['cosine']:.2f} ({m['kind']})")
                     for g in m["gists"]:
                         print(f"        {g[:90]}")
+                print(f"--- reality check: pointers to missing files "
+                      f"({len(work.get('reality', []))}) ---")
+                for m in work.get("reality", []):
+                    print(f"#{m['id']:<5} MISSING {m['path']}")
+                    print(f"        {(m['gist'] or '')[:90]}")
                 print(f"--- weave new associations ({len(work['associations'])}) ---")
                 for m in work["associations"]:
                     print(f"#{m['ids'][0]} <-> #{m['ids'][1]} cos {m['cosine']:.2f} "
@@ -702,6 +707,13 @@ def _dispatch(p, args, store, stores) -> int:
                     print(f"#{m['ids'][0]} ~ #{m['ids'][1]} cos {m['cosine']:.2f} ({m['kind']})")
                     for g in m["gists"]:
                         print(f"        {g[:90]}")
+            if work.get("reality") and not args.done:
+                print(f"\n--- reality check ({len(work['reality'])}) — a live memory "
+                      "points at a file that isn't there (verify: moved? deleted? "
+                      "supersede the memory?) ---")
+                for m in work["reality"]:
+                    print(f"#{m['id']:<5} MISSING {m['path']}")
+                    print(f"        {(m['gist'] or '')[:90]}")
             if work["associations"] and not args.done:
                 verb = "wove" if args.weave else "to weave"
                 print(f"\n--- new connections {verb} ({len(work['associations'])}) ---")
