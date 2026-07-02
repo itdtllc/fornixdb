@@ -102,14 +102,20 @@ class TestEffectiveFloor(unittest.TestCase):
         self.assertEqual(self.s.effective_floor(row, self.BASE), self.BASE)
 
     def test_used_memory_gets_a_discount(self):
-        row = {"recall_count": 5, "helpful_count": 0, "surfaced_count": 0}
+        row = {"referenced_count": 5, "helpful_count": 0, "surfaced_count": 0}
         self.assertLess(self.s.effective_floor(row, self.BASE), self.BASE)
 
-    def test_endorsement_discounts_more_than_a_lone_recall(self):
-        recalled = {"recall_count": 1, "helpful_count": 0, "surfaced_count": 0}
-        endorsed = {"recall_count": 0, "helpful_count": 1, "surfaced_count": 0}
+    def test_pulls_do_not_discount_the_push_floor(self):
+        # pulls are the other channel — a pulled memory needs no pushing to be
+        # found, and listing-era recall_count inflation must never mask noise
+        row = {"recall_count": 500, "helpful_count": 0, "surfaced_count": 0}
+        self.assertEqual(self.s.effective_floor(row, self.BASE), self.BASE)
+
+    def test_endorsement_discounts_more_than_a_lone_reference(self):
+        referenced = {"referenced_count": 1, "helpful_count": 0, "surfaced_count": 0}
+        endorsed = {"referenced_count": 0, "helpful_count": 1, "surfaced_count": 0}
         self.assertLess(self.s.effective_floor(endorsed, self.BASE),
-                        self.s.effective_floor(recalled, self.BASE))
+                        self.s.effective_floor(referenced, self.BASE))
 
     def test_ignored_memory_gets_a_penalty(self):
         # pushed many times, never used → floor rises (quieter)
@@ -123,8 +129,8 @@ class TestEffectiveFloor(unittest.TestCase):
 
     def test_use_offsets_impressions(self):
         # surfaced a lot but ALSO used a lot → not "ignored"
-        ignored = {"recall_count": 0, "helpful_count": 0, "surfaced_count": 20}
-        used = {"recall_count": 20, "helpful_count": 0, "surfaced_count": 20}
+        ignored = {"referenced_count": 0, "helpful_count": 0, "surfaced_count": 20}
+        used = {"referenced_count": 20, "helpful_count": 0, "surfaced_count": 20}
         self.assertLess(self.s.effective_floor(used, self.BASE),
                         self.s.effective_floor(ignored, self.BASE))
 
@@ -133,12 +139,12 @@ class TestEffectiveFloor(unittest.TestCase):
         hot = {"recall_count": 0, "helpful_count": 0, "surfaced_count": 9999}
         self.assertLessEqual(self.s.effective_floor(hot, 0.95), FLOOR_CAP)
         # discount can't drop below zero from a low base
-        loved = {"recall_count": 9999, "helpful_count": 9999, "surfaced_count": 0}
+        loved = {"referenced_count": 9999, "helpful_count": 9999, "surfaced_count": 0}
         self.assertGreaterEqual(self.s.effective_floor(loved, 0.02), 0.0)
 
     def test_discount_and_penalty_within_declared_maxima(self):
-        loved = {"recall_count": 9999, "helpful_count": 9999, "surfaced_count": 0}
-        ignored = {"recall_count": 0, "helpful_count": 0, "surfaced_count": 9999}
+        loved = {"referenced_count": 9999, "helpful_count": 9999, "surfaced_count": 0}
+        ignored = {"referenced_count": 0, "helpful_count": 0, "surfaced_count": 9999}
         self.assertAlmostEqual(self.BASE - self.s.effective_floor(loved, self.BASE),
                                FLOOR_DISCOUNT_MAX, places=4)
         self.assertAlmostEqual(self.s.effective_floor(ignored, self.BASE) - self.BASE,
@@ -357,15 +363,17 @@ class TestReferencedUseCredit(unittest.TestCase):
         self.assertLess(self.s.effective_floor(used, self.BASE),
                         self.s.effective_floor(plain, self.BASE))
 
-    def test_reference_counts_like_a_recall(self):
-        # REFERENCED_USE_WEIGHT == 1.0: one reference == one pull for the floor math
+    def test_reference_is_the_use_unit_pulls_are_not(self):
+        # REFERENCED_USE_WEIGHT == 1.0 is the unit of floor "uses"; pull counts
+        # deliberately tally nothing (pulls are the other channel, and listing-era
+        # recall_count inflation masked the never-used population entirely)
         self.assertEqual(REFERENCED_USE_WEIGHT, 1.0)
         recalled = {"recall_count": 3, "helpful_count": 0, "surfaced_count": 0,
                     "referenced_count": 0}
         referenced = {"recall_count": 0, "helpful_count": 0, "surfaced_count": 0,
                       "referenced_count": 3}
-        self.assertAlmostEqual(self.s.effective_floor(recalled, self.BASE),
-                               self.s.effective_floor(referenced, self.BASE), places=6)
+        self.assertEqual(self.s.effective_floor(recalled, self.BASE), self.BASE)
+        self.assertLess(self.s.effective_floor(referenced, self.BASE), self.BASE)
 
     def test_referenced_push_offsets_its_impressions(self):
         # pushed 20x: the ignored-noise copy is penalized, the referenced copy is not
