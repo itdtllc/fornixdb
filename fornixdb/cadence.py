@@ -23,6 +23,10 @@ Nothing here is OS-specific; the only host-specific code is the thin caller.
 ADDITIVE, never a takeover: it only ADDS a block; it never replaces or owns the
 host's native context. Respects the same switches as L3 (`ingest_mode=explicit`
 off entirely; `config rhythmic_recall off` off on its own).
+
+L5 rides on this metronome: with `config parallel_recall on` each beat gathers
+through the multi-domain field (`fornixdb.field`) instead of a single recall —
+same cadence, same budget, wider activation. L4 owns WHEN, L5 owns HOW WIDE.
 """
 
 from __future__ import annotations
@@ -110,18 +114,27 @@ def pulse(store: MemoryStore, thought: str, episode: Episode, *,
     exclude = set(episode.pulsed_ids)
     if dedup:
         exclude |= injected_this_session(store, session_id)
-    rows = relevant_memories(
-        store, thought, limit=limit, floor=floor, exclude_ids=exclude,
-        active_project=resolve_active_project(store, active_project,
-                                              session_id=session_id),
-        channel="L4")
-    block = format_block(rows, max_chars)
+    active = resolve_active_project(store, active_project, session_id=session_id)
+    if get_config(store, "parallel_recall", "off") not in ("off", "0", "false"):
+        # L5: the beat goes WIDE — a field of domain-scoped recalls settles
+        # into one block. Same metronome (debounce/budget/dedup above), same
+        # block budget; only the gather inside the beat changes.
+        from .field import field_recall
+        block, ids = field_recall(store, thought,
+                                  episode_ids=set(episode.pulsed_ids),
+                                  exclude_ids=exclude, active_project=active,
+                                  max_chars=max_chars)
+    else:
+        rows = relevant_memories(
+            store, thought, limit=limit, floor=floor, exclude_ids=exclude,
+            active_project=active, channel="L4")
+        block = format_block(rows, max_chars)
+        ids = [r["id"] for r in rows]
     if not block:
         # the thought still counts as the latest query, so an unchanged next
         # step debounces against it rather than re-querying the same miss
         episode.last_query = thought
         return None
-    ids = [r["id"] for r in rows]
     episode.pulsed_ids.update(ids)
     episode.last_query = thought
     episode.pulse_count += 1

@@ -42,6 +42,10 @@ class TestAttribute(unittest.TestCase):
         self.assertEqual(pc["L3"], {"impressions": 1, "referenced": 1})
         self.assertEqual(pc["L4"], {"impressions": 1, "referenced": 0})
 
+    def test_l5_prelabel_survives_channel_normalization(self):
+        _, pc = us.attribute([("push", {3}, "L5"), ("cite", {3}, None)])
+        self.assertEqual(pc["L5"], {"impressions": 1, "referenced": 1})
+
 
 class TestParseAndScan(unittest.TestCase):
     def _session_file(self, d, name="s.jsonl"):
@@ -68,6 +72,27 @@ class TestParseAndScan(unittest.TestCase):
             evs = list(us.iter_events(p))
             self.assertEqual(evs[0], ("push", {36, 99}, "UserPromptSubmit"))
             self.assertIn(("cite", {36}, None), evs)
+
+    def test_settled_block_is_labeled_l5(self):
+        # a SETTLED field block carries its direction line; a degraded field
+        # block is L4 behavior and keeps the hook-event label
+        with tempfile.TemporaryDirectory() as d:
+            lines = [
+                {"type": "attachment",
+                 "attachment": {"hookEvent": "PostToolUse",
+                                "stdout": "[FornixDB · possibly-relevant past — …]\n"
+                                          "settled: pool · 2026-06-29 · knowledge+recent\n"
+                                          "#12 mortar gist"}},
+                {"type": "attachment",
+                 "attachment": {"hookEvent": "PostToolUse",
+                                "stdout": "[FornixDB · possibly-relevant past — …]\n"
+                                          "#13 loner gist"}},
+            ]
+            p = Path(d) / "s.jsonl"
+            p.write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+            evs = list(us.iter_events(p))
+            self.assertEqual(evs[0], ("push", {12}, "L5"))
+            self.assertEqual(evs[1], ("push", {13}, "PostToolUse"))
 
     def test_scan_aggregates_and_rates(self):
         with tempfile.TemporaryDirectory() as d:

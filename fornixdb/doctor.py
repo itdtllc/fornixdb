@@ -75,6 +75,7 @@ def config_overview(store) -> list[tuple[str, str]]:
     floor_adapt = (get_config(store, "usefulness_floor_adapt", "on") or "on")
     proj_scope = (get_config(store, "project_scoped_pulse", "on") or "on")
     dedup = (get_config(store, "cross_pulse_dedup", "on") or "on")
+    dissent = (get_config(store, "parallel_dissent", "off") or "off")
     floor_log = (get_config(store, "floor_log", "off") or "off")
     pinned_proj = (get_config(store, "active_project", "") or "").strip()
     session_cap = (get_config(store, "session_capture", "on") or "on")
@@ -91,6 +92,7 @@ def config_overview(store) -> list[tuple[str, str]]:
         ("usefulness_floor_adapt", "off" if floor_adapt in _OFF else "on"),
         ("project_scoped_pulse", "off" if proj_scope in _OFF else "on"),
         ("cross_pulse_dedup", "off" if dedup in _OFF else "on"),
+        ("parallel_dissent", "off" if dissent in _OFF else "on"),
         ("floor_log", "off" if floor_log in _OFF else "on"),
         ("active_project", pinned_proj or "(auto: prompt / cwd)"),
         ("vectors", _vectors_setting(store)),
@@ -104,7 +106,8 @@ def config_overview(store) -> list[tuple[str, str]]:
 # run shows what each option *would* be if never touched. Keys MUST stay in step
 # with config_overview labels (test_doctor enforces full coverage).
 CONFIG_DEFAULTS: dict[str, str] = {
-    "operating_level": "L4 (every built rung on)",
+    "operating_level": "L4 (L5 is built but ships off until its usefulness "
+                       "gate is passed)",
     "capture_mode": "suggest",
     "ingest_mode": "passive",
     "session_capture": "on",
@@ -112,6 +115,7 @@ CONFIG_DEFAULTS: dict[str, str] = {
     "usefulness_floor_adapt": "on",
     "project_scoped_pulse": "on",
     "cross_pulse_dedup": "on",
+    "parallel_dissent": "off",
     "floor_log": "off",
     "active_project": "(auto: prompt / cwd)",
     "vectors": "on",

@@ -91,12 +91,25 @@ class LevelsCase(unittest.TestCase):
 
     # ---- planned rungs are inert ------------------------------------------
     def test_planned_levels_off_and_unsettable(self):
-        for lid in ("L5", "L6"):
+        for lid in ("L6",):
             self.assertFalse(levels.is_on(self.s, lid))
             with self.assertRaises(ValueError):
                 levels.toggle(self.s, lid, True)
             with self.assertRaises(ValueError):
                 levels.set_rung(self.s, lid)
+
+    # ---- L5 is dogfood: built, selectable, ships OFF ----------------------
+    def test_l5_dogfood_default_off_but_settable(self):
+        from fornixdb.multistore import get_config
+        self.assertFalse(levels.is_on(self.s, "L5"))   # dial_default=off
+        self.assertEqual(levels.current_rung(self.s)[0], "L4")
+        levels.set_rung(self.s, "L5")
+        self.assertTrue(levels.is_on(self.s, "L5"))
+        self.assertEqual(get_config(self.s, "parallel_recall"), "on")
+        self.assertEqual(levels.current_rung(self.s)[0], "L5")
+        levels.set_rung(self.s, "L4")                   # stepping back down
+        self.assertIn(get_config(self.s, "parallel_recall"), ("off", "0", "false"))
+        self.assertFalse(levels.current_rung(self.s)[1])  # coherent both ways
 
     # ---- incoherence: a gap left by direct `config` edits -----------------
     def test_incoherent_when_high_on_low_off(self):

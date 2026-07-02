@@ -20,7 +20,7 @@ persisted state of its own:
     L2  Automatic capture                capture_mode  (suggest/auto = on)
     L3  Proactive recall injection       proactive_recall  (on/off)
     L4  Rhythmic in-thought recall        rhythmic_recall   (on/off)
-    L5  Parallel multi-domain activation  not built — planned
+    L5  Parallel multi-domain activation  parallel_recall   (on/off, ships off)
     L6  Federated / distributed memory    not built — planned
 """
 
@@ -46,6 +46,7 @@ class Level:
     status: str      # BUILT | DOGFOOD | PLANNED
     locked_on: bool  # L0/L1 — capability always present; cannot be turned off
     dial: str | None  # config key this rung toggles, or None (locked/planned)
+    dial_default: str = "on"  # what an unset dial means (dogfood rungs ship off)
 
 
 # Single source of truth — ordered floor → top. Keep in step with ROADMAP.md.
@@ -64,10 +65,10 @@ LEVELS: tuple[Level, ...] = (
           BUILT, locked_on=False, dial="proactive_recall"),
     Level("L4", "Rhythmic in-thought recall",
           "memory re-activates many times within one reasoning episode",
-          DOGFOOD, locked_on=False, dial="rhythmic_recall"),
+          BUILT, locked_on=False, dial="rhythmic_recall"),
     Level("L5", "Parallel multi-domain activation",
           "many domain-scoped recalls fire at once and settle into a direction",
-          PLANNED, locked_on=False, dial=None),
+          DOGFOOD, locked_on=False, dial="parallel_recall", dial_default="off"),
     Level("L6", "Federated / distributed memory",
           "the parallel model federated across endpoints and machines",
           PLANNED, locked_on=False, dial=None),
@@ -98,7 +99,8 @@ def is_on(store: MemoryStore, level_id: str) -> bool:
         return False
     if lv.dial == "capture_mode":
         return capture_mode(store) in ("suggest", "auto")
-    val = (get_config(store, lv.dial, "on") or "on").strip().lower()
+    val = (get_config(store, lv.dial, lv.dial_default)
+           or lv.dial_default).strip().lower()
     return val not in _OFF
 
 

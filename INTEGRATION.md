@@ -397,6 +397,29 @@ entirely; `config rhythmic_recall off` disables just this. Floor / limit /
 max-chars / max-pulses are per-store config (`rhythmic_recall_*`). Reference
 caller: Elira's tool-loop via `elira_engram.rhythmic_pulse`.
 
+### Parallel multi-domain activation (L5) — the field (default off)
+
+With `config parallel_recall on`, each L4 beat gathers **wide**: instead of one
+recall, `fornixdb.field` fires seven domain-scoped recalls on the same evolving
+thought — standing knowledge, recent episodes, the deep past, learned guidance,
+reference pointers, the active project's context, and the associative
+neighborhood (1-hop link spread from what's already lit this episode) — sharing
+ONE query embedding, then **settles** the returns by corroboration clustering:
+rows several domains return, or that link/topic-connect across domains, form
+the pattern; the block leads with a descriptive `settled:` direction line. No
+host change is needed — the same `cadence.pulse()` tick routes through the
+field when the dial is on.
+
+Honesty properties: every row still clears the same per-memory floor as an L4
+pulse (the neighborhood is corroboration-only — it can never surface alone);
+no corroboration degrades gracefully to plain L4 behavior; nothing clearing
+the floors stays silent. The dial ships **off** while L5 walks the same
+usefulness gate L4 passed. Tuning: `parallel_domains` / `parallel_domain_k` /
+`parallel_limit` / `parallel_block_max_chars` / `parallel_dissent` (the
+minority-report `tension:` line, also off by default). Debug/verify:
+`fornixdb field "<thought>"` prints the whole field; with `floor_log on`,
+per-beat telemetry lands in `field_log.jsonl` (`fornixdb field-stats`).
+
 ## Warm embedding on dedicated hardware (advanced, per-deployment)
 
 *Skip this unless per-turn recall latency on your specific hardware is a

@@ -65,7 +65,10 @@ def iter_events(path: str | Path):
             if BLOCK_MARKER in text:
                 ids = {int(m) for m in _ID.findall(text)}
                 if ids:
-                    yield ("push", ids, att.get("hookEvent"))
+                    # An L5 SETTLED block carries its direction line; a degraded
+                    # field block is L4 behavior and is fairly counted as L4.
+                    ev = "L5" if "\nsettled: " in text else att.get("hookEvent")
+                    yield ("push", ids, ev)
         elif t == "assistant" and not d.get("isSidechain"):
             txt = _text_of((d.get("message") or {}).get("content"))
             # An assistant message that REPRODUCES the block (quoting/summarizing
@@ -79,7 +82,11 @@ def iter_events(path: str | Path):
 
 def _channel(raw) -> str:
     """Normalize a push's hookEvent to a rung label: UserPromptSubmit = L3 (one
-    pulse per turn), any tool-call seam = L4 (rhythmic in-thought)."""
+    pulse per turn), any tool-call seam = L4 (rhythmic in-thought). "L5" arrives
+    pre-labeled from the settled-block marker (iter_events) — the gate measures
+    whether SETTLING earns references, so only settled blocks count as L5."""
+    if raw == "L5":
+        return "L5"
     return "L3" if raw == "UserPromptSubmit" else "L4"
 
 
@@ -198,7 +205,8 @@ def format_report(s: dict) -> str:
                f"{s['referenced']}  ({s['reference_rate']:.0%})")
     bc = s.get("by_channel") or {}
     if bc:
-        out.append("by channel (L3 = per-turn, L4 = rhythmic in-thought):")
+        out.append("by channel (L3 = per-turn, L4 = rhythmic in-thought, "
+                   "L5 = settled field):")
         for ch in sorted(bc):
             c = bc[ch]
             out.append(f"  {ch}  pushed {c['impressions']:<5} referenced "

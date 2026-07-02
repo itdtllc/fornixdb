@@ -17,7 +17,10 @@ from .adapters.native_memory import (MODES as INGEST_MODES, ingest_mode,
 from .multistore import CAPTURE_MODES, capture_mode, get_config, set_config
 
 _OFF = ("off", "0", "false", "no")
-_RUNG_CHOICES = ("L0", "L1", "L2", "L3", "L4")  # L5/L6 not built — not offered
+# every BUILT rung is offered (dogfood included — selecting one is the owner's
+# call); planned rungs stay off the menu until they exist. Derived from the
+# ladder so a newly built rung appears here without touching the wizard.
+_RUNG_CHOICES = tuple(lv.id for lv in levels.LEVELS if lv.status != levels.PLANNED)
 
 
 def _on(store, key: str, default: str = "on") -> str:
@@ -59,7 +62,8 @@ def build_plan(store, ask, out) -> list[dict]:
     plan: list[dict] = []
 
     # 1) operating level — the ladder rung controls auto-capture(L2)/proactive
-    #    (L3)/rhythmic(L4) together, so we don't ask those three separately.
+    #    (L3)/rhythmic(L4)/parallel(L5) together, so we don't ask those
+    #    separately.
     out("\nOperating level (memory↔thinking coupling):")
     out(levels.format_ladder(store))
     cur_rung, _ = levels.current_rung(store)
@@ -68,6 +72,17 @@ def build_plan(store, ask, out) -> list[dict]:
         plan.append({"label": "operating_level", "old": cur_rung, "new": rung,
                      "apply": lambda r=rung: levels.set_rung(store, r)})
     rung_idx = _RUNG_CHOICES.index(rung)
+
+    # 1b) L5 flavor — the dissent ("tension:") line: when the field settles on a
+    #     pattern, also show the strongest hit OUTSIDE it (the minority report).
+    #     Only meaningful when the field runs, so only asked at L5.
+    if "L5" in _RUNG_CHOICES and rung_idx >= _RUNG_CHOICES.index("L5"):
+        cur = _on(store, "parallel_dissent", "off")
+        new = _ask_keep(ask, out, "field dissent line (minority report)", cur,
+                        ("on", "off"))
+        if new != cur:
+            plan.append({"label": "parallel_dissent", "old": cur, "new": new,
+                         "apply": lambda v=new: set_config(store, "parallel_dissent", v)})
 
     # 2) capture flavor — only meaningful once auto-capture (L2) is on
     if rung_idx >= _RUNG_CHOICES.index("L2"):
