@@ -82,8 +82,8 @@ class TestUsefulnessRanking(unittest.TestCase):
         after = {m["id"]: m["score"] for m in self.s.recall("retirement budgets")}
         self.assertGreater(after[self.b], base[self.b])   # b rose
         self.assertGreater(after[self.b], after[self.a])   # and now leads
-        # an endorsement dominates the small passive-recall bonus a also earns
-        # from having been recalled (RECALL_USE_WEIGHT << USEFULNESS_WEIGHT)
+        # an endorsement lifts b while a gains nothing from merely having been
+        # recalled — pull counts don't rank (only helpful/referenced do)
         self.assertGreater(after[self.b] - base[self.b],
                            after[self.a] - base[self.a])
 

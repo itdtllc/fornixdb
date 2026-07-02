@@ -5,7 +5,23 @@ versioning. While the project is pre-1.0 the public API may still evolve between
 minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
 active development branch and can change through the day.
 
-## [Unreleased]
+## [0.4.1] - 2026-07-02
+
+### Fixed
+- **Rich-get-richer crowding: listing is no longer engagement.** Every `brief`
+  and `timeline` sweep counted each *listed* row as a recall, which both pumped
+  `recall_count` into the hundreds and refreshed `last_recalled` — the decay
+  anchor — so chronically-listed rows never decayed and new memories lost at
+  relevance parity (measured on the live store: winners at eff 0.7–0.85 with
+  recall counts no honest use could produce, e.g. 269, vs new rows at 0.5).
+  Listings now record impressions (`surfaced_count`), the same currency as the
+  proactive push path; genuine pulls (`recall`) still count. The ranking
+  usefulness bonus switches its second term from `recall_count` to
+  `referenced_count` (scan-verified downstream use) — pull ranking and the push
+  floor now run on one honest use signal (`helpful_count` + `referenced_count`).
+  Eval fence: hit@5 81%→86% (two crowded-out rows reclaimed), hit@1 61%→58%
+  (the one lost @1 was itself a contamination-funded win), MRR flat, all
+  abstains held.
 
 ### Added
 - **Reality check: review verbs + fewer false flags.** The first full review

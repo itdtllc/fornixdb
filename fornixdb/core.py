@@ -30,10 +30,15 @@ USEFULNESS_WEIGHT = 0.5   # max ranking bonus from "this helped" endorsements;
                           # saturating so the first endorsement matters and a
                           # popular memory can't drown a more relevant one
 USEFULNESS_SATURATION = 2.0  # endorsements for ~half the max bonus (1-e^-1)
-RECALL_USE_WEIGHT = 0.2   # max ranking bonus from passive recall hits — a recall
-                          # is weaker evidence of usefulness than an explicit
-                          # endorsement, so it tops out well below USEFULNESS_WEIGHT
-RECALL_USE_SATURATION = 5.0  # recalls for ~half the max recall bonus
+REFERENCED_WEIGHT = 0.2   # max ranking bonus from scan-verified downstream use
+                          # (referenced_count) — weaker evidence than an explicit
+                          # endorsement, so it tops out well below USEFULNESS_WEIGHT.
+                          # recall_count deliberately does NOT rank: listing surfaces
+                          # (brief/timeline) inflated historic counts far past any
+                          # honest use, freezing old rows at the top (rich-get-richer,
+                          # measured 2026-07-02); referenced_count is the same honest
+                          # use currency the push floor already runs on.
+REFERENCED_SATURATION = 5.0  # referenced uses for ~half the max bonus
 
 # Per-memory relevance-floor adaptation (the usefulness loop closing on the PUSH
 # side). The proactive (L3) / rhythmic (L4) push uses one cosine floor for every
@@ -939,20 +944,21 @@ class MemoryStore:
 
     def _usefulness(self, row: dict) -> float:
         """A saturating bonus for memories that have proven useful — explicit
-        "this helped" endorsements (strongest) plus passive recall hits (weaker).
-        Folded into the salience multiplier (not added flat) so it scales a real
-        relevance match rather than lifting unrelated rows: a used memory outranks
-        an equally-relevant unused one, but usefulness alone never makes an
-        irrelevant memory surface. recall_count only counts genuine PULLS here —
-        proactive PUSH impressions are recorded separately (surfaced_count) and
-        never inflate it (see recall(count_recall=...))."""
+        "this helped" endorsements (strongest) plus scan-verified referenced use
+        (weaker). Folded into the salience multiplier (not added flat) so it
+        scales a real relevance match rather than lifting unrelated rows: a used
+        memory outranks an equally-relevant unused one, but usefulness alone
+        never makes an irrelevant memory surface. recall_count does NOT feed
+        rank: pull counts carry listing-era inflation and would entrench old
+        rows against new ones at relevance parity (the rich-get-richer
+        crowding); referenced_count is the honest engagement signal."""
         bonus = 0.0
         h = float(row.get("helpful_count") or 0)
         if h > 0:
             bonus += USEFULNESS_WEIGHT * (1.0 - math.exp(-h / USEFULNESS_SATURATION))
-        r = float(row.get("recall_count") or 0)
+        r = float(row.get("referenced_count") or 0)
         if r > 0:
-            bonus += RECALL_USE_WEIGHT * (1.0 - math.exp(-r / RECALL_USE_SATURATION))
+            bonus += REFERENCED_WEIGHT * (1.0 - math.exp(-r / REFERENCED_SATURATION))
         return bonus
 
     def effective_floor(self, row: dict, base_floor: float,
@@ -1027,7 +1033,9 @@ class MemoryStore:
                   ORDER BY m.event_time ASC LIMIT ?"""
         params.append(limit)
         rows = [dict(r) for r in self.conn.execute(sql, params)]
-        self._mark_recalled([r["id"] for r in rows], reinforce=False)
+        # a timeline sweep LISTS rows, it doesn't engage with them — an
+        # impression, not a use (engagement = show / mark_helpful / referenced)
+        self.record_surfaced([r["id"] for r in rows])
         return rows
 
     def show(self, ref: int | str, reinforce: bool = True) -> dict | None:
@@ -1180,10 +1188,14 @@ class MemoryStore:
             r["eff_salience"] = round(self.effective_salience(r, now), 3)
         cand.sort(key=lambda r: r["eff_salience"], reverse=True)
         salient = cand[:salient_limit]
-        self._mark_recalled([r["id"] for r in recent + salient], reinforce=False)
+        # listing in the brief is an unsolicited PUSH, not engagement: counting
+        # it as a recall let every listed row refresh its decay anchor and pump
+        # recall_count each session — the rich-get-richer loop that froze old
+        # rows at the top of ranking (measured 2026-07-02). Impressions only.
+        self.record_surfaced([r["id"] for r in recent + salient])
         # the usefulness rollup is META about what has proven worth surfacing —
-        # it is NOT itself a content recall, so it does not _mark_recalled (that
-        # would let the rollup inflate its own recall_count every session)
+        # it is NOT itself a content recall, so it counts nothing at all (even
+        # an impression would let the rollup feed its own noise signal)
         useful = self.top_useful(useful_limit) if useful_limit else []
         return {"since": since[:10], "recent": recent, "salient": salient,
                 "useful": useful}
