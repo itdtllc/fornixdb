@@ -7,6 +7,21 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+### Added
+- **Reality check in the dream pass — memory grows its first sense organ.**
+  A memory that points at the filesystem can silently rot: the file moves or is
+  deleted and the pointer stays live and recallable (motivating case: a design
+  doc lost in a disk reorg whose pointer memories sat stale for two weeks).
+  `consolidate propose` / `dream` now verify file-path claims in live
+  non-episodic memories against the world and list pointers to missing files
+  (CLI + MCP sections, dream narrative line). Propose-not-dispose as always: a
+  missing path may be an unmounted volume or a moved file — the reviewing
+  AI/owner judges. Episodic rows are exempt (history, not claims — same
+  principle as the staleness flag); only paths under this machine's home are
+  judged, so pointers to other machines never false-positive; elided/template/
+  ephemeral-container patterns are skipped (tuned on the live store's first
+  run, which surfaced 12 genuinely rotted pointers).
+
 ### Fixed
 - **Every recall candidate now carries its TRUE cosine.** The hybrid blend only
   had similarity scores for rows on the nearest-neighbor shortlist (25–3×limit
