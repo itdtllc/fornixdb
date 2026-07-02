@@ -813,7 +813,8 @@ def _dispatch(p, args, store, stores) -> int:
         except FrozenStoreError as e:
             print(f"refused: {e}", file=sys.stderr)
             return 1
-        print(f"#{mem['id']} gist rewritten (vector dropped — run `embed` to refresh)")
+        print(f"#{mem['id']} gist rewritten (re-embedded in place; without an "
+              f"embedder the stale vector drops and backfill heals it later)")
 
     elif args.cmd == "tier":
         from .tiers import tier_down, tier_status

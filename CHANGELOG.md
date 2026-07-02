@@ -5,6 +5,21 @@ versioning. While the project is pre-1.0 the public API may still evolve between
 minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
 active development branch and can change through the day.
 
+## [Unreleased]
+
+### Fixed
+- **Push floor runs on push-outcome evidence only.** `effective_floor`'s
+  usefulness dial counted `recall_count` toward `uses`, so on a lived-in store
+  the listing-era inflation saturated the discount for every row and the
+  ignored-noise penalty never fired (measured: 190/324 rows at max discount,
+  zero penalties across the 75 rows pushed ≥3× and never used). Floor `uses`
+  is now `helpful_count` + `referenced_count` — endorsements and scan-verified
+  downstream use. Pulls are the other channel: a pulled memory needs no
+  pushing to be found, and explicit recall ignores the floor entirely.
+- The `set-gist` CLI message claimed the vector was dropped and needed a
+  manual `embed`; since 0.4.1 the gist is re-embedded in place (the message
+  now says so).
+
 ## [0.4.1] - 2026-07-02
 
 ### Fixed

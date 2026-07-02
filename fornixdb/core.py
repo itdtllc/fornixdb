@@ -57,14 +57,14 @@ FLOOR_IGNORE_SATURATION = 4.0  # ignored impressions for ~half the max penalty
 FLOOR_MIN_IMPRESSIONS = 3      # don't penalize until pushed at least this often —
                                # a brand-new memory hasn't been "ignored" yet
 FLOOR_CAP = 0.95               # never raise a floor so high a memory can't surface
-HELPFUL_USE_WEIGHT = 2.0       # one endorsement counts as this many recalls when
-                               # tallying "uses" for the floor math
-REFERENCED_USE_WEIGHT = 1.0    # one PUSH that was actually used downstream (cited in
-                               # reasoning) counts as this many recalls — a genuine
-                               # in-context use, so weighted like an explicit pull.
+HELPFUL_USE_WEIGHT = 2.0       # one endorsement counts as this many referenced
+                               # uses when tallying "uses" for the floor math
+REFERENCED_USE_WEIGHT = 1.0    # the unit of floor "uses": one PUSH that was
+                               # actually used downstream (cited in reasoning).
                                # Closes the loop: a pushed memory is used WITHOUT a
                                # pull, so without this a proven-useful push looks
                                # identical to ignored noise to the floor math.
+                               # (Pull counts don't tally — see effective_floor.)
 
 # Project-scoped pulse (the other half of the cross-project noise fix). When a
 # pulse knows its active context, a memory that BELONGS to a different context
@@ -968,16 +968,18 @@ class MemoryStore:
         independent dials (each its own config switch).
 
         Usefulness (`usefulness_floor_adapt`, default on): used vs ignored from the
-        durable counts — uses = recall_count + HELPFUL_USE_WEIGHT*helpful_count +
-        REFERENCED_USE_WEIGHT*referenced_count (genuine pulls, endorsements, and
-        pushes that were actually used downstream), impressions = surfaced_count
-        (proactive pushes). A used memory gets a discount (easier to surface); one
-        pushed many times but never used gets a penalty (quieter). referenced_count
-        closes the loop: a pushed memory is used in-context WITHOUT a pull, so
-        without it a proven-useful push would look identical to ignored noise —
-        crediting it both raises the discount and shrinks the ignored gap, and since
-        it only ever adds to `uses` it can only lower a floor (noise, referenced=0,
-        is untouched).
+        durable PUSH-outcome counts — uses = HELPFUL_USE_WEIGHT*helpful_count +
+        REFERENCED_USE_WEIGHT*referenced_count (endorsements and pushes that were
+        actually used downstream), impressions = surfaced_count (proactive pushes).
+        A used memory gets a discount (easier to surface); one pushed many times
+        but never used gets a penalty (quieter). referenced_count closes the loop:
+        a pushed memory is used in-context WITHOUT a pull, so without it a
+        proven-useful push would look identical to ignored noise. recall_count
+        deliberately does NOT count here: pulls are the other channel (a pulled
+        memory needs no pushing to be found), and on a lived-in store the
+        listing-era inflation saturated the discount for every row and masked the
+        never-used population entirely — measured 2026-07-02: 190/324 rows at max
+        discount, zero penalties on the 75 pushed-but-never-used rows.
 
         Project scope (`project_scoped_pulse`, default on; only when `active_project`
         is given): a memory that does NOT belong to the active context clears a
@@ -991,8 +993,7 @@ class MemoryStore:
         FLOOR_CAP, never below 0, and explicit recall ignores it entirely."""
         floor = base_floor
         if not self._setting_off("usefulness_floor_adapt"):
-            uses = (float(row.get("recall_count") or 0)
-                    + HELPFUL_USE_WEIGHT * float(row.get("helpful_count") or 0)
+            uses = (HELPFUL_USE_WEIGHT * float(row.get("helpful_count") or 0)
                     + REFERENCED_USE_WEIGHT * float(row.get("referenced_count") or 0))
             impressions = float(row.get("surfaced_count") or 0)
             floor -= FLOOR_DISCOUNT_MAX * (1.0 - math.exp(-uses / FLOOR_USE_SATURATION))
