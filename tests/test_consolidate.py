@@ -544,6 +544,27 @@ class TestRealityCheck(unittest.TestCase):
                      "share at /Volumes/Relay/gone.md", kind="reference")
         self.assertEqual(self._flagged(), set())
 
+    def test_space_in_segment_is_not_a_missing_path(self):
+        # live false-positive class: "Test Cases/", "v1.4.0 Data/" — the match
+        # truncates at the space; any existing space-extended candidate clears it
+        spaced = self.home_dir / "With Space"
+        spaced.mkdir()
+        try:
+            self.s.store(f"specs live at {spaced}/plan.md going forward",
+                         kind="reference")
+            self.s.store(f"screenshots under {self.home_dir}/v<X.Y.Z> dirs",
+                         kind="reference")   # placeholder-truncated: unjudgeable
+            self.assertEqual(self._flagged(), set())
+        finally:
+            spaced.rmdir()
+
+    def test_reality_ok_tag_accepts_a_reviewed_flag(self):
+        mid = self.s.store(f"historical mention of {self.missing}",
+                           kind="reference")
+        self.assertEqual({m for m, _ in self._flagged()}, {mid})
+        self.s.tag(mid, "reality-ok")        # reviewed: accepted as historical
+        self.assertEqual(self._flagged(), set())
+
     def test_unjudgeable_patterns_are_skipped(self):
         # each pattern produced live noise on the first run (2026-07-01)
         home = str(Path(os.path.expanduser("~")))

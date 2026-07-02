@@ -709,8 +709,8 @@ def _dispatch(p, args, store, stores) -> int:
                         print(f"        {g[:90]}")
             if work.get("reality") and not args.done:
                 print(f"\n--- reality check ({len(work['reality'])}) — a live memory "
-                      "points at a file that isn't there (verify: moved? deleted? "
-                      "supersede the memory?) ---")
+                      "points at a file that isn't there (fix or supersede it; "
+                      "accept a reviewed one with: tag <id> reality-ok) ---")
                 for m in work["reality"]:
                     print(f"#{m['id']:<5} MISSING {m['path']}")
                     print(f"        {(m['gist'] or '')[:90]}")

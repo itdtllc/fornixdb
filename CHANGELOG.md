@@ -8,6 +8,15 @@ active development branch and can change through the day.
 ## [Unreleased]
 
 ### Added
+- **Reality check: review verbs + fewer false flags.** The first full review
+  of a live store's flags shaped the workflow: rows tagged `reality-ok` are
+  reviewed-and-accepted (a historical mention, a documented default, a
+  described absence) and stay accepted on every future dream; the CLI/MCP
+  sections say so. Extraction now clears a path with a SPACE in a segment
+  (`Test Cases/…` truncated at the space and read as missing) by testing
+  space-extended candidates, and skips matches truncated by a placeholder
+  (`AppStore/v<X.Y.Z>`). On the live store: 11 flags → 4 false positives
+  cleared by extraction, 6 accepted, 1 genuine rot superseded → 0.
 - **Reality check in the dream pass — memory grows its first sense organ.**
   A memory that points at the filesystem can silently rot: the file moves or is
   deleted and the pointer stays live and recallable (motivating case: a design

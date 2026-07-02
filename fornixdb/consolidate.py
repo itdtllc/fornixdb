@@ -276,15 +276,23 @@ _EPHEMERAL_SEGMENTS = ("Library/Developer/CoreSimulator/",  # sim containers
                        "Library/Caches/")                    # caches
 
 
-def _extract_paths(text: str) -> list[str]:
+def _extract_paths(text: str) -> list[list[str]]:
     """Candidate filesystem paths in prose: `~/...` or `/Users/...`, trailing
-    sentence punctuation stripped. Excluded as unjudgeable (first live run
-    showed each pattern): elided paths (`/Users/dad/.../x`), template
-    prefixes whose last segment ends `_`/`-` (`fornixdb_backup_<stamp>` with
-    the placeholder eaten by the regex), and ephemeral OS containers."""
+    sentence punctuation stripped. Each entry is a CANDIDATE LIST — the match
+    plus space-extended variants, because a path with a space in a segment
+    (`Test Cases/…`, `v1.4.0 Data/…`) truncates at the space and reads as
+    missing when the real thing exists; if ANY candidate exists the pointer
+    is fine. Excluded as unjudgeable (every pattern measured on live runs):
+    matches truncated by a placeholder (`AppStore/v<X.Y.Z>` → `…/v`), elided
+    paths (`/Users/dad/.../x`), template prefixes whose last segment ends
+    `_`/`-`, and ephemeral OS containers."""
     out = []
-    for m in _FS_PATH_RE.findall(text or ""):
-        p = m.rstrip(_PATH_STRIP)
+    text = text or ""
+    for m in _FS_PATH_RE.finditer(text):
+        p = m.group().rstrip(_PATH_STRIP)
+        nxt = text[m.end():m.end() + 1]
+        if nxt in "<*{…":                     # placeholder cut the match short
+            continue
         if p.rstrip("/").count("/") < 2:      # bare "~/x" is too generic to judge
             continue
         if "..." in p:                        # prose elision, never a real name
@@ -293,28 +301,43 @@ def _extract_paths(text: str) -> list[str]:
             continue
         if any(seg in p for seg in _EPHEMERAL_SEGMENTS):
             continue
-        out.append(p)
+        cands = [p]
+        if nxt == " ":                        # maybe a space inside a segment
+            tail = re.split(r"[`'\"()\[\]{}<>,;|\n]", text[m.end() + 1:], 1)[0]
+            word = tail.split(" ", 1)[0].rstrip(_PATH_STRIP)
+            if word:
+                joined = f"{p} {word}"
+                cands.append(joined)          # …/Test Cases/P20/TestPlan.md
+                cut = joined.find("/", len(p) + 1)
+                if cut != -1:
+                    cands.append(joined[:cut])  # …/Test Cases
+        out.append(cands)
     return out
 
 
 def _reality_scan(store: MemoryStore) -> list:
     """Live non-episodic memories whose gist/detail names a path under this
-    machine's home that no longer exists."""
+    machine's home that no longer exists. Rows tagged `reality-ok` are the
+    reviewed-and-accepted ones (a historical mention, a documented default,
+    a described absence) — skipped so an accepted flag stays accepted."""
     import os
     home = os.path.expanduser("~")
     out = []
     for r in store.conn.execute(
             """SELECT id, gist, detail FROM memory
                WHERE superseded_time IS NULL AND kind != 'episodic'
+                 AND id NOT IN (SELECT mt.memory_id FROM memory_topic mt
+                                JOIN topic t ON t.id = mt.topic_id
+                                WHERE t.name = 'reality-ok')
                ORDER BY id"""):
         missing, seen = [], set()
-        for p in _extract_paths(f"{r['gist'] or ''}\n{r['detail'] or ''}"):
-            full = os.path.expanduser(p)
+        for cands in _extract_paths(f"{r['gist'] or ''}\n{r['detail'] or ''}"):
+            full = os.path.expanduser(cands[0])
             if not full.startswith(home + os.sep) or full in seen:
                 continue
             seen.add(full)
-            if not os.path.exists(full):
-                missing.append(p)
+            if not any(os.path.exists(os.path.expanduser(c)) for c in cands):
+                missing.append(cands[0])
             if len(missing) >= MAX_REALITY_PER_MEMORY:
                 break
         for p in missing:
