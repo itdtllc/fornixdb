@@ -618,7 +618,7 @@ class FornixMCP:
                 lambda m: f"#{m['ids'][0]} ~ #{m['ids'][1]} ({m['kind']}): "
                           f"{m['gists'][0][:45]} | {m['gists'][1][:45]}")
         section("reality", "reality check — memory points at a MISSING file "
-                           "(moved? deleted? supersede?)",
+                           "(fix/supersede, or accept via tag reality-ok)",
                 lambda m: f"#{m['id']} MISSING {m['path']}")
         section("associations", "wove" if weave else "weave new links",
                 lambda m: f"#{m['ids'][0]} <-> #{m['ids'][1]} "
