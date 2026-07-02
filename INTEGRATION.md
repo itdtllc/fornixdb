@@ -311,16 +311,19 @@ to the model's context.
   cosine (a bare keyword coincidence below the vector floor) is **not** pushed —
   keyword-only anchors are trusted only in a vectors-off store, where they are
   the sole signal. So most turns add nothing.
-- **The floor learns, per memory (usefulness feedback).** A proactive push is
-  recorded as an *impression* (`surfaced_count`) kept separate from a genuine
-  *pull* (`recall_count`) — so the store can tell a memory it keeps pushing-and-
-  ignoring from one that gets used. That gap nudges the floor **per memory**: a
-  proven-useful memory (recalled/endorsed) clears a slightly lower bar; one
-  pushed many times but never used clears a higher one and fades from the stream.
-  It's the additive, positive-and-negative-by-disuse attack on cross-project
-  noise — it never deletes or hides a memory (explicit `recall_memory` ignores
-  the push floor entirely). Off-switch: `config usefulness_floor_adapt off`
-  reverts to one flat floor for every memory.
+- **The floor learns, per memory (usefulness feedback).** Every *unsolicited*
+  surfacing — a proactive push, a `brief`/`timeline` listing — is recorded as an
+  *impression* (`surfaced_count`), kept strictly apart from evidence of use: an
+  explicit endorsement (`helpful_count`) or a push that was verifiably cited in
+  the host's later reasoning (`referenced_count`). That gap nudges the floor
+  **per memory**: a proven-useful memory (endorsed/referenced) clears a slightly
+  lower bar; one pushed many times but never used clears a higher one and fades
+  from the stream. Genuine *pulls* (`recall_count`) deliberately don't tally —
+  pulls are the other channel (a pulled memory needs no pushing to be found),
+  and explicit `recall_memory` ignores the push floor entirely. It's the
+  additive, positive-and-negative-by-disuse attack on cross-project noise — it
+  never deletes or hides a memory. Off-switch: `config usefulness_floor_adapt
+  off` reverts to one flat floor for every memory.
 - **Pulses scope to the active project.** When a pulse knows which project is
   active, a memory that doesn't *belong* to it clears a higher push floor, so it
   only surfaces on a strong match, not a weak coincidence. A memory **belongs**

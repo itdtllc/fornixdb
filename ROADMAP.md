@@ -64,17 +64,21 @@ makes L1's ranking, L3's once-per-turn gate, and L4/L5's repeated/parallel
 pulses all fire on the *right* memories instead of merely plausible ones.
 
 - **Per-memory usefulness feedback** *(built)*. Each memory carries a usefulness
-  signal — recall hit-count, last-recalled/last-helpful timestamps, an explicit
-  "this helped" mark, rolled up at session start — and it feeds back into both
-  ranking *and* the relevance floor. The closing move, **directly downstream of
-  L3**: a proactive PUSH is now counted as an *impression* (`surfaced_count`)
-  kept separate from a genuine PULL (`recall_count`), so the system can tell
-  "this memory keeps getting pushed but no one ever uses it" from "this memory is
-  used." That gap nudges a **per-memory** push floor — proven-useful memories
-  surface a touch more easily, chronically-ignored ones go quiet — which is the
-  implicit, additive attack on the cross-project noise observed in live
-  dogfooding. Bounded, never hides a memory, reversible via
-  `config usefulness_floor_adapt off`.
+  signal — an explicit "this helped" mark (`helpful_count`) and scan-verified
+  downstream use of its pushes (`referenced_count`), rolled up at session start —
+  and it feeds back into both ranking *and* the relevance floor. The closing
+  move, **directly downstream of L3**: every *unsolicited* surfacing — a
+  proactive push, a `brief`/`timeline` listing — is counted as an *impression*
+  (`surfaced_count`), kept strictly apart from evidence of use, so the system
+  can tell "this memory keeps getting surfaced but no one ever uses it" from
+  "this memory is used." That gap nudges a **per-memory** push floor —
+  proven-useful memories surface a touch more easily, chronically-ignored ones
+  go quiet — which is the implicit, additive attack on the cross-project noise
+  observed in live dogfooding. Genuine PULLs (`recall_count`) are tracked but
+  deliberately count toward neither ranking nor the floor: a pulled memory
+  needs no pushing to be found, and on a lived-in store pull counts inflate
+  with listing traffic until they mask the never-used population. Bounded,
+  never hides a memory, reversible via `config usefulness_floor_adapt off`.
 
 - **Project-scoped pulse recall** *(built)*. The complementary half of the
   noise fix: a pulse that knows its active context raises the push floor for
