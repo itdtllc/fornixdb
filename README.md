@@ -41,6 +41,8 @@ It is a **memory, not a mind**: it stores, indexes, ranks, and retrieves. It nev
 
 Published (MIT) and in daily use. Shipped: the hot spine (SQLite + FTS5, time + subject recall, supersede-with-history), associative recall on by default (model2vec vectors, switchable off), decay + retention tiers + the consolidation pass, explicit negative feedback (mark a wrong recall hit irrelevant to a query — downweighted for similar queries only, retractable, never deleted), multi-AI topology (per-agent stores + machine shared tier + capture modes, cross-store recall deduped), disk-budget cap with prune/freeze boundary policies and frozen read-only stores, import adapters (Claude Code transcripts + a SessionEnd hook for live passive session capture), a bidirectional Markdown bridge (heading-chunked import of arbitrary documents, plus Markdown export of the store), and a configurable MCP tool surface (all tools on by default; optional ones trimmable per store via `fornixdb tools` to cut prefill on token-tight devices — no universal ceiling). Three consumers proven: Claude Code, a local Qwen-72B agent, and a 14B via the MCP/shim surface (cold-installed and verified on Windows). Extensively tested.
 
+**Accountable in numbers.** The store can tell you what it is worth. `fornixdb value` leads with an estimated net token verdict — *"Estimated tokens SAVED: ~N/session"* (or EXTRA, when that's the truth) — built from a **measured** cost side (tool schemas, startup context, and the actual size of every proactively injected memory, summed from your own session transcripts) against an **explicitly assumed** savings side (a printed low/mid/high band for what each downstream-used memory replaced; no session-without-memory exists to compare against, so it is a range, never one confident number). Behind the verdict sits the honest usage signal: the referenced-push rate, scanned from transcripts — how many proactive recalls your AI actually used, not how many it was shown. Proactive recall itself is **self-maintaining**: opt-in logging (`config floor_log on` → `floor-stats` / `field-stats`) records every push decision, and the periodic dream pass turns accrued evidence into reviewable worklists (credit memories proven useful, flag chronic noise, propose dial changes) — propose-not-dispose, the owner reviews. See [BENEFITS.md](BENEFITS.md) for the full token-economics case.
+
 **Where this is heading** — FornixDB's direction is a climb along one axis: how tightly, how often, and how much in parallel memory is fused into the act of thinking, from "the program must ask" up toward memory that activates itself across many domains at once and steers the next thought. Today the ladder is lived-in **through rhythmic in-thought recall (L4, default-on, proven by scan-verified downstream use)**, and the first build of the top rung — **L5 parallel multi-domain activation, the field** — is shipped behind a default-off dial (`config parallel_recall on`) while it walks the same usefulness gate L4 passed. The full ladder — and why parallel, in-thought recall is the human-like target — is in [ROADMAP.md](ROADMAP.md).
 
 ## Requirements
@@ -61,7 +63,7 @@ active development branch and can change through the day; for a stable checkout,
 install a tagged release instead:
 
 ```bash
-pip install "git+https://github.com/itdtllc/fornixdb@v0.3.1"
+pip install "git+https://github.com/itdtllc/fornixdb@v0.4.3"
 ```
 
 Releases are listed at <https://github.com/itdtllc/fornixdb/releases>; see

@@ -41,21 +41,43 @@ store outlives any one vendor's product decisions.
 
 ## The token economics
 
-Memory must earn its context space. Measured on a live store
-(`fornixdb tokens` prints this for yours):
+Memory must earn its context space, so FornixDB answers the question
+itself. `fornixdb value` opens with a verdict — this is a real readout from
+a live store with two months of accrued use:
 
-- Fixed cost: ~1,700 tokens once per session (tool schemas + startup
-  context).
-- Per recall: ~300 tokens at the default settings, hard-capped by a
-  configurable character budget.
-- What one recall replaces: the user re-explaining history by hand or the AI
-  re-reading files and re-deriving past decisions — typically hundreds to
-  thousands of tokens, every session — plus the time-axis answers that are
-  otherwise impossible at any price.
+```
+Estimated tokens SAVED: ~774/session (mid assumption; low -3,983 … high +14,649)
+```
 
-For local models, prompt size is also response latency. FornixDB ships the
-measuring tool, output budgets (`max_chars`), and lean-by-design tool
-descriptions so the integration stays affordable on a laptop-class model.
+— and then shows its work, because the two sides of that number deserve
+different confidence:
+
+- **The cost side is measured, not estimated.** The fixed integration
+  surfaces (tool schemas + startup context, a few thousand tokens per
+  session) plus the actual size of every memory block proactively injected
+  into your sessions, summed from your own transcripts.
+- **The savings side is an explicit assumption, printed in the report.**
+  The scan measures how many injected memories your AI actually used
+  downstream (the referenced-push rate). What each use *replaced* — you
+  re-explaining history, the AI re-reading files and re-deriving past
+  decisions — cannot be measured, because no session-without-memory exists
+  to compare against. So the report applies a stated low/mid/high band
+  (300 / 1,500 / 5,000 tokens per use) and gives you the range, never one
+  confident number.
+
+Honesty is the pitch: at typical usage the verdict is break-even to
+modestly positive — memory roughly pays for itself in tokens — and what it
+buys with that budget is recall that has no token price at all: "what day
+did the pool guy come by?" is unanswerable in a stateless chat at any cost.
+
+The running costs stay bounded: per-recall pulls are a few hundred tokens
+at default settings, hard-capped by a configurable character budget, and
+session-end capture costs zero prompt tokens (it runs as a post-session OS
+process). For local models, prompt size is also response latency. FornixDB
+ships the measuring tools (`fornixdb value`, `fornixdb tokens`), output
+budgets (`max_chars`), a trimmable tool surface, and opt-in per-push
+logging (`config floor_log on` → `floor-stats` / `field-stats`) so the
+integration stays affordable — and auditable — on a laptop-class model.
 
 ## The owner stays in charge
 
@@ -96,7 +118,8 @@ the way down — see "Anatomy of a memory" in the README.
   hardware, falling back to keyword + time.
 - One config line connects any MCP client; a six-line shim connects anything
   else.
-- Recall quality is eval-fenced: a golden-query suite scores every ranking
-  change before it ships (current: 89% top-hit, 100% top-5).
+- Recall quality is eval-fenced: a golden-query suite (positive and
+  expect-abstain cases) scores every ranking change against a recorded
+  baseline before it ships; regressions revert.
 - The memory is substrate, not actor: it never decides or acts — your AI
   does, and every write path is gated by the owner's policy.
