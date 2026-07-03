@@ -13,7 +13,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 8  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
+SCHEMA_VERSION = 9  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
                     # v5: writer. v6: helpful_count/last_helpful (usefulness).
                     # v4: recall_feedback (negative feedback, new table only)
                     # v5: memory.writer (shared-tier writer provenance, B3)
@@ -24,6 +24,11 @@ SCHEMA_VERSION = 8  # v2: FTS gains name; chunked embeddings. v3: last_reinforce
                     #     used in reasoning (cited downstream, honest transcript
                     #     signal). A pushed memory sits in context and is used without
                     #     a PULL, so recall_count can't see it; this closes that loop.
+                    # v9: 'distinct' link relation — a reviewed pair the dream keeps
+                    #     re-proposing (contradiction/merge/resolution) accepted as
+                    #     legitimately distinct (the pair-level reality-ok/noise-ok).
+                    #     memory_link's CHECK bakes the relation list, so old stores
+                    #     get the table rebuilt in place.
 
 DEFAULT_DB_ENV = "FORNIXDB_DB"
 # FornixDB-branded so a default store is never mistaken for a host AI's memory
@@ -37,7 +42,7 @@ KINDS = ("episodic", "semantic", "feedback", "reference")
 # Accept those names as aliases so a write never bounces on a vocabulary
 # mismatch: "project"/"user" facts are standing knowledge -> semantic.
 KIND_ALIASES = {"project": "semantic", "user": "semantic"}
-RELATIONS = ("refines", "supersedes", "relates")
+RELATIONS = ("refines", "supersedes", "relates", "distinct")
 TIERS = ("hot", "consolidated", "cold")
 
 _SCHEMA = f"""
@@ -225,6 +230,24 @@ def _migrate(conn: sqlite3.Connection) -> bool:
     if mem_cols and "referenced_count" not in mem_cols:  # v8
         conn.execute("ALTER TABLE memory ADD COLUMN referenced_count INTEGER NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE memory ADD COLUMN last_referenced TEXT")
+    # v9: memory_link's CHECK bakes the relation list; a pre-'distinct' store
+    # needs the table rebuilt in place (SQLite can't ALTER a CHECK). Rows are
+    # copied verbatim; the child-table rebuild is safe under foreign_keys=ON.
+    link_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_link'"
+    ).fetchone()
+    if link_row and link_row[0] and "'distinct'" not in link_row[0]:
+        conn.executescript(f"""
+            CREATE TABLE memory_link_v9 (
+                memory_id  INTEGER NOT NULL REFERENCES memory(id) ON DELETE CASCADE,
+                related_id INTEGER NOT NULL REFERENCES memory(id) ON DELETE CASCADE,
+                relation   TEXT NOT NULL CHECK (relation IN {RELATIONS!r}),
+                PRIMARY KEY (memory_id, related_id, relation)
+            );
+            INSERT INTO memory_link_v9 SELECT * FROM memory_link;
+            DROP TABLE memory_link;
+            ALTER TABLE memory_link_v9 RENAME TO memory_link;
+        """)
     return rebuild
 
 

@@ -489,17 +489,40 @@ and APPLIES, then records the pass.
 says "consolidate" / "go to sleep" / "dream".
 
 **The flow** — `fornixdb dream` on the CLI, or `consolidate.dream(store)`
-in-process. It returns a narrated "💤 dreaming…" read-back plus a worklist of
-five lists; the AI applies what survives its judgment via the primitives, never
+in-process. It returns a narrated "💤 dreaming…" read-back plus a worklist;
+the AI applies what survives its judgment via the primitives, never
 blindly (a high cosine can still be two legitimately distinct memories):
 
 | list | what it is | the AI applies |
 |---|---|---|
-| `contradictions` | same-kind, same-topic pairs — **the headline**: a later fix stored under a different title leaves the stale original live and recallable | `supersede` the outdated one |
+| `resolutions` | an OLDER memory phrased as a task, closed by a NEWER one carrying closure language — direction already known | `supersede old new` (the closure wins), or accept a reviewed pair with `link a b --relation distinct` |
+| `contradictions` | same-kind, same-topic pairs — **the headline**: a later fix stored under a different title leaves the stale original live and recallable | `supersede` the outdated one, or `link a b --relation distinct` to accept a reviewed pair (never re-proposed) |
 | `merges` | near-duplicates | `supersede` the weaker (or `set-gist` a merged gist) |
+| `reality` | a live memory points at a file under this home that no longer exists | fix/supersede, or accept with `tag <id> reality-ok` |
+| `chronic` | chronic push-noise: pushed ≥6× with zero downstream use (lifetime pulls reported, never exempting) — the floor already quiets these; the dream asks if they should keep living | `supersede` (or MCP `forget_memory`) if obsolete, `reproject` if mis-scoped, or accept with `tag <id> noise-ok` |
+| `reproject` | mis-scoped: unscoped/suspect rows whose CONTENT points at a project — the other root of cross-project push noise | `reproject --apply` (undo-able), or relabel the rows you accept |
 | `gists` | gists that are too long / hash-heavy / just the start of detail | `set-gist` in place |
 | `distill` | raw session rows worth a durable summary | `store` a semantic memory, `tag` the session `distilled` |
 | `associations` | related-but-UNLINKED pairs — the **generative** half: connections that did not exist before the dream | `link … relates` (or `dream --weave` makes them in-pass — non-destructive) |
+
+**Pass-open housekeeping (mechanical, no judgment).** Opening a pass first
+refreshes the push **use-credit** — the same transcript scan as
+`usefulness-scan --apply` — so the floor's credit side stays current with its
+penalty side and the `chronic` list is asked over fresh counts. The pairing is
+explicit: run `fornixdb config transcripts_path ~/.claude/projects` on the ONE
+store the host's hooks inject from. A transcript's `#id`s belong to that store
+and ids collide across stores, so an unpaired store (a local persona, an
+air-gapped endpoint) never scans — it dreams exactly as before. Env
+`FORNIXDB_TRANSCRIPTS` overrides (`off` skips); `config dream_use_credit off`
+hard-disables.
+
+**Dial report (telemetry read back, never applied).** Every dream also returns
+`dials`: evidence-attached config suggestions — `parallel_dissent` when the
+field log shows an unshown minority report on many settled beats, the
+`parallel_recall` gate readout (L5 settled-push reference rate vs L4) once both
+channels have enough scanned impressions, and a push-floor value when
+scan-labeled useful/noise cosines separate cleanly. Present them to the owner;
+nothing is ever flipped by the dream itself.
 
 **Surfaces.** Shell-capable consumers (e.g. Claude Code) apply via the CLI
 (`supersede`/`set-gist`/`link`/`tag`/`store`). Shell-less consumers (e.g. a local

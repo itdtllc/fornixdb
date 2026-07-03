@@ -169,10 +169,10 @@ TOOLS = [
                     "standing knowledge.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "dream",
-     "description": "Sleep/dream consolidation: lists outdated / duplicate / "
-                    "new-link candidates, narrated. weave=true creates the new links "
-                    "(non-destructive); done=true marks the pass done. Refused on a "
-                    "read-only store.",
+     "description": "Sleep/dream consolidation: narrated worklist of outdated / "
+                    "duplicate / chronic-noise / mis-scoped / new-link candidates "
+                    "+ dial report. weave=true creates the new links; done=true "
+                    "closes the pass. Refused on a read-only store.",
      "inputSchema": {"type": "object", "properties": {
          "weave": {"type": "boolean", "default": False},
          "done": {"type": "boolean", "default": False}}}},
@@ -185,12 +185,16 @@ TOOLS = [
          "new": {"type": "string", "description": "id or name that replaces it"}},
          "required": ["old", "new"]}},
     {"name": "link",
-     "description": "Connect two related memories with a non-destructive 'relates' "
-                    "edge. Use after a near-duplicate note to tie a new memory to a "
-                    "related existing one. (Writing [[name]] in a memory auto-links.)",
+     "description": "Connect two memories, non-destructive. Default 'relates' ties "
+                    "related memories ([[name]] in a memory auto-links). "
+                    "relation='distinct' accepts a reviewed dream pair as "
+                    "legitimately distinct — never re-proposed as outdated/duplicate.",
      "inputSchema": {"type": "object", "properties": {
          "a": {"type": "string", "description": "id or name"},
-         "b": {"type": "string", "description": "id or name"}},
+         "b": {"type": "string", "description": "id or name"},
+         "relation": {"type": "string", "enum": ["relates", "distinct"],
+                      "default": "relates",
+                      "description": "'distinct' = reviewed pair, keep both"}},
          "required": ["a", "b"]}},
     {"name": "import_markdown",
      "description": "Import Markdown: a doc chunked by heading into memories, or "
@@ -610,16 +614,31 @@ class FornixMCP:
                 lines.append(f"{head} ({len(items)}):")
                 lines.extend("  " + fmt(it) for it in items[:8])
 
-        section("resolutions", "completed task to close — supersede old=first",
+        section("resolutions", "completed task to close — supersede old=first "
+                               "(or accept a reviewed pair: link a b distinct)",
                 lambda m: f"supersede old=#{m['ids'][0]} new=#{m['ids'][1]} "
                           f"({m['kinds'][0]}/{m['kinds'][1]}): "
                           f"{(m['gists'][0] or '')[:40]} | {(m['gists'][1] or '')[:40]}")
-        section("contradictions", "outdated? supersede the stale one",
+        section("contradictions", "outdated? supersede the stale one "
+                                  "(or accept a reviewed pair: link a b distinct)",
                 lambda m: f"#{m['ids'][0]} ~ #{m['ids'][1]} ({m['kind']}): "
                           f"{m['gists'][0][:45]} | {m['gists'][1][:45]}")
         section("reality", "reality check — memory points at a MISSING file "
                            "(fix/supersede, or accept via tag reality-ok)",
                 lambda m: f"#{m['id']} MISSING {m['path']}")
+        section("chronic", "chronic push-noise — pushed repeatedly, never used "
+                           "downstream (forget_memory/supersede if obsolete, "
+                           "or accept via tag noise-ok)",
+                lambda m: f"#{m['id']} pushed {m['pushed']}x, pulled "
+                          f"{m['pulls']}x ({m['kind']}): {(m['gist'] or '')[:45]}")
+        section("reproject", "mis-scoped — content points at another project "
+                             "(relabel the rows you accept)",
+                lambda m: f"#{m['id']} {m['current'] or '(none)'} -> "
+                          f"{m['proposed']} (margin {m['margin']:.3f}): "
+                          f"{(m['gist'] or '')[:40]}")
+        for d in rep.get("dials") or ():
+            lines.append(f"🎛 {d['dial']} (current {d['current']}): "
+                         f"{d['evidence']} — {d['suggestion']}")
         section("associations", "wove" if weave else "weave new links",
                 lambda m: f"#{m['ids'][0]} <-> #{m['ids'][1]} "
                           f"({m['kinds'][0]}/{m['kinds'][1]})")
@@ -638,14 +657,19 @@ class FornixMCP:
         self.store.supersede(o["id"], n["id"])  # FrozenStoreError if read-only
         return f"#{o['id']} superseded by #{n['id']} — old kept as history."
 
-    def link(self, a: str, b: str) -> str:
+    def link(self, a: str, b: str, relation: str = "relates") -> str:
+        if relation not in ("relates", "distinct"):  # supersede has its own tool
+            return f"unsupported relation: {relation} (use relates or distinct)"
         ma = self.store.show(a, reinforce=False)
         mb = self.store.show(b, reinforce=False)
         if ma is None or mb is None:
             return f"no memory: {a if ma is None else b}"
         if ma["id"] == mb["id"]:
             return "a memory cannot link to itself"
-        self.store.link(ma["id"], mb["id"], "relates")  # FrozenStoreError if read-only
+        self.store.link(ma["id"], mb["id"], relation)  # FrozenStoreError if read-only
+        if relation == "distinct":
+            return (f"#{ma['id']} and #{mb['id']} accepted as legitimately "
+                    "distinct — never re-proposed as outdated/duplicate.")
         return f"linked #{ma['id']} -> #{mb['id']} (relates)."
 
     def import_markdown(self, path: str, frontmatter: bool = False,

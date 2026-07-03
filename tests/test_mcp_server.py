@@ -1,11 +1,15 @@
 """MCP adapter: protocol handling + a real stdio round-trip."""
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+os.environ["FORNIXDB_TRANSCRIPTS"] = "off"  # dream must not scan this machine's
+                                            # real ~/.claude/projects from tests
 
 from fornixdb.adapters.mcp_server import TOOLS, FornixMCP
 from fornixdb.multistore import set_config
@@ -210,6 +214,24 @@ class TestProtocol(unittest.TestCase):
         out = self._call("dream")
         self.assertTrue(out["isError"])
         self.assertIn("frozen", out["content"][0]["text"])
+
+    def test_link_tool_accepts_a_reviewed_pair_as_distinct(self):
+        self._call("remember", title="fact-a", content="durable fact a")
+        self._call("remember", title="fact-b", content="durable fact b")
+        text = self._call("link", a="fact-a", b="fact-b",
+                          relation="distinct")["content"][0]["text"]
+        self.assertIn("legitimately distinct", text)
+        row = self.srv.store.conn.execute(
+            "SELECT count(*) c FROM memory_link WHERE relation='distinct'"
+        ).fetchone()
+        self.assertEqual(row["c"], 1)
+
+    def test_link_tool_rejects_unsupported_relation(self):
+        self._call("remember", title="fact-a", content="durable fact a")
+        self._call("remember", title="fact-b", content="durable fact b")
+        text = self._call("link", a="fact-a", b="fact-b",
+                          relation="supersedes")["content"][0]["text"]
+        self.assertIn("unsupported relation", text)
 
     def test_supersede_tool_reconciles(self):
         self._call("remember", title="rate", content="the api key rotates monthly")

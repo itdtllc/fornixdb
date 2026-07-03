@@ -77,6 +77,7 @@ def config_overview(store) -> list[tuple[str, str]]:
     dedup = (get_config(store, "cross_pulse_dedup", "on") or "on")
     dissent = (get_config(store, "parallel_dissent", "off") or "off")
     floor_log = (get_config(store, "floor_log", "off") or "off")
+    use_credit = (get_config(store, "dream_use_credit", "on") or "on")
     pinned_proj = (get_config(store, "active_project", "") or "").strip()
     session_cap = (get_config(store, "session_capture", "on") or "on")
     from .levels import current_rung, level
@@ -94,6 +95,7 @@ def config_overview(store) -> list[tuple[str, str]]:
         ("cross_pulse_dedup", "off" if dedup in _OFF else "on"),
         ("parallel_dissent", "off" if dissent in _OFF else "on"),
         ("floor_log", "off" if floor_log in _OFF else "on"),
+        ("dream_use_credit", "off" if use_credit in _OFF else "on"),
         ("active_project", pinned_proj or "(auto: prompt / cwd)"),
         ("vectors", _vectors_setting(store)),
         ("disk_budget", budget),
@@ -117,6 +119,7 @@ CONFIG_DEFAULTS: dict[str, str] = {
     "cross_pulse_dedup": "on",
     "parallel_dissent": "off",
     "floor_log": "off",
+    "dream_use_credit": "on",
     "active_project": "(auto: prompt / cwd)",
     "vectors": "on",
     "disk_budget": "no cap (never-delete)",

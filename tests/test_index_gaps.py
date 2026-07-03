@@ -123,5 +123,53 @@ class TestV1Migration(unittest.TestCase):
             m.close()
 
 
+class TestV9LinkMigration(unittest.TestCase):
+    def test_pre_distinct_store_rebuilds_memory_link_and_keeps_rows(self):
+        # v9: memory_link's CHECK bakes the relation list; a pre-'distinct'
+        # store gets the table rebuilt in place with its rows preserved.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "v8.db"
+            s = MemoryStore(db_path=path)
+            a = s.store("first", "x")
+            b = s.store("second", "y")
+            s.link(a, b, "relates")
+            s.conn.executescript("""
+                CREATE TABLE memory_link_old (
+                    memory_id  INTEGER NOT NULL REFERENCES memory(id) ON DELETE CASCADE,
+                    related_id INTEGER NOT NULL REFERENCES memory(id) ON DELETE CASCADE,
+                    relation   TEXT NOT NULL CHECK (relation IN
+                        ('refines', 'supersedes', 'relates')),
+                    PRIMARY KEY (memory_id, related_id, relation)
+                );
+                INSERT INTO memory_link_old SELECT * FROM memory_link;
+                DROP TABLE memory_link;
+                ALTER TABLE memory_link_old RENAME TO memory_link;
+                REPLACE INTO meta(key, value) VALUES ('schema_version', '8');
+            """)
+            s.conn.commit()
+            s.close()
+
+            m = MemoryStore(db_path=path)   # reopen -> v9 rebuild runs
+            m.link(a, b, "distinct")        # old CHECK would have refused this
+            rels = {r["relation"] for r in m.conn.execute(
+                "SELECT relation FROM memory_link WHERE memory_id=?", (a,))}
+            self.assertEqual(rels, {"relates", "distinct"})  # old row survived
+            m.close()
+
+    def test_current_store_is_not_rebuilt_again(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "v9.db"
+            s = MemoryStore(db_path=path)
+            a = s.store("first", "x")
+            b = s.store("second", "y")
+            s.link(a, b, "distinct")
+            s.close()
+            m = MemoryStore(db_path=path)   # reopen: idempotent, row intact
+            self.assertEqual(m.conn.execute(
+                "SELECT count(*) c FROM memory_link WHERE relation='distinct'"
+            ).fetchone()["c"], 1)
+            m.close()
+
+
 if __name__ == "__main__":
     unittest.main()
