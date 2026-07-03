@@ -70,7 +70,9 @@ class TestParseAndScan(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p = self._session_file(d)
             evs = list(us.iter_events(p))
-            self.assertEqual(evs[0], ("push", {36, 99}, "UserPromptSubmit"))
+            # pushes carry a 4th field: the block's measured size in chars
+            self.assertEqual(evs[0][:3], ("push", {36, 99}, "UserPromptSubmit"))
+            self.assertGreater(evs[0][3], 0)
             self.assertIn(("cite", {36}, None), evs)
 
     def test_settled_block_is_labeled_l5(self):
@@ -91,8 +93,8 @@ class TestParseAndScan(unittest.TestCase):
             p = Path(d) / "s.jsonl"
             p.write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
             evs = list(us.iter_events(p))
-            self.assertEqual(evs[0], ("push", {12}, "L5"))
-            self.assertEqual(evs[1], ("push", {13}, "PostToolUse"))
+            self.assertEqual(evs[0][:3], ("push", {12}, "L5"))
+            self.assertEqual(evs[1][:3], ("push", {13}, "PostToolUse"))
 
     def test_scan_aggregates_and_rates(self):
         with tempfile.TemporaryDirectory() as d:
@@ -102,6 +104,18 @@ class TestParseAndScan(unittest.TestCase):
             self.assertEqual(s["impressions"], 2)      # 36 + 99
             self.assertEqual(s["referenced"], 1)       # only 36
             self.assertEqual(s["reference_rate"], 0.5)
+
+    def test_scan_measures_injected_block_sizes(self):
+        block = ("[FornixDB · possibly-relevant past — …]\n"
+                 "#36 some gist\n#99 other gist")
+        with tempfile.TemporaryDirectory() as d:
+            self._session_file(d)                       # writes the block above
+            s = us.scan(d)
+            self.assertEqual(s["injected_chars"], len(block))
+            self.assertEqual(s["injected_tokens"], round(len(block) / 4))
+            # the cost is attributed to the injecting channel (L3 here)
+            self.assertEqual(s["by_channel"]["L3"]["injected_tokens"],
+                             s["injected_tokens"])
 
     def test_outcomes_from_scan(self):
         s = {"per_memory": {36: {"impressions": 1, "referenced": 1},

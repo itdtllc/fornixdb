@@ -68,7 +68,10 @@ def iter_events(path: str | Path):
                     # An L5 SETTLED block carries its direction line; a degraded
                     # field block is L4 behavior and is fairly counted as L4.
                     ev = "L5" if "\nsettled: " in text else att.get("hookEvent")
-                    yield ("push", ids, ev)
+                    # 4th field = the block's size in chars: the MEASURED context
+                    # cost of this push (cite events stay 3-tuples — a citation
+                    # costs nothing).
+                    yield ("push", ids, ev, len(text))
         elif t == "assistant" and not d.get("isSidechain"):
             txt = _text_of((d.get("message") or {}).get("content"))
             # An assistant message that REPRODUCES the block (quoting/summarizing
@@ -106,7 +109,8 @@ def attribute(events) -> tuple[dict, dict]:
     def slot(d, k):
         return d.setdefault(k, {"impressions": 0, "referenced": 0})
 
-    for kind, ids, chan in events:
+    for ev in events:
+        kind, ids, chan = ev[0], ev[1], ev[2]   # a push may carry a 4th field (chars)
         if kind == "push":
             ch = _channel(chan)
             for i in ids:
@@ -145,6 +149,7 @@ def scan(source: str | Path) -> dict:
     """Aggregate push-usefulness across all sessions under `source`."""
     per_memory: dict[int, dict[str, int]] = {}
     per_channel: dict[str, dict[str, int]] = {}
+    chars_by_channel: dict[str, int] = {}
     sessions = 0
     for path in transcript_paths(source):
         evs = list(iter_events(path))
@@ -154,11 +159,19 @@ def scan(source: str | Path) -> dict:
         pm, pc = attribute(evs)
         _merge(per_memory, pm)
         _merge(per_channel, pc)
+        for ev in evs:
+            if ev[0] == "push" and len(ev) > 3:
+                ch = _channel(ev[2])
+                chars_by_channel[ch] = chars_by_channel.get(ch, 0) + ev[3]
     impressions = sum(c["impressions"] for c in per_memory.values())
     referenced = sum(c["referenced"] for c in per_memory.values())
-    for c in per_channel.values():
+    from .tokens import EST_CHARS_PER_TOKEN
+    for name, c in per_channel.items():
         c["reference_rate"] = (round(c["referenced"] / c["impressions"], 4)
                                if c["impressions"] else 0.0)
+        c["injected_tokens"] = round(
+            chars_by_channel.get(name, 0) / EST_CHARS_PER_TOKEN)
+    injected_chars = sum(chars_by_channel.values())
     return {
         "source": str(source),
         "sessions": sessions,
@@ -166,6 +179,10 @@ def scan(source: str | Path) -> dict:
         "impressions": impressions,
         "referenced": referenced,
         "reference_rate": round(referenced / impressions, 4) if impressions else 0.0,
+        # MEASURED context cost of every injected block found (not an estimate;
+        # chars→tokens is the only approximation)
+        "injected_chars": injected_chars,
+        "injected_tokens": round(injected_chars / EST_CHARS_PER_TOKEN),
         "by_channel": per_channel,
         "per_memory": per_memory,
     }
