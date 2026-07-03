@@ -280,8 +280,10 @@ def main(argv: list[str] | None = None) -> int:
 
     dp = sub.add_parser("dream",
                         help="sleep/dream mode: one narrated consolidation pass "
-                             "(status + worklist; headlines outdated memories + "
-                             "new connections to weave)")
+                             "(status + worklist; headlines outdated memories, "
+                             "chronic push-noise + new connections to weave; "
+                             "opening a pass refreshes push use-credit from "
+                             "transcripts)")
     dp.add_argument("--weave", action="store_true",
                     help="also CREATE the proposed new associative links "
                          "(non-destructive — adds 'relates' links, changes nothing else)")
@@ -687,6 +689,18 @@ def _dispatch(p, args, store, stores) -> int:
                 for m in work.get("reality", []):
                     print(f"#{m['id']:<5} MISSING {m['path']}")
                     print(f"        {(m['gist'] or '')[:90]}")
+                print(f"--- chronic push-noise: judge disposition "
+                      f"({len(work.get('chronic', []))}) ---")
+                for m in work.get("chronic", []):
+                    print(f"#{m['id']:<5} pushed {m['pushed']}x, used 0, "
+                          f"pulled {m['pulls']}x ({m['kind']})")
+                    print(f"        {(m['gist'] or '')[:90]}")
+                print(f"--- re-project mis-scoped memories "
+                      f"({len(work.get('reproject', []))}) ---")
+                for m in work.get("reproject", []):
+                    print(f"#{m['id']:<5} {m['current'] or '(none)'} -> "
+                          f"{m['proposed']}  margin {m['margin']:.3f}")
+                    print(f"        {(m['gist'] or '')[:90]}")
                 print(f"--- weave new associations ({len(work['associations'])}) ---")
                 for m in work["associations"]:
                     print(f"#{m['ids'][0]} <-> #{m['ids'][1]} cos {m['cosine']:.2f} "
@@ -712,7 +726,9 @@ def _dispatch(p, args, store, stores) -> int:
             # candidates; the full worklist is the entering (not-done) view
             if work.get("resolutions") and not args.done:
                 print(f"\n--- completed tasks to close "
-                      f"({len(work['resolutions'])}) — supersede the open one ---")
+                      f"({len(work['resolutions'])}) — supersede the open one "
+                      "(accept a reviewed pair with: link <a> <b> "
+                      "--relation distinct) ---")
                 for m in work["resolutions"]:
                     print(f"supersede old=#{m['ids'][0]} new=#{m['ids'][1]} "
                           f"cos {m['cosine']:.2f} ({m['kinds'][0]}/{m['kinds'][1]})")
@@ -720,7 +736,9 @@ def _dispatch(p, args, store, stores) -> int:
                     print(f"        close: {(m['gists'][1] or '')[:80]}")
             if work["contradictions"] and not args.done:
                 print(f"\n--- possible outdated memories to reconcile "
-                      f"({len(work['contradictions'])}) — supersede the stale one ---")
+                      f"({len(work['contradictions'])}) — supersede the stale one "
+                      "(accept a reviewed pair with: link <a> <b> "
+                      "--relation distinct) ---")
                 for m in work["contradictions"]:
                     print(f"#{m['ids'][0]} ~ #{m['ids'][1]} cos {m['cosine']:.2f} ({m['kind']})")
                     for g in m["gists"]:
@@ -732,6 +750,33 @@ def _dispatch(p, args, store, stores) -> int:
                 for m in work["reality"]:
                     print(f"#{m['id']:<5} MISSING {m['path']}")
                     print(f"        {(m['gist'] or '')[:90]}")
+            if work.get("chronic") and not args.done:
+                print(f"\n--- chronic push-noise ({len(work['chronic'])}) — pushed "
+                      "over and over, never used downstream (the floor already "
+                      "quiets these; decide their fate: supersede if obsolete, "
+                      "reproject if mis-scoped, or accept with: "
+                      "tag <id> noise-ok) ---")
+                for m in work["chronic"]:
+                    print(f"#{m['id']:<5} pushed {m['pushed']}x, used 0, "
+                          f"pulled {m['pulls']}x ({m['kind']}"
+                          f"{', ' + m['project'] if m['project'] else ''})")
+                    print(f"        {(m['gist'] or '')[:90]}")
+            if work.get("reproject") and not args.done:
+                print(f"\n--- mis-scoped memories to re-project "
+                      f"({len(work['reproject'])}) — content points at a "
+                      "different project (apply via: reproject --apply, "
+                      "undo-able) ---")
+                for m in work["reproject"]:
+                    print(f"#{m['id']:<5} {m['current'] or '(none)'} -> "
+                          f"{m['proposed']}  margin {m['margin']:.3f}")
+                    print(f"        {(m['gist'] or '')[:90]}")
+            if rep.get("dials") and not args.done:
+                print(f"\n--- 🎛 dial report ({len(rep['dials'])}) — evidence-"
+                      "backed config suggestions; nothing flipped ---")
+                for d in rep["dials"]:
+                    print(f"{d['dial']} (current: {d['current']})")
+                    print(f"        evidence:   {d['evidence']}")
+                    print(f"        suggestion: {d['suggestion']}")
             if work["associations"] and not args.done:
                 verb = "wove" if args.weave else "to weave"
                 print(f"\n--- new connections {verb} ({len(work['associations'])}) ---")

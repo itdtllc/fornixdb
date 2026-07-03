@@ -42,6 +42,48 @@ active development branch and can change through the day.
   its rung menu from the ladder (every built rung offered; planned stay off the
   menu) and asks the one L5 behavior choice (`parallel_dissent`) only at L5,
   and the read-only `config` view gained the `parallel_dissent` row.
+- **Dream housekeeping — push-noise gets both of its halves.** The mechanical
+  half: opening a dream pass now refreshes the push use-credit automatically
+  (`usefulness-scan --apply` folded into the dream) so the floor's credit side
+  never goes stale while its penalty side accrues at push time. The pairing is
+  EXPLICIT: it runs only on a store whose `transcripts_path` config names the
+  host's transcript dir (`fornixdb config transcripts_path ~/.claude/projects`
+  on the one store the host's hooks inject from; env `FORNIXDB_TRANSCRIPTS`
+  overrides, `off` skips, `dream_use_credit off` hard-disables) — transcript
+  `#id`s belong to that store and ids collide across stores, so an implicit
+  default would write phantom counts onto every other store on the machine
+  (caught live on the second store's rows during first cross-store testing).
+  The judgment half: the dream worklist gained a **chronic push-noise**
+  section — live rows pushed ≥6 times with zero downstream use (endorsements
+  and scan-verified references both count; lifetime pulls are reported but
+  never exempt). The per-memory floor already quiets these mechanically; the
+  dream asks whether they should keep living: forget/supersede if obsolete,
+  `reproject` if mis-scoped, or accept with `tag <id> noise-ok` (the
+  `reality-ok` analogue). Propose-not-dispose as ever — the reviewing AI/owner
+  decides.
+- **Dream worklist: mis-scoped memories.** `reproject`'s confident
+  content-based proposals (unscoped/suspect rows whose content points at a
+  project) now surface as a dream section, best margin first — the other root
+  of cross-project push noise, caught in the same pass as its symptoms. Apply
+  via `reproject --apply` (undo-able) or relabel the accepted rows.
+- **`distinct` links — accept a reviewed pair (the pair-level
+  `reality-ok`/`noise-ok`).** A contradiction/merge/resolution pair the
+  reviewer judges legitimately distinct kept re-appearing in every dream pass
+  and wake nudge. `link <a> <b> --relation distinct` (CLI) or the `link` MCP
+  tool with `relation="distinct"` marks the pair reviewed — never re-proposed,
+  either direction, both rows stay live and recallable. Schema v9 rebuilds
+  `memory_link` in place on older stores (its CHECK bakes the relation list);
+  rows are preserved.
+- **Dream dial report — sleep as self-review of the dials.** Every dream reads
+  the accrued telemetry back as evidence-attached config PROPOSALS (never
+  applied): `parallel_dissent` when the field log shows a minority report
+  existed on many settled beats but was never shown; the `parallel_recall`
+  gate readout (scan-verified L5 settled-push reference rate vs L4, FOR /
+  AGAINST / still-accruing) once both channels clear an evidence minimum; and
+  a push-floor suggestion when scan-labeled useful/noise cosines separate
+  cleanly. Each rule has an evidence floor so a thin log cannot produce a
+  confident-sounding lie; the scan-derived rules run only at pass open, from
+  the same scan the use-credit refresh already paid for.
 
 ### Changed
 - **L4 rhythmic recall is marked BUILT** (was "under evaluation"): its

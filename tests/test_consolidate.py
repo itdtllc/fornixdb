@@ -5,10 +5,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 os.environ["FORNIXDB_VECTORS"] = "off"  # deterministic: no ambient-model auto-embed
+os.environ["FORNIXDB_TRANSCRIPTS"] = "off"  # dream must not scan this machine's
+                                            # real ~/.claude/projects from tests
 
-from fornixdb.consolidate import (RESOLUTION_COSINE, _dream_narrative,
-                                  _gist_problem, dream, propose, status,
-                                  supersede_suggestion)
+from fornixdb.consolidate import (CHRONIC_MIN_PUSHES, DIAL_MIN_IMPRESSIONS,
+                                  DIAL_MIN_SHADOW, RESOLUTION_COSINE,
+                                  _dream_narrative, _gist_problem, dial_report,
+                                  dream, propose, status, supersede_suggestion)
 from fornixdb.core import FrozenStoreError, MemoryStore
 from fornixdb.multistore import set_config
 from fornixdb.vectors import cosine, embed_memory, from_blob, similar
@@ -581,6 +584,378 @@ class TestRealityCheck(unittest.TestCase):
         rep = dream(self.s)
         self.assertEqual(rep["counts"]["reality"], 1)
         self.assertIn("missing file", rep["narrative"])
+
+
+# distinct-ok (2026-07-03): a reviewed pair accepted as legitimately distinct
+# (link a b distinct) stops re-appearing as merge/contradiction/resolution —
+# the pair-level analogue of reality-ok/noise-ok.
+class TestDistinctOk(unittest.TestCase):
+    TASK = TestResolutionHeal.TASK
+    CLOSE = TestResolutionHeal.CLOSE
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.s = file_store(self.tmp.name)
+        self.emb = FakeEmbedder()
+
+    def tearDown(self):
+        self.s.close()
+        self.tmp.cleanup()
+
+    def _pair(self, g1, g2, kind="semantic"):
+        a = self.s.store(g1, kind=kind)
+        b = self.s.store(g2, kind=kind)
+        embed_memory(self.s, self.emb, a)
+        embed_memory(self.s, self.emb, b)
+        return a, b
+
+    def test_distinct_pair_not_reproposed_as_merge_or_contradiction(self):
+        a, b = self._pair("the deploy script reads config from env",
+                          "the deploy script reads config from env always")
+        self.assertEqual(len(propose(self.s)["merges"]), 1)
+        self.s.link(a, b, "distinct")
+        work = propose(self.s)
+        self.assertEqual(work["merges"], [])
+        self.assertEqual(work["contradictions"], [])
+
+    def test_distinct_accept_works_from_either_direction(self):
+        a, b = self._pair("the deploy script reads config from env",
+                          "the deploy script reads config from env always")
+        self.s.link(b, a, "distinct")     # reversed side
+        self.assertEqual(propose(self.s)["merges"], [])
+
+    def test_distinct_pair_not_reproposed_as_resolution(self):
+        task = self.s.store(self.TASK, kind="semantic")
+        _age(self.s, task, 4)
+        close = self.s.store(self.CLOSE, kind="episodic")
+        embed_memory(self.s, self.emb, task)
+        embed_memory(self.s, self.emb, close)
+        self.assertEqual(len(propose(self.s)["resolutions"]), 1)
+        self.s.link(task, close, "distinct")
+        self.assertEqual(propose(self.s)["resolutions"], [])
+
+    def test_wake_nudge_drops_accepted_pairs_and_names_the_accept(self):
+        a, b = self._pair("the deploy script reads config from env",
+                          "the deploy script reads config from env always")
+        rep = dream(self.s, done=True)    # unreconciled pair -> nudged, with hint
+        self.assertIn("--relation distinct", rep["narrative"])
+        self.assertIn(f"#{a}", rep["narrative"])
+        self.s.link(a, b, "distinct")
+        rep = dream(self.s, done=True)    # accepted -> no nudge at all
+        self.assertNotIn(f"#{a}", rep["narrative"])
+        self.assertIn("nothing needed changing", rep["narrative"])
+
+    def test_distinct_pair_not_proposed_as_association_either(self):
+        a = self.s.store("alpha beta gamma", kind="semantic")
+        b = self.s.store("alpha beta delta", kind="reference")
+        embed_memory(self.s, self.emb, a)
+        embed_memory(self.s, self.emb, b)
+        self.s.link(a, b, "distinct")     # reviewed: related pair already settled
+        self.assertEqual(propose(self.s)["associations"], [])
+
+
+# Chronic push-noise (2026-07-03): the judgment half of the push-noise loop.
+# effective_floor already QUIETS a pushed-but-never-used memory; the dream asks
+# whether it should keep living (forget / reproject / accept via noise-ok).
+class TestChronicNoise(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.s = file_store(self.tmp.name)
+
+    def tearDown(self):
+        self.s.close()
+        self.tmp.cleanup()
+
+    def _pushed(self, mid, times, referenced=0, helpful=0, pulls=0):
+        self.s.conn.execute(
+            "UPDATE memory SET surfaced_count=?, referenced_count=?, "
+            "helpful_count=?, recall_count=? WHERE id=?",
+            (times, referenced, helpful, pulls, mid))
+        self.s.conn.commit()
+
+    def test_pushed_never_used_is_proposed_with_pulls_reported(self):
+        mid = self.s.store("wrong-project fact", kind="semantic", project="other")
+        self._pushed(mid, CHRONIC_MIN_PUSHES, pulls=7)
+        work = propose(self.s)
+        self.assertEqual([m["id"] for m in work["chronic"]], [mid])
+        entry = work["chronic"][0]
+        self.assertEqual(entry["pushed"], CHRONIC_MIN_PUSHES)
+        self.assertEqual(entry["pulls"], 7)   # reported, never an exemption
+        self.assertEqual(entry["project"], "other")
+
+    def test_below_threshold_stays_with_the_floor_not_the_dream(self):
+        mid = self.s.store("young noise", kind="semantic")
+        self._pushed(mid, CHRONIC_MIN_PUSHES - 1)
+        self.assertEqual(propose(self.s)["chronic"], [])
+
+    def test_any_push_use_exempts(self):
+        a = self.s.store("used via reference", kind="semantic")
+        self._pushed(a, 10, referenced=1)
+        b = self.s.store("used via endorsement", kind="semantic")
+        self._pushed(b, 10, helpful=1)
+        self.assertEqual(propose(self.s)["chronic"], [])
+
+    def test_noise_ok_tag_accepts_a_reviewed_row(self):
+        mid = self.s.store("legit but rarely relevant", kind="semantic")
+        self._pushed(mid, 12)
+        self.s.tag(mid, "noise-ok")
+        self.assertEqual(propose(self.s)["chronic"], [])
+
+    def test_superseded_row_not_proposed(self):
+        old = self.s.store("v1", kind="semantic")
+        new = self.s.store("v2", kind="semantic")
+        self._pushed(old, 12)
+        self.s.supersede(old, new)
+        self.assertEqual(propose(self.s)["chronic"], [])
+
+    def test_worst_offenders_first(self):
+        a = self.s.store("noise a", kind="semantic")
+        b = self.s.store("noise b", kind="semantic")
+        self._pushed(a, 8)
+        self._pushed(b, 16)
+        self.assertEqual([m["id"] for m in propose(self.s)["chronic"]], [b, a])
+
+    def test_dream_counts_and_narrative_carry_chronic(self):
+        mid = self.s.store("chronic noise row", kind="semantic")
+        self._pushed(mid, 9)
+        rep = dream(self.s)
+        self.assertEqual(rep["counts"]["chronic"], 1)
+        self.assertIn("chronically ignored push", rep["narrative"])
+
+
+# Use-credit refresh at dream pass open (2026-07-03): the mechanical half —
+# `usefulness-scan --apply` folded into the dream so the floor's credit side
+# never goes stale and the chronic list above runs on current counts.
+class TestUseCreditRefresh(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.s = file_store(self.tmp.name)
+        self.transcripts = Path(self.tmp.name) / "transcripts"
+        self.transcripts.mkdir()
+        os.environ["FORNIXDB_TRANSCRIPTS"] = str(self.transcripts)
+
+    def tearDown(self):
+        os.environ["FORNIXDB_TRANSCRIPTS"] = "off"   # the module-wide default
+        self.s.close()
+        self.tmp.cleanup()
+
+    def _transcript(self, mid, cite=True, name="s.jsonl"):
+        import json
+        lines = [{"type": "attachment",
+                  "attachment": {"hookEvent": "UserPromptSubmit",
+                                 "content": "[FornixDB · possibly-relevant past — …]\n"
+                                            f"#{mid} some gist"}}]
+        if cite:
+            lines.append({"type": "assistant",
+                          "message": {"content": [
+                              {"type": "text",
+                               "text": f"Per #{mid} we should branch first."}]}})
+        (self.transcripts / name).write_text(
+            "\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+
+    def test_dream_open_materializes_referenced_counts(self):
+        mid = self.s.store("a useful pushed fact", kind="semantic")
+        self._transcript(mid)
+        rep = dream(self.s)
+        self.assertEqual(rep["use_credit"]["credited"], 1)
+        self.assertIn("use-credit", rep["narrative"])
+        row = self.s.conn.execute(
+            "SELECT referenced_count FROM memory WHERE id=?", (mid,)).fetchone()
+        self.assertEqual(row["referenced_count"], 1)
+
+    def test_refresh_runs_once_per_pass(self):
+        mid = self.s.store("a useful pushed fact", kind="semantic")
+        self._transcript(mid)
+        self.assertIsNotNone(dream(self.s)["use_credit"])     # pass opens
+        self._transcript(mid, name="s2.jsonl")                # new evidence
+        rep2 = dream(self.s)                                  # same pass
+        self.assertIsNone(rep2["use_credit"])                 # not rescanned
+        row = self.s.conn.execute(
+            "SELECT referenced_count FROM memory WHERE id=?", (mid,)).fetchone()
+        self.assertEqual(row["referenced_count"], 1)
+        dream(self.s, done=True)                              # wake closes it
+        self.assertIsNotNone(dream(self.s)["use_credit"])     # next pass rescans
+        row = self.s.conn.execute(
+            "SELECT referenced_count FROM memory WHERE id=?", (mid,)).fetchone()
+        self.assertEqual(row["referenced_count"], 2)
+
+    def test_uncited_push_resets_to_zero_not_exempt(self):
+        # absolute set: a stale credit from a prior apply is honestly cleared
+        mid = self.s.store("pushed but ignored", kind="semantic")
+        self.s.conn.execute(
+            "UPDATE memory SET referenced_count=3 WHERE id=?", (mid,))
+        self.s.conn.commit()
+        self._transcript(mid, cite=False)
+        dream(self.s)
+        row = self.s.conn.execute(
+            "SELECT referenced_count FROM memory WHERE id=?", (mid,)).fetchone()
+        self.assertEqual(row["referenced_count"], 0)
+
+    def test_config_off_skips(self):
+        mid = self.s.store("a fact", kind="semantic")
+        self._transcript(mid)
+        set_config(self.s, "dream_use_credit", "off")
+        self.assertIsNone(dream(self.s)["use_credit"])
+
+    def test_env_off_skips(self):
+        mid = self.s.store("a fact", kind="semantic")
+        self._transcript(mid)
+        os.environ["FORNIXDB_TRANSCRIPTS"] = "off"
+        self.assertIsNone(dream(self.s)["use_credit"])
+
+    def test_missing_transcripts_dir_skips_silently(self):
+        os.environ["FORNIXDB_TRANSCRIPTS"] = str(self.transcripts / "nope")
+        self.s.store("a fact", kind="semantic")
+        self.assertIsNone(dream(self.s)["use_credit"])
+
+    def test_no_pairing_means_no_scan(self):
+        # ids collide across stores: a machine's transcripts carry the ids of
+        # the store its hooks inject from, so crediting an UNPAIRED store would
+        # write phantom counts (the Elira cross-store pollution, 2026-07-03).
+        # No env, no transcripts_path config -> the refresh must not run.
+        mid = self.s.store("an innocent bystander", kind="semantic")
+        self._transcript(mid)
+        del os.environ["FORNIXDB_TRANSCRIPTS"]
+        self.assertIsNone(dream(self.s)["use_credit"])
+        row = self.s.conn.execute(
+            "SELECT referenced_count FROM memory WHERE id=?", (mid,)).fetchone()
+        self.assertEqual(row["referenced_count"], 0)
+
+    def test_config_pairing_enables_the_scan(self):
+        mid = self.s.store("a paired store's fact", kind="semantic")
+        self._transcript(mid)
+        del os.environ["FORNIXDB_TRANSCRIPTS"]
+        set_config(self.s, "transcripts_path", str(self.transcripts))
+        self.assertEqual(dream(self.s)["use_credit"]["credited"], 1)
+
+
+# Re-projection in the dream (2026-07-03): the OTHER root of cross-project push
+# noise — a wrong/missing label — surfaces in the same pass as the symptoms.
+class TestReprojectInDream(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.s = file_store(self.tmp.name)
+        # anchors: deliberately-stored, honestly-labeled, non-episodic
+        self.s.store("Rendered the video clip with lipsync in comfyui render",
+                     kind="reference", project="videos")
+        self.s.store("Fixed the transfer conflict in monte carlo estimator income",
+                     kind="reference", project="RetirementEstimator")
+        # an UNSCOPED session whose content is plainly video work
+        self.stray = self.s.store(
+            "Session: come up to speed on video clip lipsync comfyui render",
+            kind="episodic")
+
+    def tearDown(self):
+        self.s.close()
+        self.tmp.cleanup()
+
+    def test_unscoped_row_is_proposed(self):
+        work = propose(self.s)
+        entries = {m["id"]: m for m in work["reproject"]}
+        self.assertIn(self.stray, entries)
+        self.assertEqual(entries[self.stray]["proposed"], "videos")
+        self.assertIsNone(entries[self.stray]["current"])
+
+    def test_labeled_rows_are_trusted(self):
+        # a specific, non-suspect label is evidence — never reconsidered
+        labeled = self.s.store(
+            "Session: video clip lipsync comfyui render again",
+            kind="episodic", project="RetirementEstimator")
+        self.assertNotIn(labeled,
+                         {m["id"] for m in propose(self.s)["reproject"]})
+
+    def test_dream_counts_and_narrative_carry_reproject(self):
+        rep = dream(self.s)
+        self.assertGreaterEqual(rep["counts"]["reproject"], 1)
+        self.assertIn("re-project", rep["narrative"])
+
+
+# Dial report (2026-07-03): sleep as self-review of the dials — telemetry read
+# back as evidence-attached config PROPOSALS, never applied.
+class TestDialReport(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.s = file_store(self.tmp.name)
+
+    def tearDown(self):
+        self.s.close()
+        self.tmp.cleanup()
+
+    def _field_log(self, settled_shadow, settled_plain=0):
+        import json
+        beats = [{"settled": True, "emitted": [1], "dissent_shadow": 1, "ms": 5}
+                 for _ in range(settled_shadow)]
+        beats += [{"settled": True, "emitted": [1], "ms": 5}
+                  for _ in range(settled_plain)]
+        (Path(self.tmp.name) / "field_log.jsonl").write_text(
+            "\n".join(json.dumps(b) for b in beats), encoding="utf-8")
+
+    def _floor_log(self, rows):
+        import json
+        (Path(self.tmp.name) / "floor_log.jsonl").write_text(
+            "\n".join(json.dumps({"decision": "surfaced", "id": i, "vec_cos": c})
+                      for i, c in rows), encoding="utf-8")
+
+    def _dials(self, **kw):
+        return {d["dial"]: d for d in dial_report(self.s, **kw)}
+
+    def test_dissent_shadow_evidence_proposes_dissent_on(self):
+        self._field_log(DIAL_MIN_SHADOW)
+        d = self._dials()
+        self.assertIn("parallel_dissent", d)
+        self.assertIn("minority report", d["parallel_dissent"]["evidence"])
+
+    def test_thin_shadow_evidence_stays_silent(self):
+        self._field_log(DIAL_MIN_SHADOW - 1)
+        self.assertNotIn("parallel_dissent", self._dials())
+
+    def test_dissent_already_on_stays_silent(self):
+        set_config(self.s, "parallel_dissent", "on")
+        self._field_log(DIAL_MIN_SHADOW + 5)
+        self.assertNotIn("parallel_dissent", self._dials())
+
+    def test_gate_readout_for_and_against(self):
+        ch = {"L4": {"impressions": 100, "referenced": 20},
+              "L5": {"impressions": 30, "referenced": 9}}      # 30% vs 20%
+        d = self._dials(scan_channels=ch)
+        self.assertIn("FOR default-on", d["parallel_recall"]["suggestion"])
+        ch["L5"] = {"impressions": 30, "referenced": 3}        # 10% vs 20%
+        d = self._dials(scan_channels=ch)
+        self.assertIn("AGAINST default-on", d["parallel_recall"]["suggestion"])
+
+    def test_gate_accruing_while_dogfooding_thin_l5(self):
+        set_config(self.s, "parallel_recall", "on")
+        ch = {"L4": {"impressions": 100, "referenced": 20},
+              "L5": {"impressions": DIAL_MIN_IMPRESSIONS - 1, "referenced": 1}}
+        d = self._dials(scan_channels=ch)
+        self.assertIn("accruing", d["parallel_recall"]["suggestion"])
+
+    def test_gate_silent_when_recall_off_and_no_l5(self):
+        ch = {"L4": {"impressions": 100, "referenced": 20}}
+        self.assertNotIn("parallel_recall", self._dials(scan_channels=ch))
+
+    def test_floor_clean_separation_suggests_a_floor(self):
+        self._floor_log([(1, 0.8), (2, 0.75), (5, 0.5), (6, 0.45)])
+        outcomes = {1: "useful", 2: "useful", 5: "noise", 6: "noise"}
+        d = self._dials(scan_outcomes=outcomes)
+        self.assertIn("push floor", d)
+        self.assertIn("clean_separation", d["push floor"]["evidence"])
+
+    def test_floor_silent_without_honest_outcomes(self):
+        # never falls back to the inflated lifetime-recall proxy
+        self._floor_log([(1, 0.8), (5, 0.5)])
+        self.assertNotIn("push floor", self._dials())
+
+    def test_floor_silent_when_cosines_overlap(self):
+        self._floor_log([(1, 0.55), (2, 0.75), (5, 0.6), (6, 0.45)])
+        outcomes = {1: "useful", 2: "useful", 5: "noise", 6: "noise"}
+        self.assertNotIn("push floor", self._dials(scan_outcomes=outcomes))
+
+    def test_dream_carries_dials_in_report_and_narrative(self):
+        self._field_log(DIAL_MIN_SHADOW + 2)
+        rep = dream(self.s)
+        self.assertEqual([d["dial"] for d in rep["dials"]], ["parallel_dissent"])
+        self.assertIn("dial suggestion", rep["narrative"])
 
 
 if __name__ == "__main__":

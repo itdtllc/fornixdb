@@ -19,7 +19,8 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from .core import MemoryStore, now_iso
+from .core import (HELPFUL_USE_WEIGHT, REFERENCED_USE_WEIGHT, MemoryStore,
+                   now_iso)
 from .multistore import get_config, set_config
 from .vectors import cosine, from_blob
 
@@ -38,6 +39,12 @@ NEAR_DUP_COSINE = 0.85        # write-time "you may have just re-stored #N" nudg
                               # still nudge; corrections (~0.96) and unrelated
                               # (<0.5) stay clearly on either side
 MAX_PAIR_PROPOSALS = 15       # per list, best first — a pass is incremental
+CHRONIC_MIN_PUSHES = 6        # pushes with zero downstream use before a row is
+                              # a DISPOSITION question; the per-memory floor
+                              # penalty already quiets it from 3 (core.
+                              # FLOOR_MIN_IMPRESSIONS) and saturates by ~7, so
+                              # by 6 the mechanical remedy has fully applied
+                              # and the row is still being pushed
 
 # Lifecycle-aware heal (Fix A, 2026-06-16): a memory recording an OPEN task
 # ("(5) performance — investigate the lag") stays live and recallable even after
@@ -77,6 +84,14 @@ def _headline(gist: str | None, detail: str | None, lede_chars: int = 160) -> st
 
 
 _UNSET = object()
+
+
+def _distinct_pairs(store: MemoryStore) -> set:
+    """Pairs the reviewer has accepted as legitimately distinct — a 'distinct'
+    link in either direction. Unordered (frozenset) so callers never care which
+    side the accept was written from."""
+    return {frozenset((r["memory_id"], r["related_id"])) for r in store.conn.execute(
+        "SELECT memory_id, related_id FROM memory_link WHERE relation='distinct'")}
 
 
 def status(store: MemoryStore) -> dict:
@@ -169,6 +184,9 @@ def _pair_scan(store: MemoryStore, exclude_ids: set[int]) -> tuple[list, list, l
     vecs = {r["id"]: from_blob(r["vector"]) for r in rows}
     supersede_linked = {(r["memory_id"], r["related_id"]) for r in store.conn.execute(
         "SELECT memory_id, related_id FROM memory_link WHERE relation='supersedes'")}
+    # a reviewed pair accepted as legitimately distinct (the pair-level
+    # reality-ok/noise-ok) — never re-proposed as merge or contradiction
+    distinct_linked = _distinct_pairs(store)
     # an association must be NEW — skip any pair already connected by any relation
     any_linked = {(r["memory_id"], r["related_id"]) for r in store.conn.execute(
         "SELECT memory_id, related_id FROM memory_link")}
@@ -182,6 +200,8 @@ def _pair_scan(store: MemoryStore, exclude_ids: set[int]) -> tuple[list, list, l
             ab, ba = (a["id"], b["id"]), (b["id"], a["id"])
             if a["kind"] == b["kind"] and cos >= CONTRA_COSINE:
                 if ab in supersede_linked or ba in supersede_linked:
+                    continue
+                if frozenset(ab) in distinct_linked:
                     continue
                 entry = {"ids": [a["id"], b["id"]], "cosine": round(cos, 3),
                          "kind": a["kind"], "gists": [a["gist"], b["gist"]]}
@@ -228,12 +248,15 @@ def _resolution_scan(store: MemoryStore, exclude_ids: set[int]) -> list:
     head = {r["id"]: _headline(r["gist"], r["detail"]) for r in rows}
     supersede_linked = {(r["memory_id"], r["related_id"]) for r in store.conn.execute(
         "SELECT memory_id, related_id FROM memory_link WHERE relation='supersedes'")}
+    distinct_linked = _distinct_pairs(store)
 
     out = []
     for i, a in enumerate(rows):
         for b in rows[i + 1:]:
             cos = cosine(vecs[a["id"]], vecs[b["id"]])
             if cos < RESOLUTION_COSINE:
+                continue
+            if frozenset((a["id"], b["id"])) in distinct_linked:
                 continue
             # the NEWER memory is the resolution; order by recorded_time so the
             # supersede direction is unambiguous (the closure entry wins)
@@ -345,6 +368,210 @@ def _reality_scan(store: MemoryStore) -> list:
     return out
 
 
+# ------------------------------------------------------------ chronic noise
+# The push-noise loop has a mechanical half and a judgment half. Mechanical:
+# `effective_floor` already quiets a memory pushed repeatedly but never used
+# (bounded penalty, reversible, explicit recall unaffected). Judgment: whether
+# such a row should keep LIVING — it may be obsolete (forget/supersede it),
+# mis-scoped (`reproject` it), or legitimate-but-rarely-relevant (keep it, quiet
+# under the penalty). The floor cannot and should not decide that; the dream
+# worklist surfaces the question. Propose-not-dispose (§6.5).
+
+def _chronic_scan(store: MemoryStore) -> list:
+    """Live memories pushed >= CHRONIC_MIN_PUSHES times with ZERO push-uses —
+    `uses` mirrors the floor math (endorsements weigh HELPFUL_USE_WEIGHT,
+    referenced pushes REFERENCED_USE_WEIGHT). Lifetime pulls (recall_count) are
+    REPORTED but never exempt a row: a frequently-pulled memory whose pushes
+    are all ignored is exactly the "keep, but leave it quiet" case the reviewer
+    should see and settle. Rows tagged `noise-ok` are the reviewed-and-accepted
+    ones (the reality-ok analogue) — skipped so an accepted row stays accepted."""
+    out = []
+    for r in store.conn.execute(
+            """SELECT id, kind, project, gist, surfaced_count, recall_count,
+                      helpful_count, referenced_count
+               FROM memory
+               WHERE superseded_time IS NULL AND surfaced_count >= ?
+                 AND id NOT IN (SELECT mt.memory_id FROM memory_topic mt
+                                JOIN topic t ON t.id = mt.topic_id
+                                WHERE t.name = 'noise-ok')
+               ORDER BY surfaced_count DESC""", (CHRONIC_MIN_PUSHES,)):
+        uses = (HELPFUL_USE_WEIGHT * (r["helpful_count"] or 0)
+                + REFERENCED_USE_WEIGHT * (r["referenced_count"] or 0))
+        if uses > 0:
+            continue
+        out.append({"id": r["id"], "kind": r["kind"], "project": r["project"],
+                    "pushed": r["surfaced_count"], "pulls": r["recall_count"],
+                    "gist": r["gist"]})
+        if len(out) >= MAX_PAIR_PROPOSALS:
+            break
+    return out
+
+
+def use_credit_refresh(store: MemoryStore) -> dict | None:
+    """The mechanical half of push-noise housekeeping, run once per dream pass
+    (at open, before the worklist): rescan the host's session transcripts
+    (usefulness_scan) and materialize each pushed memory's downstream-reference
+    count (`record_referenced`) — the same closing-of-the-loop as
+    `usefulness-scan --apply`, no judgment involved. Without a periodic refresh
+    the floor's penalty side keeps accruing at push time while its credit side
+    goes stale, slowly over-penalizing recently-useful memories — and the
+    chronic-noise scan above would misfire on exactly those rows.
+
+    The pairing must be EXPLICIT: the refresh runs only when this store's
+    `transcripts_path` config is set (or env FORNIXDB_TRANSCRIPTS overrides it;
+    `off` skips — the machine-wide/test switch, like FORNIXDB_VECTORS). A
+    transcript's `#id`s belong to the store the host's hooks inject from, and
+    ids collide across stores — crediting any OTHER store on the machine writes
+    phantom counts onto whatever rows share those numbers (measured live on the
+    second store's rows, 2026-07-03, first cross-store dream). No config, no
+    scan: an Elira-style consumer dreams exactly as before. Wire the one store
+    the host injects from with e.g.
+    `fornixdb config transcripts_path ~/.claude/projects`.
+    `dream_use_credit off` hard-disables regardless. Returns None whenever
+    skipped, including a configured path that doesn't exist."""
+    if store._setting_off("dream_use_credit"):
+        return None
+    import os
+    src = (os.environ.get("FORNIXDB_TRANSCRIPTS")
+           or get_config(store, "transcripts_path") or "")
+    if not src or src.strip().lower() in ("off", "none", "no", "false", "0"):
+        return None
+    src = os.path.expanduser(src)
+    if not os.path.exists(src):
+        return None
+    from .usefulness_scan import (outcomes_from_scan,
+                                  referenced_counts_from_scan, scan)
+    result = scan(src)
+    counts = referenced_counts_from_scan(result)
+    credited = store.record_referenced(counts)
+    # by_channel + outcomes ride along for the dial report: the scan is the one
+    # honest push-outcome source (outcomes_from_store's recall proxy is inflated
+    # on lived-in stores), and it was just computed — never recomputed for dials
+    return {"source": src, "sessions": result["sessions"],
+            "memories_scanned": len(counts), "credited": credited,
+            "by_channel": result.get("by_channel") or {},
+            "outcomes": outcomes_from_scan(result)}
+
+
+def _reproject_scan(store: MemoryStore) -> list:
+    """Mis-scoped rows are the OTHER root of cross-project push noise (the floor
+    penalty and project-scoped pulse only treat symptoms of a wrong/missing
+    label). Fold reproject's confident proposals into the worklist: unscoped
+    (or --suspect-labeled) rows whose CONTENT points at a project. Best margin
+    first. The reviewer applies via `fornixdb reproject --apply` (undo-able) or
+    relabels the rows it accepts. Never raises: a dream must not die because a
+    model failed to load — reproject falls back to keyword mode on its own, and
+    anything harder is reported as an empty list."""
+    try:
+        from .reproject import propose as reproject_propose
+        res = reproject_propose(store)
+    except Exception:
+        return []
+    props = sorted(res["proposals"], key=lambda p: -p["margin"])
+    return [{"id": p["id"], "current": p["current"], "proposed": p["proposed"],
+             "margin": p["margin"], "gist": p["gist"]}
+            for p in props[:MAX_PAIR_PROPOSALS]]
+
+
+# --------------------------------------------------------------- dial report
+# Sleep as self-review of the DIALS: the telemetry the store accrues (floor
+# log, field log, the pass-open scan's per-channel rates) exists to answer
+# config questions, but nothing was reading it back at decision moments. The
+# dream is that moment. Propose-not-dispose applied to configuration itself:
+# each entry names the dial, the evidence, and a suggestion — nothing is ever
+# flipped here; the owner/AI weighs each line. Every rule has an evidence
+# minimum so a thin log can't produce a confident-sounding lie.
+
+DIAL_MIN_SHADOW = 10          # settled beats carrying an unemitted minority
+                              # report before dissent-on is worth weighing
+DIAL_MIN_IMPRESSIONS = 20     # scanned push impressions before a channel's
+                              # reference rate counts as gate evidence
+
+
+def dial_report(store: MemoryStore, scan_channels: dict | None = None,
+                scan_outcomes: dict | None = None) -> list:
+    """Evidence-backed config proposals from the accrued telemetry. Read-only.
+    `scan_channels` / `scan_outcomes` are the pass-open usefulness scan's
+    by-channel rates and per-memory outcomes (use_credit_refresh) — the honest
+    push-outcome source; the floor and gate rules stay silent without them
+    rather than fall back to the inflated lifetime-recall proxy. Empty list
+    when the logs are off or too thin to say anything honest."""
+    out = []
+
+    # parallel_dissent: does the tension line have real content? (field log)
+    try:
+        from .field import field_log_path_for
+        from .field_stats import load_beats
+        from .field_stats import summarize as summarize_beats
+        fs = summarize_beats(load_beats(field_log_path_for(store)))
+    except Exception:
+        fs = None
+    if fs and fs["settled"]:
+        dissent_off = store._setting_off("parallel_dissent", default="off")
+        if (dissent_off and fs["dissent_shadow"] >= DIAL_MIN_SHADOW
+                and fs["dissent_emitted"] == 0):
+            out.append({
+                "dial": "parallel_dissent", "current": "off",
+                "evidence": (f"a minority report existed on {fs['dissent_shadow']} "
+                             f"of {fs['settled']} settled beats and was never "
+                             "shown (shadow only)"),
+                "suggestion": "weigh `config parallel_dissent on` — the tension "
+                              "line has real content"})
+
+    # parallel_recall (the L5 gate): settled-push reference rate vs L4's
+    if scan_channels:
+        l4, l5 = scan_channels.get("L4"), scan_channels.get("L5")
+        recall_on = not store._setting_off("parallel_recall", default="off")
+        if (l4 and l5 and l4["impressions"] >= DIAL_MIN_IMPRESSIONS
+                and l5["impressions"] >= DIAL_MIN_IMPRESSIONS):
+            r4 = l4["referenced"] / l4["impressions"]
+            r5 = l5["referenced"] / l5["impressions"]
+            ev = (f"L5 settled pushes referenced at {r5:.0%} "
+                  f"({l5['referenced']}/{l5['impressions']}) vs L4 {r4:.0%} "
+                  f"({l4['referenced']}/{l4['impressions']})")
+            out.append({
+                "dial": "parallel_recall",
+                "current": "on (dogfood)" if recall_on else "off",
+                "evidence": ev,
+                "suggestion": ("gate evidence FOR default-on — settling beats "
+                               "the L4 baseline" if r5 > r4 else
+                               "gate evidence AGAINST default-on so far — keep "
+                               "dogfooding or revisit the settle thresholds")})
+        elif recall_on:
+            n = l5["impressions"] if l5 else 0
+            out.append({
+                "dial": "parallel_recall", "current": "on (dogfood)",
+                "evidence": (f"only {n} settled-block impressions in the scanned "
+                             f"window (need {DIAL_MIN_IMPRESSIONS}+ alongside L4)"),
+                "suggestion": "gate still accruing — no readout yet"})
+
+    # push floor: is there a lossless floor? (floor log × honest scan outcomes)
+    if scan_outcomes:
+        try:
+            from .floor_stats import load_records, recommend_floor
+            from .floor_stats import _cos as floor_cos
+            from .proactive import floor_log_path_for
+            records = load_records(floor_log_path_for(store))
+        except Exception:
+            records = []
+        surfaced = [r for r in records if r.get("decision") == "surfaced"]
+        useful = [c for r in surfaced if scan_outcomes.get(r.get("id")) == "useful"
+                  and (c := floor_cos(r)) is not None]
+        noise = [c for r in surfaced if scan_outcomes.get(r.get("id")) == "noise"
+                 and (c := floor_cos(r)) is not None]
+        if surfaced:
+            rec = recommend_floor(useful, noise)
+            if rec.get("verdict") in ("raise_safe", "clean_separation"):
+                out.append({
+                    "dial": "push floor", "current": "adaptive per-memory",
+                    "evidence": (f"scan-labeled surfaced cosines separate: "
+                                 f"useful n={len(useful)}, noise n={len(noise)} "
+                                 f"(verdict: {rec['verdict']})"),
+                    "suggestion": (f"a floor at {rec['suggested_floor']} drops the "
+                                   "measured noise with no measured useful loss")})
+    return out
+
+
 def propose(store: MemoryStore) -> dict:
     """Emit the §13.3 worklist. Read-only: nothing is tagged, rewritten, or
     embedded here — the reviewing AI applies what survives its judgment."""
@@ -389,7 +616,9 @@ def propose(store: MemoryStore) -> dict:
 
     return {"distill": distill, "gists": gists, "merges": merges,
             "contradictions": contradictions, "associations": associations,
-            "resolutions": resolutions, "reality": _reality_scan(store)}
+            "resolutions": resolutions, "reality": _reality_scan(store),
+            "chronic": _chronic_scan(store),
+            "reproject": _reproject_scan(store)}
 
 
 # ------------------------------------------------------------- sleep / dream
@@ -431,6 +660,17 @@ def _dream_narrative(st: dict, counts: dict, woven: int = 0) -> str:
     if counts["merges"]:
         parts.append(plural(counts["merges"], "near-duplicate to merge",
                             "near-duplicates to merge"))
+    if counts.get("chronic"):
+        # the judgment half of push-noise: the floor already quiets these; the
+        # dream asks whether they should keep living at all
+        parts.append(plural(counts["chronic"],
+                            "chronically ignored push to judge",
+                            "chronically ignored pushes to judge"))
+    if counts.get("reproject"):
+        # the other root of cross-project noise: the label is wrong/missing
+        parts.append(plural(counts["reproject"],
+                            "mis-scoped memory to re-project",
+                            "mis-scoped memories to re-project"))
     if counts["distill"]:
         parts.append(plural(counts["distill"], "session to distill",
                             "sessions to distill"))
@@ -502,6 +742,15 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
     this call, resets the DUE clock (mark_done), and clears the pass marker. The
     narrative becomes the wake read-back instead of the entering one.
 
+    Opening a pass also runs the one judgment-free housekeeping move: the push
+    use-credit refresh (use_credit_refresh — `usefulness-scan --apply` in dream
+    clothing), so the worklist's chronic-noise question is asked over current
+    counts. Reported as `use_credit`; None when skipped (off, or no transcripts).
+
+    Every dream also reads the telemetry back as a DIAL REPORT (dial_report):
+    evidence-backed config suggestions — dissent shadow, the L5 gate readout,
+    a lossless-floor verdict — reported as `dials`, never applied.
+
     Refused on a read-only store: consolidation is a maintenance operation, so a
     frozen (vendor-shipped read-only) store raises FrozenStoreError rather than
     proposing work that can never be applied."""
@@ -511,9 +760,13 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
     # reconciled DURING the pass — robust to same-second timestamp collisions and
     # never counting the store's prior supersede history.
     marker = get_config(store, "dream_pass_super0")
+    credit = None
     if marker is None:
         marker = str(_superseded_count(store))
         set_config(store, "dream_pass_super0", marker)
+        # opening a pass refreshes the push use-credit BEFORE proposing, so the
+        # chronic-noise list below runs on current counts, not stale ones
+        credit = use_credit_refresh(store)
     st = status(store)
     work = propose(store)
     woven = 0
@@ -523,7 +776,8 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
             woven += 1
     counts = {k: len(work[k]) for k in ("distill", "gists", "merges",
                                         "contradictions", "associations",
-                                        "resolutions", "reality")}
+                                        "resolutions", "reality", "chronic",
+                                        "reproject")}
     counts["total"] = sum(counts.values())
     counts["woven"] = woven
 
@@ -548,7 +802,9 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
             lines = [narrative,
                      f"{len(remaining)} outdated/duplicate pair{'' if one else 's'} "
                      f"still need{'s' if one else ''} a decision — supersede the "
-                     "stale one (default: keep the newer):"]
+                     "stale one (default: keep the newer), or accept a reviewed "
+                     "pair as legitimately distinct with: link <a> <b> "
+                     "--relation distinct:"]
             for mm in remaining[:5]:
                 ids = mm["ids"]
                 gmap = dict(zip(ids, mm["gists"]))
@@ -564,8 +820,25 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
             narrative = "\n".join(lines)
     else:
         narrative = _dream_narrative(st, counts, woven)
+    if credit:
+        narrative += (f"\n(pass open: refreshed push use-credit from "
+                      f"{credit['sessions']} transcript session"
+                      f"{'' if credit['sessions'] == 1 else 's'} — "
+                      f"{credit['credited']} of {credit['memories_scanned']} "
+                      "pushed memories proven used downstream)")
+    # dial report: read the accrued telemetry back at the decision moment. The
+    # scan-derived rules only have their honest inputs at pass open (credit);
+    # the field-log rule reads on every call.
+    dials = dial_report(store,
+                        scan_channels=(credit or {}).get("by_channel"),
+                        scan_outcomes=(credit or {}).get("outcomes"))
+    if dials and not done:
+        narrative += (f"\n🎛 {len(dials)} dial suggestion"
+                      f"{'' if len(dials) == 1 else 's'} from the accrued "
+                      "telemetry — evidence attached; nothing flipped (§6.5).")
     return {"status": st, "counts": counts, "work": work, "woven": woven,
-            "applied": applied, "narrative": narrative}
+            "applied": applied, "use_credit": credit, "dials": dials,
+            "narrative": narrative}
 
 
 def supersede_suggestion(store: MemoryStore, new_id: int, text: str,

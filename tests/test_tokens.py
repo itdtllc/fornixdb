@@ -53,7 +53,11 @@ class TestTokens(unittest.TestCase):
         # index_name) -> 1890 (recent_writes — session write-log for
         # end-of-session dedup, dogfooding report §4.4) -> 1960
         # (remember/remember_many `project` arg — explicit capture scope, since
-        # the MCP server can't see the host's per-session declared project) —
+        # the MCP server can't see the host's per-session declared project) ->
+        # 2110 (link `relation` param + distinct-ok accept semantics, and the
+        # dream description naming its grown worklist: chronic-noise,
+        # mis-scoped, dial report; owner principle 2026-06-25: never trim
+        # tools/descriptions to fit — raise the budget) —
         # each a deliberate raise for named tools. This measures
         # ALL defined tools; the
         # live footprint is the
@@ -62,7 +66,7 @@ class TestTokens(unittest.TestCase):
         import json
 
         from fornixdb.adapters.mcp_server import INSTRUCTIONS, TOOLS
-        SCHEMA_TOKEN_BUDGET = 2050  # raised for memory_value (the value summary tool)
+        SCHEMA_TOKEN_BUDGET = 2110  # raised for link relation=distinct + dream sections
         INSTRUCTIONS_TOKEN_BUDGET = 260
 
         schema_tokens = estimate_tokens(json.dumps(TOOLS))
