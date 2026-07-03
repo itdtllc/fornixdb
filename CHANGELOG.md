@@ -5,9 +5,22 @@ versioning. While the project is pre-1.0 the public API may still evolve between
 minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
 active development branch and can change through the day.
 
-## [Unreleased]
+## [0.4.3] - 2026-07-03
 
 ### Added
+- **`fornixdb value` leads with a net token verdict.** The report's first line
+  is now *"Estimated tokens SAVED/EXTRA: ~N/session"*, followed by the
+  supporting data: a **measured** cost side (fixed integration surfaces plus
+  the actual size of every proactively injected memory block, summed from the
+  host's own session transcripts — `usefulness-scan` now records per-push
+  block sizes, totals and per-channel) against an **explicitly assumed**
+  savings side (a printed low/mid/high band per downstream-referenced push;
+  there is no session-without-memory to compare against, so the verdict is a
+  range, never one confident number). The report also states what it does not
+  count (explicit pull results; session-end capture costs zero prompt tokens;
+  time-axis answers have no re-derivation path), and reminds the owner that
+  `config floor_log on` collects per-push / per-beat detail
+  (`floor-stats` / `field-stats`) beyond what transcripts alone show.
 - **L5 parallel multi-domain activation — the field (first build, default OFF).**
   With `config parallel_recall on`, each L4 beat gathers through `fornixdb.field`
   instead of a single recall: seven domain-scoped recalls (semantic knowledge /
