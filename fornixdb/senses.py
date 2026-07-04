@@ -28,7 +28,8 @@ from __future__ import annotations
 from typing import Protocol
 
 _TBD = ("TBD — multimodal capture is declared intent, not yet implemented. "
-        "See fornixdb/senses.py for the planned design and the README's "
+        "See SENSES.md for the full design (buffer -> salience gate -> store, "
+        "two recall lanes, fidelity-ladder decay) and the README's "
         "'Anatomy of a memory' for how it fits the store.")
 
 

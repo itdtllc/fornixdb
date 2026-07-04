@@ -5,6 +5,21 @@ versioning. While the project is pre-1.0 the public API may still evolve between
 minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
 active development branch and can change through the day.
 
+## [Unreleased]
+
+### Added
+- **SENSES.md — the multimodal design, published.** The architecture behind
+  the declared-TBD `see`/`watch`/`hear`/`feel` entry points: a RAM-only
+  sensory buffer sampled densely, a salience gate that commits only on
+  divergence from the recent past (plus heartbeat anchors), and ordinary
+  store rows (caption gist + `ModalEmbedder` vector + `source_ref` artifact
+  + real event-time spans). Two independent recall lanes (captions through
+  the existing text space = cross-modal recall from day one; per-modality
+  latents for similarity and gating), a fidelity-ladder decay
+  (clip → keyframe → vector → gist-only), and `feel()` provable with no
+  extra hardware as machine proprioception. Design only — the stubs still
+  raise `NotImplementedError`; README and the stub message now link the doc.
+
 ## [0.5.0] - 2026-07-04
 
 ### Changed
