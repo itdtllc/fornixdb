@@ -20,7 +20,7 @@ persisted state of its own:
     L2  Automatic capture                capture_mode  (suggest/auto = on)
     L3  Proactive recall injection       proactive_recall  (on/off)
     L4  Rhythmic in-thought recall        rhythmic_recall   (on/off)
-    L5  Parallel multi-domain activation  parallel_recall   (on/off, ships off)
+    L5  Parallel multi-domain activation  parallel_recall   (on/off)
     L6  Federated / distributed memory    not built — planned
 """
 
@@ -68,7 +68,7 @@ LEVELS: tuple[Level, ...] = (
           BUILT, locked_on=False, dial="rhythmic_recall"),
     Level("L5", "Parallel multi-domain activation",
           "many domain-scoped recalls fire at once and settle into a direction",
-          DOGFOOD, locked_on=False, dial="parallel_recall", dial_default="off"),
+          BUILT, locked_on=False, dial="parallel_recall"),
     Level("L6", "Federated / distributed memory",
           "the parallel model federated across endpoints and machines",
           PLANNED, locked_on=False, dial=None),

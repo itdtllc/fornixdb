@@ -5,6 +5,31 @@ versioning. While the project is pre-1.0 the public API may still evolve between
 minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
 active development branch and can change through the day.
 
+## [0.5.0] - 2026-07-04
+
+### Changed
+- **L5 parallel multi-domain activation is now DEFAULT-ON.** `parallel_recall`
+  reads **on** when unset, so a fresh store starts at rung **L5**: every L4 beat
+  gathers through the field (seven domain-scoped recalls settling by
+  corroboration) unless the owner steps back down (`level L4`, or
+  `config parallel_recall off`). 0.5.0 was reserved for exactly this flip.
+  The evidence behind it, from live dogfooding on a 476-memory store:
+  - **No harm**: in the floor-log join against scan outcomes, 783 of 818
+    surfaced pushes scored *useful* vs 35 *noise* (~96%) with L5 contributing
+    the large majority of floor evaluations; field beats cost ~307 ms median
+    (343 ms max) and honesty properties held (no corroboration → clean L4
+    degrade, nothing fabricated).
+  - **The gate readout keeps accruing**: the usefulness scan has not yet
+    banked enough L5-settled impressions for the L5-vs-L4 reference-rate
+    comparison (scan attribution credits the most-recent injecting channel,
+    which leans the split toward L3/L4). That readout — the same gate L4
+    passed — now serves as the **revert signal**, surfaced by the dream dial
+    report; the flip is reversible with one config.
+- **Ladder surfaces reflect the new status**: `level` shows L5 as built (no
+  more "under evaluation" tag), and the dial report labels the gate
+  `on (default)` and phrases its AGAINST branch as a revert suggestion
+  (`config parallel_recall off`) instead of "keep dogfooding".
+
 ## [0.4.3] - 2026-07-03
 
 ### Added
