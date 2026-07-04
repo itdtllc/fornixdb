@@ -15,11 +15,11 @@ class LevelsCase(unittest.TestCase):
     def tearDown(self):
         self.s.close()
 
-    # ---- defaults: a fresh store is at the top built rung (L4 dogfood) -----
+    # ---- defaults: a fresh store is at the top built rung (L5) -------------
     def test_fresh_store_defaults_to_top_built_rung(self):
-        # capture suggest + proactive on + rhythmic on are all defaults
+        # capture suggest + proactive + rhythmic + parallel on are all defaults
         rung, incoherent = levels.current_rung(self.s)
-        self.assertEqual(rung, "L4")
+        self.assertEqual(rung, "L5")
         self.assertFalse(incoherent)
 
     def test_only_l0_is_locked(self):
@@ -98,17 +98,18 @@ class LevelsCase(unittest.TestCase):
             with self.assertRaises(ValueError):
                 levels.set_rung(self.s, lid)
 
-    # ---- L5 is dogfood: built, selectable, ships OFF ----------------------
-    def test_l5_dogfood_default_off_but_settable(self):
+    # ---- L5 is built and default-on (0.5.0); stepping down still works -----
+    def test_l5_default_on_and_revertible(self):
         from fornixdb.multistore import get_config
-        self.assertFalse(levels.is_on(self.s, "L5"))   # dial_default=off
-        self.assertEqual(levels.current_rung(self.s)[0], "L4")
-        levels.set_rung(self.s, "L5")
-        self.assertTrue(levels.is_on(self.s, "L5"))
-        self.assertEqual(get_config(self.s, "parallel_recall"), "on")
+        self.assertTrue(levels.is_on(self.s, "L5"))    # dial_default=on
         self.assertEqual(levels.current_rung(self.s)[0], "L5")
         levels.set_rung(self.s, "L4")                   # stepping back down
         self.assertIn(get_config(self.s, "parallel_recall"), ("off", "0", "false"))
+        self.assertEqual(levels.current_rung(self.s)[0], "L4")
+        self.assertFalse(levels.current_rung(self.s)[1])
+        levels.set_rung(self.s, "L5")                   # and back up
+        self.assertTrue(levels.is_on(self.s, "L5"))
+        self.assertEqual(get_config(self.s, "parallel_recall"), "on")
         self.assertFalse(levels.current_rung(self.s)[1])  # coherent both ways
 
     # ---- incoherence: a gap left by direct `config` edits -----------------

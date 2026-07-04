@@ -518,10 +518,11 @@ def dial_report(store: MemoryStore, scan_channels: dict | None = None,
                 "suggestion": "weigh `config parallel_dissent on` — the tension "
                               "line has real content"})
 
-    # parallel_recall (the L5 gate): settled-push reference rate vs L4's
+    # parallel_recall (the L5 gate, default-on since 0.5.0): settled-push
+    # reference rate vs L4's — after the flip this readout is the REVERT signal
     if scan_channels:
         l4, l5 = scan_channels.get("L4"), scan_channels.get("L5")
-        recall_on = not store._setting_off("parallel_recall", default="off")
+        recall_on = not store._setting_off("parallel_recall", default="on")
         if (l4 and l5 and l4["impressions"] >= DIAL_MIN_IMPRESSIONS
                 and l5["impressions"] >= DIAL_MIN_IMPRESSIONS):
             r4 = l4["referenced"] / l4["impressions"]
@@ -531,16 +532,17 @@ def dial_report(store: MemoryStore, scan_channels: dict | None = None,
                   f"({l4['referenced']}/{l4['impressions']})")
             out.append({
                 "dial": "parallel_recall",
-                "current": "on (dogfood)" if recall_on else "off",
+                "current": "on (default)" if recall_on else "off",
                 "evidence": ev,
                 "suggestion": ("gate evidence FOR default-on — settling beats "
                                "the L4 baseline" if r5 > r4 else
-                               "gate evidence AGAINST default-on so far — keep "
-                               "dogfooding or revisit the settle thresholds")})
+                               "gate evidence AGAINST default-on so far — weigh "
+                               "`config parallel_recall off` or revisit the "
+                               "settle thresholds")})
         elif recall_on:
             n = l5["impressions"] if l5 else 0
             out.append({
-                "dial": "parallel_recall", "current": "on (dogfood)",
+                "dial": "parallel_recall", "current": "on (default)",
                 "evidence": (f"only {n} settled-block impressions in the scanned "
                              f"window (need {DIAL_MIN_IMPRESSIONS}+ alongside L4)"),
                 "suggestion": "gate still accruing — no readout yet"})

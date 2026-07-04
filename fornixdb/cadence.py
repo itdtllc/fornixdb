@@ -24,9 +24,10 @@ ADDITIVE, never a takeover: it only ADDS a block; it never replaces or owns the
 host's native context. Respects the same switches as L3 (`ingest_mode=explicit`
 off entirely; `config rhythmic_recall off` off on its own).
 
-L5 rides on this metronome: with `config parallel_recall on` each beat gathers
-through the multi-domain field (`fornixdb.field`) instead of a single recall —
-same cadence, same budget, wider activation. L4 owns WHEN, L5 owns HOW WIDE.
+L5 rides on this metronome: unless `config parallel_recall off`, each beat
+gathers through the multi-domain field (`fornixdb.field`) instead of a single
+recall — same cadence, same budget, wider activation. L4 owns WHEN, L5 owns
+HOW WIDE. Default-on since 0.5.0.
 """
 
 from __future__ import annotations
@@ -115,7 +116,7 @@ def pulse(store: MemoryStore, thought: str, episode: Episode, *,
     if dedup:
         exclude |= injected_this_session(store, session_id)
     active = resolve_active_project(store, active_project, session_id=session_id)
-    if get_config(store, "parallel_recall", "off") not in ("off", "0", "false"):
+    if get_config(store, "parallel_recall", "on") not in ("off", "0", "false"):
         # L5: the beat goes WIDE — a field of domain-scoped recalls settles
         # into one block. Same metronome (debounce/budget/dedup above), same
         # block budget; only the gather inside the beat changes.

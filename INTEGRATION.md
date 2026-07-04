@@ -397,9 +397,9 @@ entirely; `config rhythmic_recall off` disables just this. Floor / limit /
 max-chars / max-pulses are per-store config (`rhythmic_recall_*`). Reference
 caller: Elira's tool-loop via `elira_engram.rhythmic_pulse`.
 
-### Parallel multi-domain activation (L5) — the field (default off)
+### Parallel multi-domain activation (L5) — the field (default on since 0.5.0)
 
-With `config parallel_recall on`, each L4 beat gathers **wide**: instead of one
+By default, each L4 beat gathers **wide**: instead of one
 recall, `fornixdb.field` fires seven domain-scoped recalls on the same evolving
 thought — standing knowledge, recent episodes, the deep past, learned guidance,
 reference pointers, the active project's context, and the associative
@@ -413,8 +413,9 @@ field when the dial is on.
 Honesty properties: every row still clears the same per-memory floor as an L4
 pulse (the neighborhood is corroboration-only — it can never surface alone);
 no corroboration degrades gracefully to plain L4 behavior; nothing clearing
-the floors stays silent. The dial ships **off** while L5 walks the same
-usefulness gate L4 passed. Tuning: `parallel_domains` / `parallel_domain_k` /
+the floors stays silent. The dial ships **on** as of 0.5.0 (flipped on live
+no-harm evidence; `config parallel_recall off` steps a store back to L4, and
+the gate readout below is the revert signal). Tuning: `parallel_domains` / `parallel_domain_k` /
 `parallel_limit` / `parallel_block_max_chars` / `parallel_dissent` (the
 minority-report `tension:` line, also off by default). Debug/verify:
 `fornixdb field "<thought>"` prints the whole field; with `floor_log on`,

@@ -923,7 +923,7 @@ class TestDialReport(unittest.TestCase):
         d = self._dials(scan_channels=ch)
         self.assertIn("AGAINST default-on", d["parallel_recall"]["suggestion"])
 
-    def test_gate_accruing_while_dogfooding_thin_l5(self):
+    def test_gate_accruing_thin_l5(self):
         set_config(self.s, "parallel_recall", "on")
         ch = {"L4": {"impressions": 100, "referenced": 20},
               "L5": {"impressions": DIAL_MIN_IMPRESSIONS - 1, "referenced": 1}}
@@ -931,6 +931,7 @@ class TestDialReport(unittest.TestCase):
         self.assertIn("accruing", d["parallel_recall"]["suggestion"])
 
     def test_gate_silent_when_recall_off_and_no_l5(self):
+        set_config(self.s, "parallel_recall", "off")  # override the 0.5.0 default
         ch = {"L4": {"impressions": 100, "referenced": 20}}
         self.assertNotIn("parallel_recall", self._dials(scan_channels=ch))
 

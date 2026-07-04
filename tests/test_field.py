@@ -297,6 +297,7 @@ class TestCadenceSeam(FieldBase):
 
     def test_pulse_unchanged_when_dial_off(self):
         from fornixdb.cadence import Episode, pulse
+        set_config(self.s, "parallel_recall", "off")  # override the 0.5.0 default
         self._seed_pattern()
         block = pulse(self.s, "chasing the seam freeze fix in the render",
                       Episode())
