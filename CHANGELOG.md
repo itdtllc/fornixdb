@@ -5,7 +5,7 @@ versioning. While the project is pre-1.0 the public API may still evolve between
 minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
 active development branch and can change through the day.
 
-## [Unreleased]
+## [0.6.0] - 2026-07-06
 
 ### Added
 - **`fornixdb tokens --billed` — the billed (token-turn) view, measured from
