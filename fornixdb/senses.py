@@ -1,86 +1,216 @@
-"""Multimodal capture — the human senses. ALL TBD: this module is the
-declared intent, not a working feature.
+"""Multimodal capture — the human senses. Design: SENSES.md.
 
 FornixDB is a human-like memory, and humans don't remember only words.
-These APIs stake out how sight, sound, and touch will enter the store, so
-integrators can see where the architecture is headed before it ships. Every
-function below raises NotImplementedError today; signatures may still move.
+`see` and `hear` are IMPLEMENTED for single artifacts (an image file, an
+audio clip); `watch` and `feel` — the live capture loops — are still
+declared intent and raise honestly. The pattern is the one the text path
+proved and SENSES.md publishes:
 
-The design pattern is already proven by the text path and will not change:
-
-  gist        a one-line caption (written by a small local model),
-              recalled first like any other memory
-  vector      a modality embedding (image/audio/sensor model) in the same
-              pluggable Embedder slot model2vec occupies for text — recall
-              by meaning works across modalities
-  source_ref  the artifact stays on disk (frame, clip, waveform, reading
-              log); the store keeps the pointer, never the blob
+  gist        a one-line caption; recalled first like any other memory, and
+              embedded through the ordinary text path — so recall by meaning
+              works ACROSS modalities from day one (the gist lane)
+  vector      a modality embedding (image/audio/sensor model) in the v10
+              modal_embedding table — same-modality similarity, scored only
+              within its own model's space (the latent lane)
+  source_ref  the artifact stays on disk (frame, clip, reading log); the
+              store keeps the pointer, never the blob
   time        streams are the episodic axis taken literally — event_time /
               event_time_end spans, so "what happened at the front door
               yesterday afternoon" is ordinary timeline recall
 
-Local-first still holds: captioners and modality embedders must run on
-device, like everything else here.
+SOUND IS MEANING, NOT ONLY WORDS (owner principle, 2026-07-04): a crosswalk
+beep, a kettle, whistling, a dog at the door all carry meaning with zero
+speech in them. `hear` therefore treats the sound-scene caption as the
+REQUIRED lane and the transcript as the additional one — never the reverse.
+
+Local-first still holds: captioners, transcribers, and modality embedders
+must run on device, like everything else here. They plug in as callables /
+protocols so any local model can serve; nothing here imports one.
 """
 
 from __future__ import annotations
 
-from typing import Protocol
+from pathlib import Path
+from typing import Callable, Protocol
 
-_TBD = ("TBD — multimodal capture is declared intent, not yet implemented. "
-        "See SENSES.md for the full design (buffer -> salience gate -> store, "
-        "two recall lanes, fidelity-ladder decay) and the README's "
-        "'Anatomy of a memory' for how it fits the store.")
+from .salience import cosine
+from .vectors import from_blob, to_blob
+
+__all__ = ["ModalEmbedder", "see", "hear", "watch", "feel",
+           "modal_vector", "modal_neighbors"]
+
+_TBD = ("TBD — this sense's live capture loop is declared intent, not yet "
+        "implemented. See SENSES.md for the design (buffer -> salience gate "
+        "-> store); `see` and `hear` already work for single artifacts.")
 
 
 class ModalEmbedder(Protocol):
-    """TBD. The modality twin of vectors.Embedder: any local model that maps
-    an artifact (image, audio window, sensor frame) to a vector. One store
-    may hold vectors from several modalities; recall scores within each
-    model's space (model name is already part of every embedding row)."""
+    """The modality twin of vectors.Embedder: any local model that maps an
+    artifact (image, audio window, sensor frame) to a vector. One store may
+    hold vectors from several modalities; similarity is only ever scored
+    within one model's space (the model name keys every modal_embedding row).
+    """
 
     name: str
 
     def embed_artifact(self, paths: list[str]) -> list[list[float]]: ...
 
 
-# ------------------------------------------------------------------ sight
+# ---------------------------------------------------------- the latent lane
+
+def _save_modal_vector(store, memory_id: int, embedder: ModalEmbedder,
+                       path: str) -> None:
+    vec = embedder.embed_artifact([path])[0]
+    store.conn.execute(
+        "INSERT OR REPLACE INTO modal_embedding(memory_id, model, dim, vector) "
+        "VALUES (?, ?, ?, ?)",
+        (memory_id, embedder.name, len(vec), to_blob(vec)))
+    store.conn.commit()
+
+
+def modal_vector(store, memory_id: int, model: str | None = None):
+    """The stored modality vector for a memory: (model, vector) or None.
+    With several models on one memory, pass `model` to pick one."""
+    q = "SELECT model, vector FROM modal_embedding WHERE memory_id = ?"
+    args: list = [memory_id]
+    if model is not None:
+        q += " AND model = ?"
+        args.append(model)
+    row = store.conn.execute(q, args).fetchone()
+    return (row[0], from_blob(row[1])) if row else None
+
+
+def modal_neighbors(store, memory_id: int, *, model: str | None = None,
+                    k: int = 5) -> list[tuple[int, float]]:
+    """Same-modality similarity: live memories whose modal vector (SAME model
+    only — spaces never mix) is nearest this memory's. [(memory_id, cos)]."""
+    anchor = modal_vector(store, memory_id, model)
+    if anchor is None:
+        return []
+    model_name, vec = anchor
+    rows = store.conn.execute(
+        "SELECT e.memory_id, e.vector FROM modal_embedding e "
+        "JOIN memory m ON m.id = e.memory_id "
+        "WHERE e.model = ? AND e.memory_id != ? AND m.superseded_time IS NULL",
+        (model_name, memory_id)).fetchall()
+    scored = [(mid, cosine(vec, from_blob(blob))) for mid, blob in rows]
+    scored.sort(key=lambda p: p[1], reverse=True)
+    return scored[:k]
+
+
+# ------------------------------------------------------------------ helpers
+
+def _percept(store, gist: str, *, sense: str, artifact: str,
+             detail: str | None, event_time: str | None,
+             event_time_end: str | None, topics: list[str] | None,
+             project: str | None, session_id: str | None,
+             embedder: ModalEmbedder | None) -> int:
+    mid = store.store(
+        gist, detail, kind="episodic", topics=topics, project=project,
+        event_time=event_time, event_time_end=event_time_end,
+        session_id=session_id, source=f"senses:{sense}", source_ref=artifact)
+    if embedder is not None:
+        _save_modal_vector(store, mid, embedder, artifact)
+    return mid
+
+
+def _resolve(path: str, sense: str) -> str:
+    p = Path(path).expanduser()
+    if not p.is_file():
+        raise FileNotFoundError(
+            f"{sense}: no artifact at {path!r} — the store keeps a pointer to "
+            "the file on disk, so the file must exist when the memory is made")
+    return str(p.resolve())
+
+
+# -------------------------------------------------------------------- sight
 
 def see(store, image_path: str, *, caption: str | None = None,
-        event_time: str | None = None, topics: list[str] | None = None) -> int:
-    """TBD — remember one image. Planned: caption becomes the gist (a local
-    VLM writes one if not given), an image embedding lands in the vector
-    slot, the file stays on disk as source_ref. Returns the memory id."""
-    raise NotImplementedError(_TBD)
+        captioner: Callable[[str], str] | None = None,
+        embedder: ModalEmbedder | None = None,
+        event_time: str | None = None, topics: list[str] | None = None,
+        project: str | None = None, session_id: str | None = None) -> int:
+    """Remember one image. The caption becomes the gist (pass one, or pass a
+    local captioner callable that writes one); the image stays on disk as
+    source_ref; an optional ModalEmbedder adds the latent-lane vector.
+    Returns the memory id."""
+    artifact = _resolve(image_path, "see")
+    if caption is None:
+        if captioner is None:
+            raise ValueError(
+                "see: a caption is the gist every recall path leans on — "
+                "pass caption=..., or captioner=<local VLM callable> to "
+                "write one from the image")
+        caption = captioner(artifact)
+    return _percept(store, caption.strip(), sense="sight", artifact=artifact,
+                    detail=None, event_time=event_time, event_time_end=None,
+                    topics=topics, project=project, session_id=session_id,
+                    embedder=embedder)
 
+
+# -------------------------------------------------------------------- sound
+
+def hear(store, audio_path: str, *, sound_caption: str | None = None,
+         sound_tagger: Callable[[str], str] | None = None,
+         transcript: str | None = None,
+         transcriber: Callable[[str], str | None] | None = None,
+         embedder: ModalEmbedder | None = None,
+         event_time: str | None = None, event_time_end: str | None = None,
+         topics: list[str] | None = None, project: str | None = None,
+         session_id: str | None = None) -> int:
+    """Remember audio. TWO lanes, and the non-speech one is the required one:
+
+    sound scene (REQUIRED) — what the audio *was*: "crosswalk signal beeping",
+        "someone whistling a tune", "glass breaking, two dogs barking". Pass
+        sound_caption=..., or sound_tagger=<local audio-caption callable>.
+        Sound carries meaning with zero words in it; this lane always runs.
+    speech (ADDITIONAL) — when words were spoken, pass transcript=..., or
+        transcriber=<local STT callable> (returning None when there is no
+        speech). The gist leads with the sound scene and quotes the speech;
+        the full transcript lands in detail for drill-down.
+
+    The clip stays on disk as source_ref; an optional ModalEmbedder (e.g. a
+    CLAP-family model) adds the latent-lane vector. Returns the memory id."""
+    artifact = _resolve(audio_path, "hear")
+    if sound_caption is None:
+        if sound_tagger is None:
+            raise ValueError(
+                "hear: the sound-scene caption is the required lane (sound "
+                "means things without words — a crosswalk beep, whistling) — "
+                "pass sound_caption=..., or sound_tagger=<local audio-caption "
+                "callable>. A transcript alone is not enough.")
+        sound_caption = sound_tagger(artifact)
+    if transcript is None and transcriber is not None:
+        transcript = transcriber(artifact)
+
+    gist = sound_caption.strip()
+    detail = None
+    if transcript:
+        transcript = transcript.strip()
+        quoted = transcript if len(transcript) <= 120 else transcript[:117] + "…"
+        gist = f'{gist} — said: "{quoted}"'
+        detail = transcript
+    return _percept(store, gist, sense="sound", artifact=artifact,
+                    detail=detail, event_time=event_time,
+                    event_time_end=event_time_end, topics=topics,
+                    project=project, session_id=session_id, embedder=embedder)
+
+
+# ---------------------------------------------------- streams (still TBD)
 
 def watch(store, stream_source: str, *, window_seconds: float = 30.0):
-    """TBD — remember a video stream (camera, screen, file). Planned: the
-    stream is chunked into time windows; each window stores one episodic
-    memory (keyframe caption + embedding + clip source_ref) with a real
-    event_time span, so timeline recall answers "what happened while…".
-    Retention tiers and the disk budget govern how much footage survives."""
+    """TBD — remember a video stream (camera, screen, file). Planned per
+    SENSES.md: frames sample into a RAM ring buffer, the salience gate
+    (fornixdb.salience) commits event/heartbeat frames, each commit becomes a
+    `see`-shaped memory with a real event_time span; window_seconds is the
+    MAXIMUM window — boundaries cut early when something happens."""
     raise NotImplementedError(_TBD)
 
-
-# ------------------------------------------------------------------ sound
-
-def hear(store, audio_source: str, *, transcribe: bool = True,
-         window_seconds: float = 60.0):
-    """TBD — remember audio (microphone stream or file). Planned: local
-    transcription feeds the existing TEXT path (a transcript is words —
-    today's machinery already handles it); non-speech audio stores a sound
-    embedding + caption ("glass breaking, two dogs barking") per window."""
-    raise NotImplementedError(_TBD)
-
-
-# ------------------------------------------------------------------ touch
 
 def feel(store, reading, *, sensor: str, event_time: str | None = None):
-    """TBD — remember tactile/proprioceptive sensor data (robotics: force,
-    temperature, contact, IMU). Planned: readings aggregate into episodic
-    windows ("gripper slipped twice on the glass jar") with the raw reading
-    log as source_ref; embeddings come from a sensor-domain model. This is
-    the robot-endpoint sense — FornixDB's per-endpoint design (a store on
-    every robot) is why it exists."""
+    """TBD — remember tactile/proprioceptive sensor data. Planned first
+    binding needs no robot: machine proprioception (power, lid, network,
+    thermal), change-gated, templated gists — no embedder required (the gist
+    lane alone makes it recallable). Robot endpoints (force, contact, IMU)
+    are the same pattern with a sensor-domain ModalEmbedder."""
     raise NotImplementedError(_TBD)

@@ -64,6 +64,20 @@ different confidence:
   to compare against. So the report applies a stated low/mid/high band
   (300 / 1,500 / 5,000 tokens per use) and gives you the range, never one
   confident number.
+- **Know your units.** The verdict counts each token ONCE (context-space).
+  Your AI host re-sends the whole conversation on every API request — one
+  request per tool call, easily 30–150 per session — so a host's usage
+  panel attributes *token-turns* and will show a number 30–150× larger for
+  the same content. That multiplier applies to both sides of the ledger
+  equally (whatever a recall replaced would also have sat in context and
+  been re-read), so the verdict's direction survives the unit change.
+  `fornixdb tokens --billed` measures the token-turn view directly from
+  your transcripts' per-request usage records, so FornixDB's number and
+  your host panel's number are the same kind of number. Perspective:
+  nearly all re-reads are prompt-cache hits at ~0.1× input price — a
+  resident block's share of a session is its size divided by the average
+  context size, and its dollar cost is far smaller than its percentage
+  suggests.
 
 Honesty is the pitch: at typical usage the verdict is break-even to
 modestly positive — memory roughly pays for itself in tokens — and what it

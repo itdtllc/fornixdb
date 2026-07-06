@@ -13,7 +13,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 9  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
+SCHEMA_VERSION = 10  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
                     # v5: writer. v6: helpful_count/last_helpful (usefulness).
                     # v4: recall_feedback (negative feedback, new table only)
                     # v5: memory.writer (shared-tier writer provenance, B3)
@@ -29,6 +29,10 @@ SCHEMA_VERSION = 9  # v2: FTS gains name; chunked embeddings. v3: last_reinforce
                     #     legitimately distinct (the pair-level reality-ok/noise-ok).
                     #     memory_link's CHECK bakes the relation list, so old stores
                     #     get the table rebuilt in place.
+                    # v10: modal_embedding (senses latent lane, new table only) —
+                    #      a perceptual memory's modality vector (image/audio/sensor
+                    #      model), one row per model, beside its ordinary caption
+                    #      embedding in `embedding` (the cross-modal text lane)
 
 DEFAULT_DB_ENV = "FORNIXDB_DB"
 # FornixDB-branded so a default store is never mistaken for a host AI's memory
@@ -182,6 +186,19 @@ CREATE TABLE IF NOT EXISTS embedding (
     dim       INTEGER NOT NULL,
     vector    BLOB NOT NULL,
     PRIMARY KEY (memory_id, chunk)
+);
+
+-- v10: the senses' latent lane. A perceptual memory keeps its caption gist
+-- embedded in `embedding` like every other memory (the cross-modal text
+-- lane), and its modality vector (image/audio/sensor model) here. Separate
+-- table so the hot text path is untouched; one row per model, and similarity
+-- is only ever scored between rows of the SAME model — spaces never mix.
+CREATE TABLE IF NOT EXISTS modal_embedding (
+    memory_id INTEGER NOT NULL REFERENCES memory(id) ON DELETE CASCADE,
+    model     TEXT NOT NULL,
+    dim       INTEGER NOT NULL,
+    vector    BLOB NOT NULL,
+    PRIMARY KEY (memory_id, model)
 );
 
 -- Lower-friction capture (§15.2 #1): a cheap staging scratchpad. `jot` drops a

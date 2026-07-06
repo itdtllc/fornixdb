@@ -8,6 +8,45 @@ active development branch and can change through the day.
 ## [Unreleased]
 
 ### Added
+- **`fornixdb tokens --billed` — the billed (token-turn) view, measured from
+  your host's own transcripts.** `tokens` counts each token once
+  (context-space), but a stateless host re-sends the whole conversation on
+  every API request — one request per tool call, 30–150+ per session — so
+  host usage panels attribute *token-turns*, 30–150× the once-counted
+  figure. The new report reads the per-request `usage` records in the
+  host's transcript JSONL (the same numbers its usage panel aggregates) and
+  weighs every proactive push (per channel L3/L4/L5), `mcp__fornixdb` tool
+  call, and id-matched tool result by the requests that re-read it; the
+  resident schema/instruction surface is shown as a deferred…eager band,
+  since transcripts don't record how the host loaded schemas. Live 7-day
+  readout on the reference store: all FornixDB content = **1.9%** of 625M
+  billed tokens, nearly all ~0.1×-price prompt-cache reads. `tokens`,
+  `value`, README, and BENEFITS now state both units explicitly — the
+  multiplier applies to the cost *and* savings sides equally, so the net
+  verdict's direction survives the unit change.
+- **The senses capture core: `see` and `hear` are real** (single artifacts;
+  the live `watch`/`feel` loops remain honest TBD). `see(image)` stores a
+  percept the SENSES.md way — caption as gist (a passed string or a local
+  captioner callable; the gist embeds through the ordinary text path, so
+  cross-modal recall works immediately), the file on disk as `source_ref`
+  (never the blob; a missing file is refused, no dangling pointers), and an
+  optional `ModalEmbedder` vector in the new latent lane. `hear(audio)` runs
+  **two lanes with the non-speech one required**: sound carries meaning with
+  zero words (a crosswalk beep, whistling, a kettle), so every sound memory
+  needs a sound-scene caption, and speech — when present — rides *with* it
+  (gist leads with the scene and quotes the words; the full transcript goes
+  to detail). A transcript alone is rejected as an incomplete memory of a
+  sound.
+- **`fornixdb.salience` — the gate that turns dense sampling into sparse
+  memories.** Pure and hardware-free: EMA-referenced embedding distance,
+  one commit per scene change (hysteresis re-arm), heartbeat commits to
+  anchor quiet stretches, caller-supplied clock. The capture loops will feed
+  it; anything producing vectors can use it today.
+- **Schema v10: `modal_embedding` (new table only).** The latent lane — a
+  perceptual memory's modality vector, one row per model, beside its
+  ordinary caption embedding; similarity (`senses.modal_neighbors`) is
+  scored strictly within one model's space, so embedding spaces never mix.
+  The hot text path is untouched.
 - **SENSES.md — the multimodal design, published.** The architecture behind
   the declared-TBD `see`/`watch`/`hear`/`feel` entry points: a RAM-only
   sensory buffer sampled densely, a salience gate that commits only on
