@@ -145,13 +145,27 @@ class TestLatentLane(SensesBase):
 
 
 class TestStreamsStillHonestStubs(unittest.TestCase):
-    def test_watch_and_feel_raise_tbd(self):
+    def test_watch_surface_still_raises_tbd(self):
         s = MemoryStore(conn=connect(":memory:"))
-        for call in (lambda: senses.watch(s, "camera:0"),
-                     lambda: senses.feel(s, {"force": 1.2}, sensor="gripper")):
-            with self.assertRaises(NotImplementedError) as ctx:
-                call()
-            self.assertIn("TBD", str(ctx.exception))
+        with self.assertRaises(NotImplementedError) as ctx:
+            senses.watch(s, "camera:0")
+        self.assertIn("TBD", str(ctx.exception))
+        s.close()
+
+    def test_feel_remembers_a_reading_no_embedder_needed(self):
+        s = MemoryStore(conn=connect(":memory:"))
+        mid = senses.feel(s, {"power_source": "battery", "battery_pct": 74},
+                          sensor="power", event_time="2026-07-06T13:00:00")
+        gist, detail, source, ref = s.conn.execute(
+            "SELECT gist, detail, source, source_ref FROM memory WHERE id=?",
+            (mid,)).fetchone()
+        self.assertEqual(gist, "feel[power]: power_source=battery, battery_pct=74")
+        self.assertIn('"battery_pct": 74', detail)
+        self.assertEqual((source, ref), ("senses:feel", "sensor:power"))
+        mid2 = senses.feel(s, "lid closed", sensor="lid", gist="feel[lid]: closed")
+        self.assertEqual(tuple(s.conn.execute(
+            "SELECT gist, detail FROM memory WHERE id=?", (mid2,)).fetchone()),
+            ("feel[lid]: closed", None))
         s.close()
 
 

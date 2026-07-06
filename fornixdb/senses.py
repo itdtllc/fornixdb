@@ -2,9 +2,12 @@
 
 FornixDB is a human-like memory, and humans don't remember only words.
 `see` and `hear` are IMPLEMENTED for single artifacts (an image file, an
-audio clip); `watch` and `feel` — the live capture loops — are still
-declared intent and raise honestly. The pattern is the one the text path
-proved and SENSES.md publishes:
+audio clip), and `feel` is IMPLEMENTED for single sensor readings (machine
+proprioception first — no robot required). The live loops live beside this
+surface: vision's core is `fornixdb.watchloop` (stream-source adapters
+pending, so `watch` here still raises honestly); proprioception's
+change-gated loop is the next build. The pattern is the one the text path proved and
+SENSES.md publishes:
 
   gist        a one-line caption; recalled first like any other memory, and
               embedded through the ordinary text path — so recall by meaning
@@ -30,6 +33,7 @@ protocols so any local model can serve; nothing here imports one.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Callable, Protocol
 
@@ -212,10 +216,30 @@ def watch(store, stream_source: str, *, window_seconds: float = 30.0):
     raise NotImplementedError(_TBD)
 
 
-def feel(store, reading, *, sensor: str, event_time: str | None = None):
-    """TBD — remember tactile/proprioceptive sensor data. Planned first
-    binding needs no robot: machine proprioception (power, lid, network,
-    thermal), change-gated, templated gists — no embedder required (the gist
-    lane alone makes it recallable). Robot endpoints (force, contact, IMU)
-    are the same pattern with a sensor-domain ModalEmbedder."""
-    raise NotImplementedError(_TBD)
+def _feel_gist(sensor: str, reading) -> str:
+    if isinstance(reading, dict):
+        state = ", ".join(f"{k}={v}" for k, v in reading.items())
+    else:
+        state = str(reading).strip()
+    return f"feel[{sensor}]: {state}"
+
+
+def feel(store, reading, *, sensor: str, gist: str | None = None,
+         event_time: str | None = None, event_time_end: str | None = None,
+         topics: list[str] | None = None, project: str | None = None,
+         session_id: str | None = None) -> int:
+    """Remember one tactile/proprioceptive sensor reading. The first binding
+    needs no robot: machine proprioception (power, thermal, network, lid) —
+    a reading is a dict of named values (or a plain string), the gist is a
+    templated state line unless you pass one, and NO embedder is required:
+    the gist lane alone makes it recallable ("when did the laptop go on
+    battery?"). Robot endpoints (force, contact, IMU) are the same pattern,
+    later adding a sensor-domain ModalEmbedder for the latent lane. A
+    change-gated live loop is the next build (see the watch spec)."""
+    detail = (json.dumps(reading, sort_keys=True, default=str)
+              if isinstance(reading, dict) else None)
+    return _percept(store, (gist or _feel_gist(sensor, reading)).strip(),
+                    sense="feel", artifact=f"sensor:{sensor}", detail=detail,
+                    event_time=event_time, event_time_end=event_time_end,
+                    topics=topics, project=project, session_id=session_id,
+                    embedder=None)
