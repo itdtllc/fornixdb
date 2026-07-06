@@ -128,7 +128,8 @@ def _resolve(path: str, sense: str) -> str:
 def see(store, image_path: str, *, caption: str | None = None,
         captioner: Callable[[str], str] | None = None,
         embedder: ModalEmbedder | None = None,
-        event_time: str | None = None, topics: list[str] | None = None,
+        event_time: str | None = None, event_time_end: str | None = None,
+        topics: list[str] | None = None,
         project: str | None = None, session_id: str | None = None) -> int:
     """Remember one image. The caption becomes the gist (pass one, or pass a
     local captioner callable that writes one); the image stays on disk as
@@ -143,7 +144,8 @@ def see(store, image_path: str, *, caption: str | None = None,
                 "write one from the image")
         caption = captioner(artifact)
     return _percept(store, caption.strip(), sense="sight", artifact=artifact,
-                    detail=None, event_time=event_time, event_time_end=None,
+                    detail=None, event_time=event_time,
+                    event_time_end=event_time_end,
                     topics=topics, project=project, session_id=session_id,
                     embedder=embedder)
 
@@ -199,11 +201,14 @@ def hear(store, audio_path: str, *, sound_caption: str | None = None,
 # ---------------------------------------------------- streams (still TBD)
 
 def watch(store, stream_source: str, *, window_seconds: float = 30.0):
-    """TBD — remember a video stream (camera, screen, file). Planned per
-    SENSES.md: frames sample into a RAM ring buffer, the salience gate
-    (fornixdb.salience) commits event/heartbeat frames, each commit becomes a
-    `see`-shaped memory with a real event_time span; window_seconds is the
-    MAXIMUM window — boundaries cut early when something happens."""
+    """TBD at this surface — remember a video stream (camera, screen, file).
+    The LOOP CORE is real: `fornixdb.watchloop.run_watch` takes any
+    (timestamp, frame) iterator plus an embed callable and does the rest
+    (salience gate, keyframes on commit only, `see` rows with event-time
+    spans; window_seconds is the MAXIMUM window — boundaries cut early when
+    something happens). What remains TBD here is the stream-source adapter
+    layer that turns a source string into that frame iterator — camera /
+    screen / file adapters per Design/Watch_Loop_Implementation_Spec.md."""
     raise NotImplementedError(_TBD)
 
 

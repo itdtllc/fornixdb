@@ -5,6 +5,23 @@ versioning. While the project is pre-1.0 the public API may still evolve between
 minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
 active development branch and can change through the day.
 
+## [Unreleased]
+
+### Added
+- **The watch-loop core is real** (`fornixdb.watchloop.run_watch`) — P1 of
+  the watch() design: pure and injectable (no camera, no clock, no sleep),
+  it drives any adapter's `(timestamp, frame)` iterator through the salience
+  gate and turns each commit into a `see` memory with a real event-time
+  span. Frames that never commit never touch disk (bytes frames are written
+  under `keyframe_dir` only at commit time; path frames pass through);
+  windows cut at boundaries with `window_seconds` as the maximum; captions
+  come from an optional local captioner, else a recallable templated gist a
+  later dream pass can upgrade; gate lane (`embed(frame)`, fast, pre-file)
+  and latent lane (`ModalEmbedder`, committed keyframes only) are separate
+  on purpose. `see()` gained an optional `event_time_end` so a sight memory
+  can carry a span. `senses.watch()` still raises honestly — what remains is
+  the stream-source adapter layer (camera / screen / file).
+
 ## [0.6.0] - 2026-07-06
 
 ### Added
