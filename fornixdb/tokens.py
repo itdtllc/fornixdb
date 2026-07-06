@@ -78,9 +78,12 @@ def report(store) -> dict:
         "replaces the user re-explaining that history by hand, or the AI "
         "re-reading files / re-deriving past decisions — typically hundreds "
         "to thousands of tokens, every session, plus the answers it makes "
-        "possible at all ('what day did X happen'). The fixed cost is paid "
-        "once per session; trim it with leaner tool descriptions and a "
-        "shorter startup listing if prefill speed matters (local models).")
+        "possible at all ('what day did X happen'). The resident cost is "
+        "re-read by the host on every API request — as is whatever content "
+        "a recall replaces, so the comparison holds in either unit "
+        "(`tokens --billed` measures the re-read view from transcripts); "
+        "trim it with leaner tool descriptions and a shorter startup "
+        "listing if prefill speed matters (local models).")
     return out
 
 
@@ -90,7 +93,9 @@ def format_report(r: dict) -> str:
     lines = [
         f"Estimated token footprint ({r['rule_of_thumb']})",
         "",
-        "Fixed, once per session (in every prompt for most clients):",
+        "Resident surface — counted once here (context-space), but the host",
+        "re-sends it on EVERY API request (one request per tool call, 30-150+",
+        "per session). `fornixdb tokens --billed` measures that billed view:",
         f"  MCP tool schemas ({f['mcp_tool_schemas']['tools']}"
         f"/{f['mcp_tool_schemas'].get('of_defined', f['mcp_tool_schemas']['tools'])}"
         f" tools)  ~{f['mcp_tool_schemas']['tokens']:>5} tokens"

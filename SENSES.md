@@ -1,11 +1,14 @@
 # Senses — the multimodal design
 
-**Status: design, not implementation.** The entry points exist as honest stubs
-in [`fornixdb/senses.py`](fornixdb/senses.py) — `see` (images), `watch`
-(video/camera streams), `hear` (audio/microphone), `feel` (sensor streams) —
-and every one raises `NotImplementedError` today. This document is the
-architecture they will follow, published so integrators can see where the
-store is headed before it ships. Signatures may still move.
+**Status: the capture core is implemented; the live loops are next.**
+[`see`](fornixdb/senses.py) and `hear` work today for single artifacts (an
+image file, an audio clip): caption gist + optional modality vector +
+`source_ref` pointer, exactly the row shape below, with local models plugging
+in as callables (nothing is bundled). The salience gate ships as
+`fornixdb.salience` (pure, hardware-free, tested), and schema v10 adds the
+latent-lane `modal_embedding` table. `watch` and `feel` — the live camera /
+microphone / sensor loops that feed the gate — are still declared intent and
+raise `NotImplementedError` honestly. Signatures may still move.
 
 FornixDB is a human-like memory, and humans don't remember only words. The
 claim this design makes is narrow and testable: **adding senses to the store
@@ -56,9 +59,16 @@ sample's embedding against a moving average of recent ones and commit when
 the distance clears a per-modality threshold, with hysteresis so one event
 commits once rather than ten times a second. A heartbeat commit (e.g. every
 ten minutes of quiet) anchors the timeline cheaply — "nothing happened,
-here's proof." Audio adds voice-activity detection (speech goes to
-transcription) and sound-event confidence for the non-speech path; discrete
-sensors gate on change and need no threshold.
+here's proof." Discrete sensors gate on change and need no threshold.
+
+**Sound is meaning, not only words.** A crosswalk beep, a kettle, whistling,
+a dog at the door all carry meaning with zero speech in them — so the
+non-speech lane is the *required* one, never a fallback: every committed
+audio window gets a sound-scene caption ("crosswalk signal beeping, light
+traffic"), and when voice-activity detection finds speech, transcription runs
+*additionally* — the gist leads with the scene and quotes the words, the full
+transcript lands in detail. `hear` enforces this shape today: a transcript
+alone is rejected as an incomplete memory of a sound.
 
 **Stage 3 — ordinary store rows.** A committed snapshot is a normal episodic
 memory: the caption as **gist** (recalled first, like everything), the

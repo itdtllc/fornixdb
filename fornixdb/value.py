@@ -53,8 +53,14 @@ def _net(cost: dict, scan: dict) -> dict:
     Cost side is measured: the fixed integration surfaces plus the actual
     injected push blocks found in the transcripts. Savings side is the
     REDERIVE_TOKENS assumption band applied to the measured count of pushes
-    that were actually referenced downstream. Both context-space figures;
-    per-turn re-sends are mostly prompt-cached by the host."""
+    that were actually referenced downstream.
+
+    Both sides are CONTEXT-SPACE figures — each token counted once. The host
+    re-reads everything on every API request (token-turns), so a usage panel
+    will show numbers 30-150x larger than these; but that multiplier applies
+    to BOTH sides (re-derived content would sit in context and be re-read the
+    same way), so the net verdict's direction survives the unit change. For
+    the billed view itself, see `fornixdb tokens --billed`."""
     sess = scan["sessions"]
     fixed = cost["fixed_per_session"]["total_tokens"]
     push_ps = round(scan.get("injected_tokens", 0) / sess)
@@ -112,6 +118,10 @@ def format_report(r: dict) -> str:
                "re-explaining one referenced push replaces; printed, not measured",
                f"    net = use × assumption − cost; a true measured savings "
                "number is impossible (no without-memory session to compare).",
+               "    units: context-space, each token counted ONCE. Hosts re-read "
+               "context every API request, so usage panels show ~30-150x these "
+               "figures — on both sides equally (`fornixdb tokens --billed` "
+               "measures that view).",
                f"    not counted: {net['not_counted']}",
                ""]
     else:
@@ -122,11 +132,12 @@ def format_report(r: dict) -> str:
     out += ["How useful has FornixDB been?",
             f"  Store: {r.get('memories')} memories", ""]
 
-    out.append(f"  COST  ~ {fixed} tokens fixed/session"
+    out.append(f"  COST  ~ {fixed} tokens resident"
                + (f" ({schemas.get('tools')} MCP tool schemas)" if schemas else "")
+               + " — re-read by the host every request"
                + (f"; ~{recall_t}/recall" if recall_t is not None else "")
                + (f", ~{brief_t}/brief" if brief_t is not None else "")
-               + " — paid only when used.")
+               + " paid only when used.")
 
     reach = r.get("reach")
     if reach:

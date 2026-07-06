@@ -412,8 +412,17 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("usage", help="disk usage of EVERY FornixDB store on this "
                                  "machine (per AI + total)")
-    sub.add_parser("tokens", help="estimated prompt-token footprint of this "
-                                  "store's AI integration (cost vs savings)")
+    tkp = sub.add_parser("tokens", help="estimated prompt-token footprint of this "
+                                        "store's AI integration (cost vs savings)")
+    tkp.add_argument("--billed", action="store_true",
+                     help="measure the BILLED share instead: token-turns from the "
+                          "host's session transcripts (what usage panels attribute), "
+                          "not the once-counted context-space footprint")
+    tkp.add_argument("--transcripts",
+                     help="transcript .jsonl file or directory for --billed "
+                          "(default ~/.claude/projects)")
+    tkp.add_argument("--since-days", type=float,
+                     help="only transcripts modified in the last N days (--billed)")
     tlp = sub.add_parser("tools", help="list/enable/disable the MCP tools this "
                                        "store advertises (all on by default)")
     tlp.add_argument("action", nargs="?", default="list",
@@ -1192,8 +1201,13 @@ def _dispatch(p, args, store, stores) -> int:
                       "`config machine_budget_mb <MB> --shared` (or 'off')")
 
     elif args.cmd == "tokens":
-        from .tokens import format_report, report
-        r = report(store)
+        if args.billed:
+            from .billed import format_report, report
+            r = report(store, source=(args.transcripts or None),
+                       since_days=args.since_days)
+        else:
+            from .tokens import format_report, report
+            r = report(store)
         print(json.dumps(r, indent=2, default=str) if args.json
               else format_report(r))
 
