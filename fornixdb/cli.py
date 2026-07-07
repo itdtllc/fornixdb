@@ -410,6 +410,30 @@ def main(argv: list[str] | None = None) -> int:
     ng.add_argument("--dir", help="native memory directory to follow")
     ng.add_argument("--run", action="store_true", help="ingest now (any mode)")
 
+    flp = sub.add_parser("feel", help="proprioception: capture a sensor reading "
+                                      "as memory. No arg = the Mac's power/battery "
+                                      "state now; a string = that reading. --live "
+                                      "runs the change-gated loop.")
+    flp.add_argument("reading", nargs="?",
+                     help="a reading to feel (e.g. \"lid closed\"); omit to read "
+                          "the Mac battery via pmset")
+    flp.add_argument("--sensor", default="power",
+                     help="sensor name the memory is filed under (default: power)")
+    flp.add_argument("--live", action="store_true",
+                     help="watch the battery and commit on every state change "
+                          "(+ heartbeat); Ctrl-C stops cleanly")
+    flp.add_argument("--seconds", type=float, default=60.0,
+                     help="--live: how long to watch (default 60)")
+    flp.add_argument("--interval", type=float, default=5.0,
+                     help="--live: seconds between samples (default 5)")
+    flp.add_argument("--heartbeat", type=float, default=300.0,
+                     help="--live: commit a proof row after this much quiet "
+                          "(default 300; 0 disables)")
+    flp.add_argument("--percent-step", type=int, default=5,
+                     help="--live: bucket charge %% to this step so drift doesn't "
+                          "commit (default 5; 1 keeps every point)")
+    flp.add_argument("--project", help="file the memories under a project")
+
     sub.add_parser("usage", help="disk usage of EVERY FornixDB store on this "
                                  "machine (per AI + total)")
     tkp = sub.add_parser("tokens", help="estimated prompt-token footprint of this "
@@ -1180,6 +1204,65 @@ def _dispatch(p, args, store, stores) -> int:
                   "`candidates --discard <id>` or `--clear`):")
             for r in rows:
                 print(f"  [{r['id']}] {r['note'][:100]}")
+
+    elif args.cmd == "feel":
+        import subprocess
+
+        from . import senses
+
+        def _commit_line(mid, gist):
+            if args.json:
+                print(json.dumps({"id": mid, "gist": gist}))
+            else:
+                print(f"#{mid}  {gist}")
+
+        # A literal reading works on any platform; no arg falls back to the
+        # Mac battery adapter (pmset), which only exists on a Mac.
+        if not args.live and args.reading is not None:
+            gist = senses.feel_gist(args.sensor, args.reading)
+            mid = senses.feel(store, args.reading, sensor=args.sensor,
+                              gist=gist, project=args.project)
+            _commit_line(mid, gist)
+            return 0
+
+        from .adapters import mac_proprioception as mp
+        try:
+            if not args.live:
+                # drop unknown (None) fields so the gist stays clean
+                reading = {k: v for k, v in mp.read_battery().items()
+                           if v is not None}
+                gist = senses.feel_gist(args.sensor, reading)
+                mid = senses.feel(store, reading, sensor=args.sensor,
+                                  gist=gist, project=args.project)
+                _commit_line(mid, gist)
+                return 0
+        except (FileNotFoundError, OSError, subprocess.SubprocessError) as e:
+            p.error(f"feel: could not read the battery ({e}) — on a non-Mac, "
+                    f"pass a reading string: fornixdb feel \"...\" --sensor NAME")
+
+        from . import feelloop
+        seen: list = []
+
+        def _on(ev):
+            seen.append(ev)
+            print(f"  #{ev.memory_id:<5} {ev.reason:<9} {ev.gist}")
+
+        dbrow = store.conn.execute("PRAGMA database_list").fetchone()
+        dbfile = (dbrow[2] if dbrow and dbrow[2] else "in-memory store")
+        print(f"feel: watching '{args.sensor}' for {args.seconds:.0f}s "
+              f"(sampling every {args.interval:.0f}s; Ctrl-C to stop). "
+              f"Committing to {dbfile}")
+        frames = mp.battery_frames(interval_seconds=args.interval,
+                                   percent_step=args.percent_step)
+        try:
+            feelloop.run_feel(store, frames, sensor=args.sensor,
+                              heartbeat_seconds=args.heartbeat,
+                              max_seconds=args.seconds, project=args.project,
+                              on_commit=_on)
+        except KeyboardInterrupt:
+            print()
+        print(f"{len(seen)} memories committed.")
+        return 0
 
     elif args.cmd == "usage":
         from .budget import machine_usage

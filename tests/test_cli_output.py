@@ -57,6 +57,27 @@ class TestCliMaxChars(unittest.TestCase):
         self.assertIn("more — raise --max-chars", capped)
 
 
+class TestFeelCli(unittest.TestCase):
+    """`fornixdb feel <reading>` — the literal-reading path is platform-neutral
+    (no pmset), so it runs everywhere; the battery path is Mac-only by design."""
+
+    def _run(self, *argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = main(list(argv))
+        self.assertEqual(rc, 0)
+        return buf.getvalue()
+
+    def test_literal_reading_becomes_a_feel_memory(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = str(Path(d) / "m.db")
+            out = self._run("--db", db, "--no-shared", "feel",
+                            "lid closed", "--sensor", "lid")
+            self.assertIn("feel[lid]: lid closed", out)
+            found = self._run("--db", db, "--no-shared", "recall", "lid closed")
+        self.assertIn("feel[lid]: lid closed", found)
+
+
 DOC = """# Top
 
 Top body.

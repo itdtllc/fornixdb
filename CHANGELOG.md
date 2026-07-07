@@ -21,6 +21,30 @@ active development branch and can change through the day.
   on purpose. `see()` gained an optional `event_time_end` so a sight memory
   can carry a span. `senses.watch()` still raises honestly — what remains is
   the stream-source adapter layer (camera / screen / file).
+- **`senses.feel()` — machine proprioception, no robot required.** Remember
+  one sensor reading (power source, charge, thermal, lid) as an ordinary
+  episodic memory: a reading is a dict of named values (or a plain string),
+  the gist is a templated state line, and NO embedder is needed — the gist
+  lane alone makes it recallable ("when did the laptop go on battery?"). The
+  full dict lands in `detail` as JSON; the source is `sensor:<name>`. Robot
+  endpoints (force, contact, IMU) are the same pattern, later adding a
+  sensor-domain `ModalEmbedder` for the latent lane.
+- **The feel-loop core is real** (`fornixdb.feelloop.run_feel`) — the
+  proprioception twin of the watch loop: pure and injectable (no sensor, no
+  clock, no sleep), it drives any adapter's `(timestamp, reading)` iterator
+  through a plain field-diff gate and turns each commit into a `feel` memory.
+  It commits the first reading, any reading whose watched fields change, and
+  a heartbeat after a quiet stretch; `ignore_fields` drops noisy drift (a
+  minute-to-minute `percent`) from change detection while still recording it.
+  Ships with a reference Mac adapter (`fornixdb.adapters.mac_proprioception`)
+  that reads power/battery state via `pmset` — pure `parse_batt` core plus a
+  thin subprocess wrapper and a coarsened frame generator.
+- **`fornixdb feel` — proprioception from the command line.** `fornixdb feel`
+  captures the Mac's power/battery state now; `fornixdb feel "lid closed"
+  --sensor lid` captures any literal reading (platform-neutral); `fornixdb
+  feel --live [--seconds N]` runs the change-gated loop, printing each commit
+  and stopping cleanly on Ctrl-C. `examples/feel_demo.py` shows the same
+  machinery a level down against a throwaway store.
 
 ## [0.6.0] - 2026-07-06
 

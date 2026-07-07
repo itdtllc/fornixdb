@@ -6,8 +6,9 @@ audio clip), and `feel` is IMPLEMENTED for single sensor readings (machine
 proprioception first — no robot required). The live loops live beside this
 surface: vision's core is `fornixdb.watchloop` (stream-source adapters
 pending, so `watch` here still raises honestly); proprioception's
-change-gated loop is the next build. The pattern is the one the text path proved and
-SENSES.md publishes:
+change-gated loop is `fornixdb.feelloop` (with a Mac power adapter in
+`fornixdb.adapters.mac_proprioception`). The pattern is the one the text path
+proved and SENSES.md publishes:
 
   gist        a one-line caption; recalled first like any other memory, and
               embedded through the ordinary text path — so recall by meaning
@@ -40,7 +41,7 @@ from typing import Callable, Protocol
 from .salience import cosine
 from .vectors import from_blob, to_blob
 
-__all__ = ["ModalEmbedder", "see", "hear", "watch", "feel",
+__all__ = ["ModalEmbedder", "see", "hear", "watch", "feel", "feel_gist",
            "modal_vector", "modal_neighbors"]
 
 _TBD = ("TBD — this sense's live capture loop is declared intent, not yet "
@@ -216,7 +217,10 @@ def watch(store, stream_source: str, *, window_seconds: float = 30.0):
     raise NotImplementedError(_TBD)
 
 
-def _feel_gist(sensor: str, reading) -> str:
+def feel_gist(sensor: str, reading) -> str:
+    """The templated one-line gist for a proprioceptive reading — the recall
+    lane feel() leans on. Public so the feel-loop (fornixdb.feelloop) builds
+    the same gist it stores."""
     if isinstance(reading, dict):
         state = ", ".join(f"{k}={v}" for k, v in reading.items())
     else:
@@ -234,11 +238,11 @@ def feel(store, reading, *, sensor: str, gist: str | None = None,
     templated state line unless you pass one, and NO embedder is required:
     the gist lane alone makes it recallable ("when did the laptop go on
     battery?"). Robot endpoints (force, contact, IMU) are the same pattern,
-    later adding a sensor-domain ModalEmbedder for the latent lane. A
-    change-gated live loop is the next build (see the watch spec)."""
+    later adding a sensor-domain ModalEmbedder for the latent lane. The
+    change-gated live loop over a reading stream is `fornixdb.feelloop`."""
     detail = (json.dumps(reading, sort_keys=True, default=str)
               if isinstance(reading, dict) else None)
-    return _percept(store, (gist or _feel_gist(sensor, reading)).strip(),
+    return _percept(store, (gist or feel_gist(sensor, reading)).strip(),
                     sense="feel", artifact=f"sensor:{sensor}", detail=detail,
                     event_time=event_time, event_time_end=event_time_end,
                     topics=topics, project=project, session_id=session_id,
