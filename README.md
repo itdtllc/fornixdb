@@ -159,14 +159,19 @@ embeddings in the same pluggable slot the text model uses, artifacts on
 disk as `source_ref`, streams as episodic time spans, and decay as a
 fidelity ladder from vivid to verbal.
 [`fornixdb/senses.py`](fornixdb/senses.py) holds the entry points: `see`
-(images) and `hear` (audio) are implemented for single artifacts today —
-caption gist, optional modality vector, pointer-not-blob — with local
-models plugging in as callables; the salience gate ships hardware-free as
-`fornixdb.salience`. `watch` (live camera/screen streams) and `feel`
-(sensor streams) are the loops still to come, raising NotImplementedError
-honestly until they ship. Sound is treated as meaning, not only words: a
-sound-scene caption is the required lane, a transcript is the additional
-one.
+(images), `hear` (audio), and `feel` (sensor readings — machine
+proprioception, no robot required) are implemented for single artifacts
+today — caption/state gist, optional modality vector, pointer-not-blob —
+with local models plugging in as callables; the salience gate ships
+hardware-free as `fornixdb.salience`. The live loops are arriving: `watch`'s
+core ([`fornixdb.watchloop`](fornixdb/watchloop.py)) drives any frame stream
+through the gate into `see` memories with event-time spans (only the
+stream-source camera/screen adapters remain, so `senses.watch` still raises
+honestly), and `feel`'s change-gated loop
+([`fornixdb.feelloop`](fornixdb/feelloop.py)) is live with a reference Mac
+power adapter and a `fornixdb feel [--live]` command. Sound is treated as
+meaning, not only words: a sound-scene caption is the required lane, a
+transcript is the additional one.
 
 ## Layout
 
