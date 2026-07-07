@@ -108,8 +108,8 @@ def config_overview(store) -> list[tuple[str, str]]:
 # run shows what each option *would* be if never touched. Keys MUST stay in step
 # with config_overview labels (test_doctor enforces full coverage).
 CONFIG_DEFAULTS: dict[str, str] = {
-    "operating_level": "L4 (L5 is built but ships off until its usefulness "
-                       "gate is passed)",
+    "operating_level": "L5 — Parallel multi-domain activation (fresh-store "
+                       "default since 0.5.0)",
     "capture_mode": "suggest",
     "ingest_mode": "passive",
     "session_capture": "on",
