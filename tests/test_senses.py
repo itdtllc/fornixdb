@@ -1,6 +1,7 @@
 """see/hear are real for single artifacts (gist lane + latent lane +
 source_ref pointer); sound's non-speech lane is REQUIRED (a beep means
-something); watch/feel remain honest TBD stubs."""
+something); watch and feel are live loops (watch delegates to watchloop via the
+Mac adapters, feel to feelloop)."""
 
 import tempfile
 import unittest
@@ -144,12 +145,13 @@ class TestLatentLane(SensesBase):
         self.assertEqual(senses.modal_neighbors(self.s, mid), [])
 
 
-class TestStreamsStillHonestStubs(unittest.TestCase):
-    def test_watch_surface_still_raises_tbd(self):
+class TestStreamsAreLiveLoops(unittest.TestCase):
+    def test_watch_resolves_the_source_and_rejects_a_bad_one(self):
+        # watch() is no longer a stub: it resolves the source string through the
+        # Mac adapters (no cv2/mlx import for a bad path) and errors honestly.
         s = MemoryStore(conn=connect(":memory:"))
-        with self.assertRaises(NotImplementedError) as ctx:
-            senses.watch(s, "camera:0")
-        self.assertIn("TBD", str(ctx.exception))
+        with self.assertRaises(FileNotFoundError):
+            senses.watch(s, "/no/such/clip.mov", max_seconds=1)
         s.close()
 
     def test_feel_remembers_a_reading_no_embedder_needed(self):

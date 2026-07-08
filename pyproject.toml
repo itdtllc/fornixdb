@@ -20,6 +20,10 @@ dependencies = ["model2vec"]
 # kept for back-compat with `pip install fornixdb[vectors]`; now a no-op since
 # model2vec is a default dependency.
 vectors = ["model2vec"]
+# the watch() vision loop's Mac adapters (fornixdb.adapters.mac_camera /
+# mac_vision). All imported LAZILY inside the adapters — the core and the full
+# test suite stay stdlib-only, so this is only needed to run live capture.
+mac = ["opencv-python", "pillow", "mlx", "huggingface-hub", "numpy"]
 
 [project.scripts]
 fornixdb = "fornixdb.cli:main"

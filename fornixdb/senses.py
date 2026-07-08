@@ -4,8 +4,10 @@ FornixDB is a human-like memory, and humans don't remember only words.
 `see` and `hear` are IMPLEMENTED for single artifacts (an image file, an
 audio clip), and `feel` is IMPLEMENTED for single sensor readings (machine
 proprioception first — no robot required). The live loops live beside this
-surface: vision's core is `fornixdb.watchloop` (stream-source adapters
-pending, so `watch` here still raises honestly); proprioception's
+surface: `watch` drives vision's loop (`fornixdb.watchloop`) over a stream,
+resolving a source string ("camera" / "screen" / a video file) through the Mac
+adapters (`fornixdb.adapters.mac_camera` frame sources +
+`fornixdb.adapters.mac_vision` MLX image embedder); proprioception's
 change-gated loop is `fornixdb.feelloop` (with a Mac power adapter in
 `fornixdb.adapters.mac_proprioception`). The pattern is the one the text path
 proved and SENSES.md publishes:
@@ -43,10 +45,6 @@ from .vectors import from_blob, to_blob
 
 __all__ = ["ModalEmbedder", "see", "hear", "watch", "feel", "feel_gist",
            "modal_vector", "modal_neighbors"]
-
-_TBD = ("TBD — this sense's live capture loop is declared intent, not yet "
-        "implemented. See SENSES.md for the design (buffer -> salience gate "
-        "-> store); `see` and `hear` already work for single artifacts.")
 
 
 class ModalEmbedder(Protocol):
@@ -205,16 +203,61 @@ def hear(store, audio_path: str, *, sound_caption: str | None = None,
 
 # ---------------------------------------------------- streams (still TBD)
 
-def watch(store, stream_source: str, *, window_seconds: float = 30.0):
-    """TBD at this surface — remember a video stream (camera, screen, file).
-    The LOOP CORE is real: `fornixdb.watchloop.run_watch` takes any
-    (timestamp, frame) iterator plus an embed callable and does the rest
-    (salience gate, keyframes on commit only, `see` rows with event-time
-    spans; window_seconds is the MAXIMUM window — boundaries cut early when
-    something happens). What remains TBD here is the stream-source adapter
-    layer that turns a source string into that frame iterator — camera /
-    screen / file adapters per Design/Watch_Loop_Implementation_Spec.md."""
-    raise NotImplementedError(_TBD)
+# The salience-gate commit threshold for the vision loop, as a CLIP cosine
+# distance. Field-tuned 2026-07-08 (design Open Decision 4): on a live camera at
+# 2 Hz, ongoing motion sits ~0.12 and deliberate scene changes peak ~0.22–0.28,
+# so 0.20 fires on real changes while ignoring fidget and sensor noise (floor
+# ~0.005–0.05). Camera+CLIP specific — the generic SalienceGate default stays
+# conservative; override per-run with `threshold=` (CLI `--threshold`).
+WATCH_DEFAULT_THRESHOLD = 0.20
+
+
+def watch(store, stream_source: str, *, rate_hz: float | None = None,
+          window_seconds: float = 30.0,
+          embedder: "ModalEmbedder | None" = None,
+          captioner: Callable[[str], str] | None = None,
+          gate=None, threshold: float | None = None,
+          keyframe_dir: str | None = None,
+          max_seconds: float | None = None, max_commits: int | None = None,
+          topics: list[str] | None = None, project: str | None = None,
+          session_id: str | None = None,
+          on_commit: Callable[[object], None] | None = None) -> list:
+    """Remember a video stream — camera, screen, or a video file. Resolves
+    `stream_source` ("camera" | "screen" | a file path) to a frame iterator via
+    the Mac adapters and drives `fornixdb.watchloop.run_watch`: every frame is
+    embedded (MLX image tower by default; pass `embedder` to override), the
+    salience gate decides commit/hold, and each commit becomes a `see` memory
+    with an event-time span — `window_seconds` is the MAXIMUM window, boundaries
+    cut early when something happens. The gate commits a frame when its distance
+    from the recent scene exceeds `threshold` (default `WATCH_DEFAULT_THRESHOLD`,
+    field-tuned for camera+CLIP); pass `gate=` to fully override the gate.
+    Committed keyframes only are written under
+    `keyframe_dir` (default `<store_dir>/senses/watch`). Captions are templated
+    at commit unless you pass a `captioner` (a later dream pass fills real ones
+    — keeping the hot path model-free). Returns the committed WatchEvents; stops
+    on `max_seconds`, `max_commits`, source exhaustion, or KeyboardInterrupt."""
+    from . import watchloop
+    from .adapters import mac_camera, mac_vision
+
+    frames, source_label = mac_camera.open_stream(stream_source, rate_hz=rate_hz)
+    emb = embedder if embedder is not None else mac_vision.clip_embedder()
+
+    if gate is None:
+        from .salience import SalienceGate
+        thr = threshold if threshold is not None else WATCH_DEFAULT_THRESHOLD
+        gate = SalienceGate(threshold=thr)
+
+    if keyframe_dir is None:
+        row = store.conn.execute("PRAGMA database_list").fetchone()
+        base = Path(row[2]).parent if row and row[2] else Path.cwd()
+        keyframe_dir = str(base / "senses" / "watch")
+
+    return watchloop.run_watch(
+        store, frames, embed=emb.embed_image, modal_embedder=emb,
+        captioner=captioner, gate=gate, window_seconds=window_seconds,
+        keyframe_dir=keyframe_dir, source_label=source_label,
+        max_seconds=max_seconds, max_commits=max_commits, topics=topics,
+        project=project, session_id=session_id, on_commit=on_commit)
 
 
 def feel_gist(sensor: str, reading) -> str:
