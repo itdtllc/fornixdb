@@ -7,6 +7,8 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-08
+
 ### Added
 - **The watch loop has Mac stream adapters — `senses.watch()` now runs.** P2
   of the watch() design. `fornixdb.adapters.mac_camera` yields
