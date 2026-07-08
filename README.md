@@ -163,13 +163,15 @@ fidelity ladder from vivid to verbal.
 proprioception, no robot required) are implemented for single artifacts
 today — caption/state gist, optional modality vector, pointer-not-blob —
 with local models plugging in as callables; the salience gate ships
-hardware-free as `fornixdb.salience`. The live loops are arriving: `watch`'s
-core ([`fornixdb.watchloop`](fornixdb/watchloop.py)) drives any frame stream
-through the gate into `see` memories with event-time spans (only the
-stream-source camera/screen adapters remain, so `senses.watch` still raises
-honestly), and `feel`'s change-gated loop
-([`fornixdb.feelloop`](fornixdb/feelloop.py)) is live with a reference Mac
-power adapter and a `fornixdb feel [--live]` command. Sound is treated as
+hardware-free as `fornixdb.salience`. The live loops are here: `watch`
+([`fornixdb.watchloop`](fornixdb/watchloop.py)) drives a camera, the screen, or
+a video file through the gate into `see` memories with event-time spans — the
+Mac adapters ([`fornixdb.adapters.mac_camera`](fornixdb/adapters/mac_camera.py)
+frame sources + an MLX image embedder) and a `fornixdb watch` command are live
+(`pip install 'fornixdb[mac]'`) — and `feel`'s change-gated loop
+([`fornixdb.feelloop`](fornixdb/feelloop.py)) runs with a reference Mac power
+adapter and a `fornixdb feel [--live]` command. Capture is always
+owner-started: no always-on sampling, no watch/feel MCP tool. Sound is treated as
 meaning, not only words: a sound-scene caption is the required lane, a
 transcript is the additional one.
 

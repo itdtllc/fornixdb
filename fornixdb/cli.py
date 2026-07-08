@@ -434,6 +434,27 @@ def main(argv: list[str] | None = None) -> int:
                           "commit (default 5; 1 keeps every point)")
     flp.add_argument("--project", help="file the memories under a project")
 
+    wtp = sub.add_parser("watch", help="vision: watch a stream (screen / camera "
+                                       "/ video file) and commit only salient "
+                                       "frames as memories. Owner-started; "
+                                       "Ctrl-C stops cleanly.")
+    wtp.add_argument("--source", default="screen",
+                     help="screen (default, zero-permission) | camera (prompts "
+                          "for camera access) | a video-file path")
+    wtp.add_argument("--seconds", type=float, default=60.0,
+                     help="how long to watch (default 60)")
+    wtp.add_argument("--rate", type=float,
+                     help="sampling rate in Hz (default 2 camera/file, 1 screen)")
+    wtp.add_argument("--window", type=float, default=30.0,
+                     help="MAX event-time window per memory in seconds "
+                          "(default 30; a scene change cuts the window earlier)")
+    wtp.add_argument("--threshold", type=float,
+                     help="salience-gate commit distance (default 0.20, "
+                          "field-tuned for camera+CLIP; lower = more sensitive)")
+    wtp.add_argument("--max-commits", type=int,
+                     help="stop after this many committed memories")
+    wtp.add_argument("--project", help="file the memories under a project")
+
     sub.add_parser("usage", help="disk usage of EVERY FornixDB store on this "
                                  "machine (per AI + total)")
     tkp = sub.add_parser("tokens", help="estimated prompt-token footprint of this "
@@ -1261,6 +1282,40 @@ def _dispatch(p, args, store, stores) -> int:
                               on_commit=_on)
         except KeyboardInterrupt:
             print()
+        print(f"{len(seen)} memories committed.")
+        return 0
+
+    elif args.cmd == "watch":
+        from . import senses
+
+        seen = []
+
+        def _on(ev):
+            seen.append(ev)
+            if args.json:
+                print(json.dumps({"id": ev.memory_id, "reason": ev.reason,
+                                  "gist": ev.gist}))
+            else:
+                span = f"{ev.t_start:.1f}->{ev.t_end:.1f}s"
+                print(f"  #{ev.memory_id:<5} {ev.reason:<9} {span:<16} {ev.gist}")
+
+        if not args.json:
+            dbrow = store.conn.execute("PRAGMA database_list").fetchone()
+            dbfile = dbrow[2] if dbrow and dbrow[2] else "in-memory store"
+            print(f"watch: source '{args.source}' for {args.seconds:.0f}s "
+                  f"(Ctrl-C to stop). Committing to {dbfile}")
+            if args.source == "camera":
+                print("  camera: macOS prompts for permission on first open; "
+                      "the green light is on while capturing.")
+        try:
+            senses.watch(store, args.source, rate_hz=args.rate,
+                         window_seconds=args.window, threshold=args.threshold,
+                         max_seconds=args.seconds, max_commits=args.max_commits,
+                         project=args.project, on_commit=_on)
+        except KeyboardInterrupt:
+            print()
+        except (ImportError, FileNotFoundError, RuntimeError) as e:
+            p.error(f"watch: {e}")
         print(f"{len(seen)} memories committed.")
         return 0
 

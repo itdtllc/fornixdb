@@ -5,6 +5,37 @@ versioning. While the project is pre-1.0 the public API may still evolve between
 minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
 active development branch and can change through the day.
 
+## [Unreleased]
+
+### Added
+- **The watch loop has Mac stream adapters — `senses.watch()` now runs.** P2
+  of the watch() design. `fornixdb.adapters.mac_camera` yields
+  `(timestamp, frame)` pairs from the webcam (`cv2`), the screen
+  (`screencapture`, zero-dependency), or a video file; `fornixdb.adapters.mac_vision`
+  embeds each frame with a CLIP image tower on MLX (Apple-silicon-native — the
+  same vectors feed both the salience gate's hot path and the latent lane).
+  `senses.watch(store, "camera"|"screen"|<file>)` resolves the source, builds
+  the embedder, and drives `watchloop.run_watch`; committed keyframes only land
+  under `<store_dir>/senses/watch`. Everything Mac-specific imports lazily, so
+  the core and the whole test suite stay stdlib-only.
+- **`fornixdb watch` CLI** — `fornixdb watch --source screen|camera|<file>
+  [--seconds N] [--rate HZ] [--window S] [--threshold D] [--max-commits N]
+  [--project P]` prints each committed frame as it lands
+  (`#id  reason  span  gist`) and stops cleanly on Ctrl-C. Owner-started only —
+  no watch MCP tool, no always-on capture, and the default source is `screen`
+  so a bare invocation never opens the camera. A frame commits when its CLIP
+  distance from the recent scene exceeds the salience threshold (default
+  `0.20`, field-tuned for camera+CLIP; `--threshold` overrides). Captions are
+  templated at commit (a dream pass fills real ones later — the hot path stays
+  model-free).
+- **Optional `[mac]` extras** — `pip install 'fornixdb[mac]'` adds the
+  camera/embedder dependencies (`opencv-python`, `pillow`, `mlx`,
+  `huggingface-hub`, `numpy`), all imported lazily inside the adapters only.
+  The watch embedder is a standard CLIP image tower on MLX: the CLIP code is
+  vendored from Apple's mlx-examples (MIT), and weights are pulled once from
+  the permissively licensed `mlx-community` repos (Apache-2.0). No PyPI package
+  in the extra pulls in a heavy tree, and nothing is GPL or unlicensed.
+
 ## [0.7.0] - 2026-07-07
 
 ### Added

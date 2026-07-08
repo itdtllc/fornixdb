@@ -1,14 +1,18 @@
 # Senses — the multimodal design
 
-**Status: the capture core is implemented; the live loops are next.**
+**Status: the capture core and two live loops are implemented.**
 [`see`](fornixdb/senses.py) and `hear` work today for single artifacts (an
 image file, an audio clip): caption gist + optional modality vector +
 `source_ref` pointer, exactly the row shape below, with local models plugging
 in as callables (nothing is bundled). The salience gate ships as
 `fornixdb.salience` (pure, hardware-free, tested), and schema v10 adds the
-latent-lane `modal_embedding` table. `watch` and `feel` — the live camera /
-microphone / sensor loops that feed the gate — are still declared intent and
-raise `NotImplementedError` honestly. Signatures may still move.
+latent-lane `modal_embedding` table. Two of the live loops are running:
+`watch` ([`fornixdb.watchloop`](fornixdb/watchloop.py) + the Mac camera/screen/
+file adapters and the `fornixdb watch` command) and `feel`
+([`fornixdb.feelloop`](fornixdb/feelloop.py) + a Mac power adapter and
+`fornixdb feel --live`). The audio loop that feeds `hear` is still declared
+intent. Capture is always owner-started — no always-on sampling. Signatures
+may still move.
 
 FornixDB is a human-like memory, and humans don't remember only words. The
 claim this design makes is narrow and testable: **adding senses to the store
