@@ -6,6 +6,7 @@ Mac adapters, feel to feelloop)."""
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from fornixdb import senses
 from fornixdb.core import MemoryStore
@@ -143,6 +144,63 @@ class TestLatentLane(SensesBase):
     def test_no_vector_means_no_neighbors_not_an_error(self):
         mid = senses.see(self.s, self._artifact("plain.jpg"), caption="plain")
         self.assertEqual(senses.modal_neighbors(self.s, mid), [])
+
+
+class TestGlance(SensesBase):
+    """glance(): look once, right now — synchronous, gate-free, ephemeral by
+    default. The camera is faked at open_stream; the captioner is a stub."""
+
+    def _fake_camera(self, *payloads, label="camera"):
+        def gen():
+            for i, p in enumerate(payloads):
+                yield float(i), p
+        return mock.patch("fornixdb.adapters.mac_camera.open_stream",
+                          return_value=(gen(), label))
+
+    def _count(self):
+        return self.s.conn.execute("SELECT COUNT(*) FROM memory").fetchone()[0]
+
+    def test_returns_caption_and_leaves_nothing_by_default(self):
+        with self._fake_camera(b"\xff\xd8one"):
+            cap = senses.glance(self.s, "camera",
+                                lambda p: "an older man in a chair",
+                                keyframe_dir=str(self.dir))
+        self.assertEqual(cap, "an older man in a chair")
+        self.assertEqual(self._count(), 0)                    # ephemeral: no memory
+        self.assertEqual(list(self.dir.glob("*.jpg")), [])    # no still lingers
+
+    def test_remember_stores_the_words_and_drops_the_still(self):
+        with self._fake_camera(b"\xff\xd8one"):
+            senses.glance(self.s, "camera", lambda p: "a lit room",
+                          remember=True, keyframe_dir=str(self.dir))
+        gist, source, ref = self.s.conn.execute(
+            "SELECT gist, source, source_ref FROM memory").fetchone()
+        self.assertEqual(gist, "a lit room")
+        self.assertEqual(source, "senses:sight")
+        self.assertIsNone(ref)                                # still dropped
+        self.assertEqual(list(self.dir.glob("*.jpg")), [])
+
+    def test_keep_keyframe_retains_file_and_ref(self):
+        with self._fake_camera(b"\xff\xd8one"):
+            senses.glance(self.s, "camera", lambda p: "kept view",
+                          remember=True, keep_keyframe=True,
+                          keyframe_dir=str(self.dir))
+        ref = self.s.conn.execute("SELECT source_ref FROM memory").fetchone()[0]
+        self.assertTrue(ref and Path(ref).is_file())
+
+    def test_empty_caption_stores_nothing_even_if_remember(self):
+        with self._fake_camera(b"\xff\xd8one"):
+            cap = senses.glance(self.s, "camera", lambda p: "   ",
+                                remember=True, keyframe_dir=str(self.dir))
+        self.assertEqual(cap, "")
+        self.assertEqual(self._count(), 0)                    # no empty-gist memory
+        self.assertEqual(list(self.dir.glob("*.jpg")), [])
+
+    def test_no_frame_is_an_honest_error(self):
+        with self._fake_camera():                             # camera yields nothing
+            with self.assertRaises(RuntimeError):
+                senses.glance(self.s, "camera", lambda p: "x",
+                              keyframe_dir=str(self.dir))
 
 
 class TestStreamsAreLiveLoops(unittest.TestCase):

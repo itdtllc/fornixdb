@@ -7,6 +7,28 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-07-09
+
+### Added
+- **Look once, right now — `senses.glance` + `fornixdb look`.** A synchronous,
+  gate-free counterpart to `watch()`: grab the CURRENT frame from a source
+  ("camera" / "camera:N" / "screen" / a video path), caption it immediately with
+  a local VLM, and return the sentence — the answer to "what do you see right
+  now?". Unlike the watch loop it never waits for a salient scene change, so an
+  assistant asked on demand describes the moment of asking, not the last thing
+  that crossed the gate. Ephemeral by default (caption the frame, delete the
+  still, write nothing); `remember=True` records it as a `see` memory and, like
+  a live watch commit, drops the still to the `vector + gist` rung unless
+  `keep_keyframe`. CLI: `fornixdb look [--source S] [--model ID] [--remember]
+  [--keep-keyframe]`.
+
+### Fixed
+- **`watch` rejects `drop_keyframe_after_commit` without a captioner.** The
+  combination stranded a placeholder the dream pass could never fulfil (the
+  still is gone, but only a templated gist was written). `run_watch` now raises
+  `ValueError` instead of silently stranding it — the two are only coherent
+  together (caption inline, then drop).
+
 ## [0.8.0] - 2026-07-09
 
 ### Added

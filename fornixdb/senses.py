@@ -270,6 +270,71 @@ def watch(store, stream_source: str, *, rate_hz: float | None = None,
         on_commit=on_commit)
 
 
+def glance(store, source: str, captioner: Callable[[str], str], *,
+           embedder: "ModalEmbedder | None" = None,
+           remember: bool = False, keep_keyframe: bool = False,
+           keyframe_dir: str | None = None, rate_hz: float | None = None,
+           topics: list[str] | None = None, project: str | None = None,
+           session_id: str | None = None,
+           event_time: str | None = None) -> str:
+    """Look once, right now — the answer to "what do you see?".
+
+    Grabs the CURRENT frame from `source` ("camera" | "camera:N" | "screen" | a
+    video path) and captions it synchronously with `captioner` (a local VLM
+    `(path) -> str`). Unlike `watch()`, there is NO salience gate and no waiting
+    for a scene change: it always describes this instant, so a robot/assistant
+    asked on demand answers about the moment of asking — not the last thing that
+    happened to cross the gate. Returns the caption sentence.
+
+    Ephemeral by default (`remember=False`): the frame is captioned and the
+    still deleted, nothing is written to the store — a pure perception query that
+    won't clutter the memory the continuous `watch()` loop is already curating.
+    Pass `remember=True` to also record it as a `see` memory; `keep_keyframe`
+    then leaves the still on disk (default: caption, store the words, drop the
+    still via the fidelity ladder, exactly like a live watch commit)."""
+    from . import watchloop
+    from .adapters import mac_camera
+
+    # count=1: grab a single (already warm-read) frame, then the generator ends
+    # and releases the source immediately — no lingering camera light.
+    frames, source_label = mac_camera.open_stream(source, rate_hz=rate_hz,
+                                                  count=1)
+    try:
+        first = next(frames, None)
+    finally:
+        closer = getattr(frames, "close", None)
+        if callable(closer):
+            closer()
+    if first is None:
+        raise RuntimeError(
+            f"glance: {source_label} produced no frame — is the camera free and "
+            "not covered? (a covered/occluded camera yields nothing usable)")
+    t, frame = first
+
+    if keyframe_dir is None:
+        row = store.conn.execute("PRAGMA database_list").fetchone()
+        base = Path(row[2]).parent if row and row[2] else Path.cwd()
+        keyframe_dir = str(base / "senses" / "glance")
+    keyframe = watchloop._persist(frame, keyframe_dir, session_id, t)
+
+    try:
+        caption = (captioner(keyframe) or "").strip()
+        if remember and caption:
+            mid = see(store, keyframe, caption=caption, embedder=embedder,
+                      event_time=event_time, topics=topics, project=project,
+                      session_id=session_id)
+            if not keep_keyframe:
+                watchloop._drop_keyframe(store, mid, keyframe)  # words survive
+        return caption
+    finally:
+        # The still lingers only if the caller asked to keep it. When remembered
+        # without keep, _drop_keyframe already unlinked (and nulled source_ref);
+        # this second unlink is then a harmless no-op. When not remembered, this
+        # is the only cleanup — an ephemeral glance leaves nothing on disk.
+        if not keep_keyframe:
+            Path(keyframe).unlink(missing_ok=True)
+
+
 def feel_gist(sensor: str, reading) -> str:
     """The templated one-line gist for a proprioceptive reading — the recall
     lane feel() leans on. Public so the feel-loop (fornixdb.feelloop) builds

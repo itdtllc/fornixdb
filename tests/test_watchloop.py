@@ -195,6 +195,12 @@ class TestLiveControls(WatchBase):
         evs = self.run_watch(frames((0.0, A)))
         self.assertTrue(Path(evs[0].keyframe).is_file())     # default: no drop
 
+    def test_drop_without_captioner_is_rejected(self):
+        # Dropping the still while writing only a placeholder would strand a row
+        # the dream pass can never caption — reject the incoherent combination.
+        with self.assertRaises(ValueError):
+            self.run_watch(frames((0.0, A)), drop_keyframe_after_commit=True)
+
     def test_stopping_closes_the_frame_generator(self):
         released = []
         def gen():

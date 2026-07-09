@@ -241,5 +241,44 @@ class TestWatchCli(unittest.TestCase):
         self.assertIn("watch[screen]: scene change", found)
 
 
+class TestLookCli(unittest.TestCase):
+    """`fornixdb look` — one synchronous glance, camera + VLM faked."""
+
+    def _run(self, *argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = main(list(argv))
+        self.assertEqual(rc, 0)
+        return buf.getvalue()
+
+    def _faked(self, caption):
+        return (mock.patch.object(
+                    mac_camera, "open_stream",
+                    return_value=(iter([(0.0, b"AAAA")]), "camera")),
+                mock.patch.object(mac_vision, "vlm_captioner",
+                                  return_value=lambda p: caption))
+
+    def test_prints_the_caption_and_remembers_nothing_by_default(self):
+        cam, vlm = self._faked("an older man in a chair")
+        with tempfile.TemporaryDirectory() as d:
+            db = str(Path(d) / "m.db")
+            with cam, vlm:
+                out = self._run("--db", db, "--no-shared", "look",
+                                "--source", "camera")
+            self.assertIn("an older man in a chair", out)
+            found = self._run("--db", db, "--no-shared", "recall", "older man")
+        self.assertNotIn("an older man in a chair", found)   # ephemeral
+
+    def test_remember_stores_a_recallable_see_memory(self):
+        cam, vlm = self._faked("a red mug on the desk")
+        with tempfile.TemporaryDirectory() as d:
+            db = str(Path(d) / "m.db")
+            with cam, vlm:
+                self._run("--db", db, "--no-shared", "look", "--source",
+                          "camera", "--remember")
+            found = self._run("--db", db, "--no-shared", "recall", "red mug")
+        self.assertIn("a red mug on the desk", found)
+
+
 if __name__ == "__main__":
     unittest.main()

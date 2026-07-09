@@ -125,6 +125,16 @@ def run_watch(store, frames, *,
     vector are stored (see _drop_keyframe) — pair it with `captioner` for live
     capture that leaves no stills on disk.
     """
+    if drop_keyframe_after_commit and captioner is None:
+        # Dropping the still while writing only a placeholder gist would strand a
+        # row the dream pass can never fulfill: recaption needs the keyframe on
+        # disk, but there is nothing left to caption. The two are only coherent
+        # together — caption inline, THEN drop. Fail loudly instead.
+        raise ValueError(
+            "drop_keyframe_after_commit=True requires a captioner: dropping the "
+            "keyframe leaves only a placeholder gist, and the dream pass "
+            "(recaption) cannot caption a still that is already gone. Pass a "
+            "captioner to caption inline, or keep the keyframe for the dream pass.")
     gate = gate or SalienceGate()
     wall0 = start_wall or datetime.now()
     events: list[WatchEvent] = []
