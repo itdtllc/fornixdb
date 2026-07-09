@@ -141,5 +141,73 @@ class TestCommits(WatchBase):
         self.assertEqual([e.reason for e in seen], ["first", "event"])
 
 
+class _FakeModal:
+    """A modality (image) embedder stub: ignores the path, returns a fixed
+    vector. Proves the latent-lane vector is written BEFORE a dropped keyframe
+    is deleted, so same-modality recall survives the drop."""
+    name = "fake-img"
+
+    def embed_artifact(self, paths):
+        return [[0.1, 0.2, 0.3] for _ in paths]
+
+
+class TestLiveControls(WatchBase):
+    """should_continue (stop a background 'eyes' loop) and
+    drop_keyframe_after_commit (leave no stills on disk)."""
+
+    def run_watch(self, fr, **kw):
+        kw.setdefault("embed", lambda f: f.vec)
+        kw.setdefault("gate", strict_gate())
+        kw.setdefault("keyframe_dir", str(self.dir))
+        kw.setdefault("start_wall", WALL0)
+        kw.setdefault("session_id", "w1")
+        return watchloop.run_watch(self.s, fr, **kw)
+
+    def test_should_continue_stops_the_loop_mid_stream(self):
+        seen = []
+        # stop after the loop has pulled two frames
+        evs = self.run_watch(
+            frames((0.0, A), (1.0, B), (2.0, C)),
+            should_continue=lambda: len(seen) < 2,
+            on_commit=seen.append)
+        self.assertEqual([e.reason for e in evs], ["first", "event"])  # C never reached
+
+    def test_should_continue_false_from_start_commits_nothing(self):
+        evs = self.run_watch(frames((0.0, A), (1.0, B)),
+                             should_continue=lambda: False)
+        self.assertEqual(evs, [])
+
+    def test_drop_keyframe_deletes_file_nulls_ref_keeps_vector(self):
+        evs = self.run_watch(
+            frames((0.0, A)), captioner=lambda p: "a lit room with a window",
+            modal_embedder=_FakeModal(), drop_keyframe_after_commit=True)
+        mid = evs[0].memory_id
+        self.assertFalse(Path(evs[0].keyframe).exists())     # still gone
+        gist, _, ref, _, _ = self.row(mid)
+        self.assertEqual(gist, "a lit room with a window")   # real caption kept
+        self.assertIsNone(ref)                               # source_ref nulled
+        n = self.s.conn.execute(
+            "SELECT COUNT(*) FROM modal_embedding WHERE memory_id=? AND model=?",
+            (mid, "fake-img")).fetchone()[0]
+        self.assertEqual(n, 1)                               # latent lane survives
+
+    def test_keyframes_kept_by_default(self):
+        evs = self.run_watch(frames((0.0, A)))
+        self.assertTrue(Path(evs[0].keyframe).is_file())     # default: no drop
+
+    def test_stopping_closes_the_frame_generator(self):
+        released = []
+        def gen():
+            try:
+                for t, v in ((0.0, A), (1.0, B), (2.0, C)):
+                    yield t, Frame(v)
+            finally:
+                released.append(True)      # an adapter releases the camera here
+        seen = []
+        self.run_watch(gen(), should_continue=lambda: len(seen) < 1,
+                       on_commit=seen.append)
+        self.assertEqual(released, [True])  # generator closed on stop, not at GC
+
+
 if __name__ == "__main__":
     unittest.main()

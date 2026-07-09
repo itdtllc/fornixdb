@@ -53,9 +53,7 @@ def _stream(grab: Grab, *, rate_hz: float, count: int | None,
             sleep(interval)
 
 
-def _cv2_grabber(source) -> tuple[Grab, Callable[[], None]]:
-    """A `(grab, close)` pair over an OpenCV capture (webcam index or file
-    path). cv2 is imported lazily — only the real camera/file path needs it."""
+def _import_cv2():
     try:
         import cv2                                 # optional [mac] extra
     except ImportError as e:                       # pragma: no cover - env-dep
@@ -63,6 +61,70 @@ def _cv2_grabber(source) -> tuple[Grab, Callable[[], None]]:
             "camera/file watch sources need OpenCV — install the optional Mac "
             "extras: pip install 'fornixdb[mac]'  (the 'screen' source needs "
             "no dependency at all)") from e
+    return cv2
+
+
+def _pick_camera(max_probe: int = 4) -> int:
+    """Choose a webcam index that actually shows something. macOS assigns
+    OpenCV indices in no stable order, and a machine often has several cameras
+    (built-in FaceTime, an external webcam, a covered/occluded one); a covered
+    or unavailable camera reads as a nearly black frame. So probe the indices,
+    grab a warmed-up frame from each openable one, and return the BRIGHTEST —
+    a lit camera beats a black one regardless of index. Falls back to 0 if none
+    yield a frame. Override with an explicit `camera:N` source when you want a
+    specific device. (Heuristic, but it fixes the common 'she sees an empty
+    black room because index 0 is the covered built-in' case.)"""
+    cv2 = _import_cv2()
+    import numpy as np
+
+    best_idx, best_brightness, found_any = 0, -1.0, False
+    for idx in range(max_probe):
+        cap = cv2.VideoCapture(idx)
+        if not cap.isOpened():
+            cap.release()
+            if found_any:
+                break                              # no index gaps past the last real device
+            continue
+        found_any = True
+        frame = _warm_read(cap)
+        cap.release()
+        if frame is None:
+            continue
+        brightness = float(np.mean(frame))
+        if brightness > best_brightness:
+            best_idx, best_brightness = idx, brightness
+    return best_idx
+
+
+def _warm_read(cap, *, want: int = 10, max_tries: int = 40):
+    """Read past a camera's initial not-ready/black frames (the first read on an
+    AVFoundation device often fails, and auto-exposure takes a few frames to
+    settle). Return the last of up to `want` successfully decoded frames, or
+    None if the camera never delivered one."""
+    import time
+    frame = None
+    got = 0
+    for _ in range(max_tries):
+        ok, fr = cap.read()
+        if ok and fr is not None:
+            frame = fr
+            got += 1
+            if got >= want:
+                break
+        else:
+            time.sleep(0.05)
+    return frame
+
+
+def _cv2_grabber(source, *, warmup: bool = False) -> tuple[Grab, Callable[[], None]]:
+    """A `(grab, close)` pair over an OpenCV capture (webcam index or file
+    path). cv2 is imported lazily — only the real camera/file path needs it.
+    `source=None` auto-picks a working camera. `warmup` discards a camera's dark
+    startup frames so the first COMMITTED keyframe is a real image (never used
+    for files — that would skip real footage)."""
+    cv2 = _import_cv2()
+    if source is None:                             # auto-pick a lit camera
+        source = _pick_camera()
 
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
@@ -70,13 +132,18 @@ def _cv2_grabber(source) -> tuple[Grab, Callable[[], None]]:
         raise RuntimeError(
             f"could not open video source {source!r} — a webcam may be in use "
             "by another app, or macOS has not granted camera permission yet")
+    if warmup:
+        _warm_read(cap)                            # let exposure settle; drop black frames
 
     def grab() -> Frame | None:
-        ok, frame = cap.read()
-        if not ok:
-            return None
-        ok2, buf = cv2.imencode(".jpg", frame)
-        return buf.tobytes() if ok2 else None
+        for _ in range(5):                         # tolerate a transient failed read
+            ok, frame = cap.read()
+            if ok and frame is not None:
+                ok2, buf = cv2.imencode(".jpg", frame)
+                return buf.tobytes() if ok2 else None
+            import time
+            time.sleep(0.02)
+        return None                                # source genuinely ended
 
     return grab, cap.release
 
@@ -122,15 +189,18 @@ def _from_grabber(grab: Grab | None, factory, *, rate_hz: float,
             close()
 
 
-def camera_frames(*, device: int = 0, rate_hz: float = 2.0,
+def camera_frames(*, device: int | None = None, rate_hz: float = 2.0,
                   count: int | None = None, grab: Grab | None = None,
                   clock: Callable[[], float] = time.monotonic,
                   sleep: Callable[[float], None] = time.sleep,
                   ) -> Iterator[tuple[float, Frame]]:
-    """Yield JPEG frames from the webcam at ~rate_hz (default 2). Runs until
-    the stream ends or `count` frames; the loop's max_seconds usually stops it.
-    Inject `grab` to test without a camera."""
-    return _from_grabber(grab, lambda: _cv2_grabber(device),
+    """Yield JPEG frames from the webcam at ~rate_hz (default 2). `device=None`
+    (the default) auto-picks a camera that is actually lit (see _pick_camera) —
+    pass an int to force a specific index. Startup frames are warmed up so the
+    first committed frame isn't a dark one. Runs until the stream ends or
+    `count` frames; the loop's max_seconds usually stops it. Inject `grab` to
+    test without a camera."""
+    return _from_grabber(grab, lambda: _cv2_grabber(device, warmup=True),
                          rate_hz=rate_hz, count=count, clock=clock, sleep=sleep)
 
 
@@ -162,11 +232,14 @@ def open_stream(source: str, *, rate_hz: float | None = None,
                 ) -> tuple[Iterator[tuple[float, Frame]], str]:
     """Resolve a watch source string to `(frames, source_label)`.
 
-    "camera" → the default webcam; "screen" → the main display; anything else
-    is treated as a video-file path for playback. The label is what the memory
-    gist reads ("watch[camera]: scene change")."""
-    if source == "camera":
-        return camera_frames(rate_hz=rate_hz or 2.0, count=count), "camera"
+    "camera" → auto-pick a lit webcam; "camera:N" → force webcam index N;
+    "screen" → the main display; anything else is treated as a video-file path
+    for playback. The label is what the memory gist reads
+    ("watch[camera]: scene change")."""
+    if source == "camera" or source.startswith("camera:"):
+        device = int(source.split(":", 1)[1]) if ":" in source else None
+        return camera_frames(device=device, rate_hz=rate_hz or 2.0,
+                             count=count), "camera"
     if source == "screen":
         return screen_frames(rate_hz=rate_hz or 1.0, count=count), "screen"
     if not Path(source).expanduser().is_file():

@@ -455,6 +455,19 @@ def main(argv: list[str] | None = None) -> int:
                      help="stop after this many committed memories")
     wtp.add_argument("--project", help="file the memories under a project")
 
+    rcp = sub.add_parser("recaption", help="dream-pass captioning: fill real "
+                                           "captions on watch keyframes that "
+                                           "were committed under a templated "
+                                           "placeholder (needs a local VLM)")
+    rcp.add_argument("--dry-run", action="store_true",
+                     help="list the keyframes awaiting a caption and stop "
+                          "(model-free — no VLM loaded)")
+    rcp.add_argument("--limit", type=int,
+                     help="caption at most this many keyframes this pass")
+    rcp.add_argument("--model",
+                     help="local VLM model id for the captioner "
+                          "(default: the Mac adapter's default)")
+
     sub.add_parser("usage", help="disk usage of EVERY FornixDB store on this "
                                  "machine (per AI + total)")
     tkp = sub.add_parser("tokens", help="estimated prompt-token footprint of this "
@@ -1317,6 +1330,43 @@ def _dispatch(p, args, store, stores) -> int:
         except (ImportError, FileNotFoundError, RuntimeError) as e:
             p.error(f"watch: {e}")
         print(f"{len(seen)} memories committed.")
+        return 0
+
+    elif args.cmd == "recaption":
+        from . import recaption
+
+        pend = recaption.pending_captions(store, limit=args.limit)
+        if args.dry_run:
+            if args.json:
+                print(json.dumps([{"id": m, "gist": g, "keyframe": k}
+                                  for m, g, k in pend]))
+            else:
+                print(f"{len(pend)} keyframe(s) await a caption:")
+                for mid, _, k in pend:
+                    print(f"  #{mid:<5} {k}")
+            return 0
+        if not pend:
+            print("no watch keyframes await a caption.")
+            return 0
+
+        try:
+            from .adapters import mac_vision
+            captioner = (mac_vision.vlm_captioner(args.model) if args.model
+                         else mac_vision.vlm_captioner())
+        except (ImportError, RuntimeError) as e:
+            p.error(f"recaption: {e}")
+
+        def _on(mid, old, cap):
+            if args.json:
+                print(json.dumps({"id": mid, "old": old, "caption": cap}))
+            else:
+                print(f"  #{mid:<5} {cap}")
+
+        if not args.json:
+            print(f"captioning {len(pend)} keyframe(s) with a local VLM…")
+        applied = recaption.recaption(store, captioner, limit=args.limit,
+                                      on_caption=_on)
+        print(f"{len(applied)} caption(s) written.")
         return 0
 
     elif args.cmd == "usage":
