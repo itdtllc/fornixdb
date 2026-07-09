@@ -468,6 +468,23 @@ def main(argv: list[str] | None = None) -> int:
                      help="local VLM model id for the captioner "
                           "(default: the Mac adapter's default)")
 
+    lkp = sub.add_parser("look", help="vision: look ONCE right now and describe "
+                                      "the current frame — a synchronous, "
+                                      "gate-free snapshot (needs a local VLM). "
+                                      "Ephemeral unless --remember.")
+    lkp.add_argument("--source", default="camera",
+                     help="camera (default) | camera:N | screen | a video-file path")
+    lkp.add_argument("--model",
+                     help="local VLM model id for the captioner "
+                          "(default: the Mac adapter's default)")
+    lkp.add_argument("--remember", action="store_true",
+                     help="also store the look as a see memory (default: answer "
+                          "only, nothing saved)")
+    lkp.add_argument("--keep-keyframe", action="store_true",
+                     help="keep the still on disk (default: caption then delete)")
+    lkp.add_argument("--project", help="file the memory under a project "
+                                       "(with --remember)")
+
     sub.add_parser("usage", help="disk usage of EVERY FornixDB store on this "
                                  "machine (per AI + total)")
     tkp = sub.add_parser("tokens", help="estimated prompt-token footprint of this "
@@ -1367,6 +1384,24 @@ def _dispatch(p, args, store, stores) -> int:
         applied = recaption.recaption(store, captioner, limit=args.limit,
                                       on_caption=_on)
         print(f"{len(applied)} caption(s) written.")
+        return 0
+
+    elif args.cmd == "look":
+        from . import senses
+        try:
+            from .adapters import mac_vision
+            captioner = (mac_vision.vlm_captioner(args.model) if args.model
+                         else mac_vision.vlm_captioner())
+            caption = senses.glance(
+                store, args.source, captioner, remember=args.remember,
+                keep_keyframe=args.keep_keyframe, project=args.project)
+        except (ImportError, FileNotFoundError, RuntimeError) as e:
+            p.error(f"look: {e}")
+        if args.json:
+            print(json.dumps({"source": args.source, "caption": caption,
+                              "remembered": args.remember}))
+        else:
+            print(caption or "(nothing to describe)")
         return 0
 
     elif args.cmd == "usage":
