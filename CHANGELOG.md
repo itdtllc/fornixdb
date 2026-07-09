@@ -7,6 +7,22 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-07-09
+
+### Fixed
+- **Every connection now sets `PRAGMA busy_timeout=5000`.** WAL lets readers and
+  a writer coexist, but a checkpoint or a recall that writes could still collide
+  with a concurrent writer — most sharply when the live watch thread commits
+  keyframes while the main connection recalls — and with no busy-timeout that
+  collision was an immediate `SQLITE_BUSY`. SQLite now waits up to 5s and
+  retries instead of erroring.
+- **Camera-index probe no longer prints backend chatter.** Probing an index past
+  the last real camera made AVFoundation shout `out device of bound` /
+  `camera failed to properly initialize!` straight to fd 2 (bypassing Python and
+  OpenCV logging). The probe — which already handles the failure via
+  `isOpened()`/frame checks — now runs under an fd-2 silencer, so `look` / watch
+  start cleanly on a single-camera Mac.
+
 ## [0.8.2] - 2026-07-09
 
 ### Added

@@ -225,5 +225,22 @@ class TestAutoCaptureFlag(unittest.TestCase):
             self.assertNotIn("[auto-captured]", _line(rows[1]))
 
 
+class TestConnectionPragmas(unittest.TestCase):
+    """Every connection must wait on a lock, not error instantly — the live
+    watch thread commits keyframes while the main connection recalls."""
+
+    def test_busy_timeout_and_wal_are_set(self):
+        with tempfile.TemporaryDirectory() as d:
+            conn = connect(str(Path(d) / "m.db"))
+            try:
+                self.assertEqual(
+                    conn.execute("PRAGMA busy_timeout").fetchone()[0], 5000)
+                self.assertEqual(
+                    conn.execute("PRAGMA journal_mode").fetchone()[0].lower(),
+                    "wal")
+            finally:
+                conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()
