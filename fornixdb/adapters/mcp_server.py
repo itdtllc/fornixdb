@@ -221,6 +221,51 @@ TOOLS = [
          "until": {"type": "string"},
          "single_file": {"type": "boolean", "default": False}},
          "required": ["out_dir"]}},
+    # --- live senses (optional, DEFAULT-OFF: reach hardware + a local model) ---
+    {"name": "look",
+     "description": "SIGHT (default-off; needs a local camera + a local vision "
+                    "model served by Ollama). Look ONCE right now and describe "
+                    "what is in front of the camera at this instant — the answer "
+                    "to 'what do you see?'. Does not wait for a scene change. "
+                    "Ephemeral by default; remember=true also stores it as a "
+                    "sight memory. Returns the caption, or a clear error if the "
+                    "camera or model is unavailable.",
+     "inputSchema": {"type": "object", "properties": {
+         "source": {"type": "string", "default": "camera",
+                    "description": "camera | camera:N | screen | a video-file path"},
+         "remember": {"type": "boolean", "default": False},
+         "model": {"type": "string",
+                   "description": "local VLM id (default: the Mac adapter's default)"}}}},
+    {"name": "feel",
+     "description": "PROPRIOCEPTION (default-off). Capture the machine's current "
+                    "body state — on a Mac, battery/power via the system — and "
+                    "store it as a tactile memory. Pass a literal `reading` "
+                    "string (+ `sensor`) on a non-Mac or for a custom sensor. "
+                    "Machine self-sensing, not a metaphor.",
+     "inputSchema": {"type": "object", "properties": {
+         "reading": {"type": "string",
+                     "description": "a literal reading; omit to read the Mac battery live"},
+         "sensor": {"type": "string", "default": "battery"}}}},
+    {"name": "see",
+     "description": "SIGHT (default-off; needs a local vision model served by "
+                    "Ollama). Remember an image ALREADY ON DISK: caption it with "
+                    "the local VLM and store it as a sight memory. Give the image "
+                    "path; the caption becomes the gist. Clear error if the model "
+                    "is unavailable.",
+     "inputSchema": {"type": "object", "properties": {
+         "image_path": {"type": "string"},
+         "model": {"type": "string", "description": "local VLM id"}},
+         "required": ["image_path"]}},
+    {"name": "recaption",
+     "description": "SIGHT dream-pass (default-off; needs a local vision model "
+                    "served by Ollama). Fill real captions on watch keyframes "
+                    "committed under a templated placeholder so a text consumer "
+                    "can recall what was seen. dry_run=true lists the backlog "
+                    "model-free.",
+     "inputSchema": {"type": "object", "properties": {
+         "dry_run": {"type": "boolean", "default": False},
+         "limit": {"type": "integer"},
+         "model": {"type": "string", "description": "local VLM id"}}}},
 ]
 
 # Which tools may be turned off to shrink the per-turn prompt. CORE is the
@@ -234,19 +279,36 @@ TOOLS = [
 # this knob just lets each deployment match its own limit, cost shown.
 CORE_TOOLS = frozenset({"recall_memory", "recall_timeline", "remember",
                         "startup_context"})
-_TOOLS_DISABLED_KEY = "mcp_tools_disabled"
+# The live senses are optional AND ship OFF by default: they reach hardware (a
+# camera, the battery) and a local model, so a store opts INTO them (owner turns
+# them on via `fornixdb configure` / `fornixdb tools enable <name>`), unlike the
+# memory tools which are on out of the box. A disabled tool stays *callable* if a
+# client already knows its name; default-off only keeps it out of tools/list (the
+# prefill), so an owner-enabled deployment advertises it and others never see it.
+DEFAULT_OFF_TOOLS = frozenset({"look", "feel", "see", "recaption"})
+_TOOLS_DISABLED_KEY = "mcp_tools_disabled"   # default-ON tools turned off
+_TOOLS_ENABLED_KEY = "mcp_tools_enabled"     # default-OFF tools turned on
 
 
 def tool_tier(name: str) -> str:
-    return "core" if name in CORE_TOOLS else "optional"
+    if name in CORE_TOOLS:
+        return "core"
+    return "sense" if name in DEFAULT_OFF_TOOLS else "optional"
+
+
+def _name_set(store, key: str) -> set:
+    from ..multistore import get_config
+    raw = get_config(store, key, "") or ""
+    return {n for n in (s.strip() for s in raw.split(",")) if n}
 
 
 def tools_disabled(store) -> set:
-    """Names of optional tools the owner turned off for this store (default
-    none = all on). Core names are never honored as disabled."""
-    from ..multistore import get_config
-    raw = get_config(store, _TOOLS_DISABLED_KEY, "") or ""
-    return {n for n in (s.strip() for s in raw.split(",")) if n} - CORE_TOOLS
+    """Names of tools NOT advertised for this store: default-ON tools the owner
+    turned off, plus default-OFF sense tools the owner hasn't turned on. Core
+    names are never honored as disabled."""
+    disabled = _name_set(store, _TOOLS_DISABLED_KEY)
+    enabled = _name_set(store, _TOOLS_ENABLED_KEY)
+    return (disabled | (DEFAULT_OFF_TOOLS - enabled)) - CORE_TOOLS
 
 
 def active_tools(store) -> list:
@@ -256,20 +318,24 @@ def active_tools(store) -> list:
 
 
 def set_tool_enabled(store, name: str, enabled: bool) -> str:
-    """Enable/disable one optional tool. Refuses unknown names and core tools."""
-    from ..multistore import get_config, set_config
+    """Enable/disable one optional tool. Refuses unknown names and core tools.
+    Default-OFF sense tools track their opt-INs in a separate key, so the two
+    default polarities never confuse each other."""
+    from ..multistore import set_config
     if name not in {t["name"] for t in TOOLS}:
         return f"unknown tool: {name}"
     if name in CORE_TOOLS:
         return f"{name} is a core tool and is always enabled"
-    off = {n for n in (s.strip() for s in
-                       (get_config(store, _TOOLS_DISABLED_KEY, "") or "").split(","))
-           if n}
-    if enabled:
-        off.discard(name)
+    # For a default-OFF tool the list records explicit ONs; for a default-ON tool
+    # it records explicit OFFs — so the name belongs in its list in opposite cases.
+    default_off = name in DEFAULT_OFF_TOOLS
+    key = _TOOLS_ENABLED_KEY if default_off else _TOOLS_DISABLED_KEY
+    names = _name_set(store, key)
+    if enabled == default_off:      # ON for a default-off tool, or OFF for default-on
+        names.add(name)
     else:
-        off.add(name)
-    set_config(store, _TOOLS_DISABLED_KEY, ",".join(sorted(off)))
+        names.discard(name)
+    set_config(store, key, ",".join(sorted(names)))
     return f"{name} {'enabled' if enabled else 'disabled'}"
 
 
@@ -707,6 +773,52 @@ class FornixMCP:
             return f"exported {r['exported']} memories to {r['dir']}{idx}"
         except ValueError as e:  # an unreadable time phrase, surfaced as a result
             return f"couldn't export: {e}"
+
+    # ------------------------------------------------------------- senses
+    # Default-off, hardware/model-bearing. Each loads its Mac adapter lazily and
+    # raises on unavailability — the dispatch turns that into an isError result,
+    # so a non-Mac / Ollama-less client gets a clear message, not a crash.
+
+    def _captioner(self, model):
+        from . import mac_vision
+        return mac_vision.vlm_captioner(model) if model else mac_vision.vlm_captioner()
+
+    def look(self, source: str = "camera", remember: bool = False,
+             model: str | None = None) -> str:
+        from .. import senses
+        caption = senses.glance(self.store, source, self._captioner(model),
+                                remember=bool(remember))
+        return caption or "(looked, but nothing to describe)"
+
+    def feel(self, reading=None, sensor: str = "battery") -> str:
+        from .. import senses
+        if reading is None:
+            from . import mac_proprioception as mp
+            reading = {k: v for k, v in mp.read_battery().items() if v is not None}
+        gist = senses.feel_gist(sensor, reading)
+        mid = senses.feel(self.store, reading, sensor=sensor, gist=gist)
+        self._session_writes.append(mid)
+        return f"{gist} (stored #{mid})"
+
+    def see(self, image_path: str, model: str | None = None) -> str:
+        from .. import senses
+        mid = senses.see(self.store, image_path, captioner=self._captioner(model))
+        self._session_writes.append(mid)
+        gist = self.store.conn.execute(
+            "SELECT gist FROM memory WHERE id = ?", (mid,)).fetchone()[0]
+        return f"saw: {gist} (stored #{mid})"
+
+    def recaption(self, dry_run: bool = False, limit=None,
+                  model: str | None = None) -> str:
+        from .. import recaption as rc
+        pend = rc.pending_captions(self.store, limit=limit)
+        if not pend:
+            return "no watch keyframes await a caption."
+        if dry_run:
+            return (f"{len(pend)} keyframe(s) await a caption:\n" +
+                    "\n".join(f"  #{m}  {k}" for m, _, k in pend))
+        applied = rc.recaption(self.store, self._captioner(model), limit=limit)
+        return f"{len(applied)} caption(s) written."
 
     # ---------------------------------------------------------- protocol
 
