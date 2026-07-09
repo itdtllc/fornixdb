@@ -7,6 +7,50 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-09
+
+### Added
+- **Live watch controls — `should_continue` and `drop_keyframe_after_commit`.**
+  `watchloop.run_watch` / `senses.watch` gained two options for running the
+  watch loop as a background "live eyes" thread rather than a fixed-duration
+  capture. `should_continue()` is polled once per frame and stops the loop
+  cleanly when it returns False (the stop signal for a thread with no
+  `max_seconds`); on stop the frame generator is now closed immediately so an
+  adapter's release (e.g. the camera's `cv2.release`) runs at once instead of at
+  GC. `drop_keyframe_after_commit` deletes each keyframe and nulls its
+  `source_ref` once the caption gist and modal vector are stored — the fidelity
+  ladder (`keyframe+vector+gist → vector+gist`) applied at capture time, so live
+  capture with an inline `captioner` leaves no stills on disk while
+  same-modality recall (the surviving vector) still works.
+- **Dream-pass captioning for the watch loop — `fornixdb.recaption`.** The
+  watch loop keeps its 2 Hz path model-free: every committed keyframe lands
+  under a *templated* placeholder gist (`watch[screen]: scene change`). This new
+  pass fills the real ones. `recaption.pending_captions(store)` is the worklist
+  (live sight memories still holding a placeholder, oldest scene first, keyframe
+  verified on disk); `recaption.recaption(store, captioner)` runs a local VLM
+  `(keyframe_path) -> str` over each and rewrites the gist in place via
+  `set_gist` (re-embedding the text lane) — so a *text* consumer can finally
+  recall what was seen. Pure and injectable like `watchloop`: the captioner is a
+  callable, nothing here imports a model, and the pass is idempotent (keyed on
+  the placeholder text), non-destructive (a decayed keyframe or an empty caption
+  is skipped, never clobbers), and crash-proof (a per-frame captioner error is a
+  skip, not an abort).
+- **`fornixdb recaption` CLI** — `fornixdb recaption [--dry-run] [--limit N]
+  [--model ID]`. `--dry-run` lists the keyframes awaiting a caption with no VLM
+  loaded (model-free); a real run captions them and prints each rewrite. The
+  `dream` report now surfaces the same worklist (`👁 N watch keyframes still
+  hold a templated placeholder`) so the perceptual backlog shows up alongside
+  the text consolidation work — dream itself stays stdlib-only; captioning is
+  the separate model-bearing command.
+- **Ollama-backed captioner — `mac_vision.vlm_captioner(model="qwen2.5vl:7b")`.**
+  A reference captioner that is *pure stdlib* (urllib POST to the local Ollama
+  daemon), so the `[mac]` extras don't grow. `ollama pull <model>` is the only
+  setup; any permissive local vision model serves (qwen2.5vl / llama3.2-vision /
+  minicpm-v / moondream). Defaults to `qwen2.5vl:7b` (Apache-2.0) — on a
+  same-frame A/B it read scene detail llava missed. Local-first (defaults to
+  localhost) and fails loudly with an actionable message when the daemon is
+  unreachable or the model isn't pulled.
+
 ## [0.7.1] - 2026-07-08
 
 ### Added

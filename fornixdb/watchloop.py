@@ -50,6 +50,25 @@ def _template_gist(source_label: str, reason: str) -> str:
             "heartbeat": f"watch[{source_label}]: quiet interval"}[reason]
 
 
+def _drop_keyframe(store, memory_id: int, keyframe: str) -> None:
+    """The fidelity ladder (Senses_Design §4) applied at capture time. Once the
+    caption gist and the modal (image) vector are stored — both happen inside
+    the senses.see() call before this — the raw frame is no longer needed to
+    recall the moment. Delete the file and null the now-dangling source_ref so
+    the memory settles to the `vector + gist` rung: same-modality recall still
+    works (the vector survives), only the displayable still is gone. Meant for
+    live capture where lingering stills on disk are undesirable; pair it with a
+    `captioner` so the gist is a real caption, not a placeholder. Never raises —
+    a failed unlink must not abort the loop."""
+    try:
+        Path(keyframe).unlink()
+    except OSError:
+        pass
+    store.conn.execute("UPDATE memory SET source_ref = NULL WHERE id = ?",
+                       (memory_id,))
+    store.conn.commit()
+
+
 def _persist(frame, keyframe_dir: str | None, session_id: str | None,
              t: float) -> str:
     """A committed frame becomes a file; a path frame already is one."""
@@ -82,6 +101,8 @@ def run_watch(store, frames, *,
               start_wall: datetime | None = None,
               max_seconds: float | None = None,
               max_commits: int | None = None,
+              should_continue: Callable[[], bool] | None = None,
+              drop_keyframe_after_commit: bool = False,
               topics: list[str] | None = None,
               project: str | None = None,
               session_id: str | None = None,
@@ -95,6 +116,14 @@ def run_watch(store, frames, *,
     else a templated gist recall can find — a later dream pass may caption
     properly). Returns the committed events in order. Stops on iterator
     exhaustion, max_seconds of stream time, or max_commits.
+
+    `should_continue`, when given, is checked once per frame BEFORE any work;
+    returning False stops the loop cleanly. It is the stop signal for a
+    background/'live' watch thread (e.g. an assistant opening and closing its
+    eyes) that has no fixed max_seconds. `drop_keyframe_after_commit` deletes
+    each committed keyframe and nulls its source_ref once the gist and modal
+    vector are stored (see _drop_keyframe) — pair it with `captioner` for live
+    capture that leaves no stills on disk.
     """
     gate = gate or SalienceGate()
     wall0 = start_wall or datetime.now()
@@ -106,33 +135,46 @@ def run_watch(store, frames, *,
         return (wall0 + timedelta(seconds=t - t_first)).isoformat(
             timespec="seconds")
 
-    for t, frame in frames:
-        if t_first is None:
-            t_first = t
-        if max_seconds is not None and t - t_first > max_seconds:
-            break
-        if window_start is None:
-            window_start = t
+    try:
+        for t, frame in frames:
+            if should_continue is not None and not should_continue():
+                break
+            if t_first is None:
+                t_first = t
+            if max_seconds is not None and t - t_first > max_seconds:
+                break
+            if window_start is None:
+                window_start = t
 
-        decision = gate.observe(embed(frame), t)
-        if not decision.commit:
-            continue
+            decision = gate.observe(embed(frame), t)
+            if not decision.commit:
+                continue
 
-        span_start = max(window_start, t - window_seconds)
-        keyframe = _persist(frame, keyframe_dir, session_id, t)
-        gist = (captioner(keyframe) if captioner
-                else _template_gist(source_label, decision.reason))
-        et, ete = _iso(span_start), _iso(t)
-        mid = senses.see(
-            store, keyframe, caption=gist, embedder=modal_embedder,
-            event_time=et, event_time_end=(ete if ete != et else None),
-            topics=topics, project=project, session_id=session_id)
+            span_start = max(window_start, t - window_seconds)
+            keyframe = _persist(frame, keyframe_dir, session_id, t)
+            gist = (captioner(keyframe) if captioner
+                    else _template_gist(source_label, decision.reason))
+            et, ete = _iso(span_start), _iso(t)
+            mid = senses.see(
+                store, keyframe, caption=gist, embedder=modal_embedder,
+                event_time=et, event_time_end=(ete if ete != et else None),
+                topics=topics, project=project, session_id=session_id)
 
-        ev = WatchEvent(mid, decision.reason, span_start, t, keyframe, gist)
-        events.append(ev)
-        if on_commit is not None:
-            on_commit(ev)
-        window_start = None            # the next frame opens the next window
-        if max_commits is not None and len(events) >= max_commits:
-            break
+            ev = WatchEvent(mid, decision.reason, span_start, t, keyframe, gist)
+            events.append(ev)
+            if on_commit is not None:
+                on_commit(ev)          # callback still sees the keyframe on disk
+            if drop_keyframe_after_commit:
+                _drop_keyframe(store, mid, keyframe)
+            window_start = None        # the next frame opens the next window
+            if max_commits is not None and len(events) >= max_commits:
+                break
+    finally:
+        # Close the frame generator NOW so an adapter's release (e.g. the camera
+        # capture, cv2.release) runs the moment we stop — not whenever GC gets to
+        # it. Critical for a stop-hook'd 'live eyes' loop: the camera light must
+        # go off on close_eyes(). A plain iterator has no close(); that's fine.
+        closer = getattr(frames, "close", None)
+        if callable(closer):
+            closer()
     return events

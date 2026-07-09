@@ -219,6 +219,8 @@ def watch(store, stream_source: str, *, rate_hz: float | None = None,
           gate=None, threshold: float | None = None,
           keyframe_dir: str | None = None,
           max_seconds: float | None = None, max_commits: int | None = None,
+          should_continue: Callable[[], bool] | None = None,
+          drop_keyframe_after_commit: bool = False,
           topics: list[str] | None = None, project: str | None = None,
           session_id: str | None = None,
           on_commit: Callable[[object], None] | None = None) -> list:
@@ -235,7 +237,12 @@ def watch(store, stream_source: str, *, rate_hz: float | None = None,
     `keyframe_dir` (default `<store_dir>/senses/watch`). Captions are templated
     at commit unless you pass a `captioner` (a later dream pass fills real ones
     — keeping the hot path model-free). Returns the committed WatchEvents; stops
-    on `max_seconds`, `max_commits`, source exhaustion, or KeyboardInterrupt."""
+    on `max_seconds`, `max_commits`, source exhaustion, KeyboardInterrupt, or
+    when `should_continue()` returns False (the stop signal for a background
+    'live eyes' thread with no fixed duration). `drop_keyframe_after_commit`
+    deletes each keyframe and nulls its source_ref once the gist and modal
+    vector are stored — pair it with a live `captioner` to leave no stills on
+    disk."""
     from . import watchloop
     from .adapters import mac_camera, mac_vision
 
@@ -256,8 +263,11 @@ def watch(store, stream_source: str, *, rate_hz: float | None = None,
         store, frames, embed=emb.embed_image, modal_embedder=emb,
         captioner=captioner, gate=gate, window_seconds=window_seconds,
         keyframe_dir=keyframe_dir, source_label=source_label,
-        max_seconds=max_seconds, max_commits=max_commits, topics=topics,
-        project=project, session_id=session_id, on_commit=on_commit)
+        max_seconds=max_seconds, max_commits=max_commits,
+        should_continue=should_continue,
+        drop_keyframe_after_commit=drop_keyframe_after_commit,
+        topics=topics, project=project, session_id=session_id,
+        on_commit=on_commit)
 
 
 def feel_gist(sensor: str, reading) -> str:

@@ -326,7 +326,7 @@ def _extract_paths(text: str) -> list[list[str]]:
             continue
         cands = [p]
         if nxt == " ":                        # maybe a space inside a segment
-            tail = re.split(r"[`'\"()\[\]{}<>,;|\n]", text[m.end() + 1:], 1)[0]
+            tail = re.split(r"[`'\"()\[\]{}<>,;|\n]", text[m.end() + 1:], maxsplit=1)[0]
             word = tail.split(" ", 1)[0].rstrip(_PATH_STRIP)
             if word:
                 joined = f"{p} {word}"
@@ -838,9 +838,20 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
         narrative += (f"\n🎛 {len(dials)} dial suggestion"
                       f"{'' if len(dials) == 1 else 's'} from the accrued "
                       "telemetry — evidence attached; nothing flipped (§6.5).")
+    # perceptual worklist: watch() keeps the hot path model-free, so committed
+    # keyframes land under a templated placeholder gist. Surface how many still
+    # await a real caption — the model-bearing pass (`fornixdb recaption`, a
+    # local VLM) is deliberately separate from this stdlib-only dream.
+    from . import recaption
+    awaiting_captions = recaption.pending_count(store)
+    if awaiting_captions and not done:
+        one = awaiting_captions == 1
+        narrative += (f"\n👁 {awaiting_captions} watch keyframe{'' if one else 's'} "
+                      f"still hold{'s' if one else ''} a templated placeholder — "
+                      "run `recaption` with a local VLM to fill real captions.")
     return {"status": st, "counts": counts, "work": work, "woven": woven,
             "applied": applied, "use_credit": credit, "dials": dials,
-            "narrative": narrative}
+            "awaiting_captions": awaiting_captions, "narrative": narrative}
 
 
 def supersede_suggestion(store: MemoryStore, new_id: int, text: str,

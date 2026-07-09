@@ -33,7 +33,7 @@ import io
 import math
 from typing import Callable
 
-__all__ = ["ImageEmbedder", "clip_embedder"]
+__all__ = ["ImageEmbedder", "clip_embedder", "vlm_captioner"]
 
 
 def _l2_normalize(vec: list[float]) -> list[float]:
@@ -239,3 +239,64 @@ def clip_embedder(model_id: str = "mlx-community/clip-vit-base-patch32",
             return _real[0](image)
 
     return ImageEmbedder(encode, name=model_id, open_image=open_image)
+
+
+# ------------------------------------------------------------ captioner (P3)
+
+# The captioner is NOT on the hot path — it runs in the dream pass
+# (fornixdb.recaption) over already-committed keyframes, so an out-of-process
+# call to a local model is fine. Backing it with the Ollama daemon the owner
+# already runs keeps FornixDB's minimal-deps ethos intact: this adapter is pure
+# stdlib (urllib), so the [mac] extras don't grow at all. Any permissive vision
+# model the owner has pulled serves (llava / moondream / qwen2.5vl — all
+# Apache-2.0); the model is a one-arg seam, and the whole thing is generic to
+# any machine running Ollama, not Mac-specific.
+_CAPTION_PROMPT = ("Describe what is happening in this image in one plain, "
+                   "specific sentence, as a caption for a memory. Name what you "
+                   "see; do not add any preamble or commentary.")
+
+
+def vlm_captioner(model: str = "qwen2.5vl:7b", *,
+                  host: str = "http://localhost:11434",
+                  prompt: str | None = None,
+                  timeout: float = 120.0) -> Callable[[str], str]:
+    """A watch-keyframe captioner backed by a local Ollama vision model.
+
+    Returns `caption(keyframe_path) -> str`: it reads the committed JPEG,
+    base64-encodes it, and POSTs `/api/generate` to the local Ollama daemon,
+    returning the model's one-sentence description. Pure stdlib — no new
+    dependency; the model runs in the Ollama process, and `ollama pull <model>`
+    is the only setup. Local-first: the default host is localhost. Raises
+    RuntimeError with an actionable message when the daemon is unreachable or
+    the model isn't pulled, so `fornixdb recaption` fails loudly, not silently
+    (recaption() itself turns a per-frame error into a skip, never a crash)."""
+    import base64
+    import json
+    import urllib.error
+    import urllib.request
+
+    url = host.rstrip("/") + "/api/generate"
+    ask = prompt or _CAPTION_PROMPT
+
+    def caption(keyframe_path: str) -> str:
+        with open(keyframe_path, "rb") as f:
+            image_b64 = base64.b64encode(f.read()).decode("ascii")
+        body = json.dumps({"model": model, "prompt": ask,
+                           "images": [image_b64], "stream": False}).encode()
+        req = urllib.request.Request(
+            url, data=body, headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")[:200]
+            raise RuntimeError(
+                f"ollama captioner: model {model!r} rejected the request "
+                f"({e.code}) — is it pulled? `ollama pull {model}`. {detail}")
+        except urllib.error.URLError as e:
+            raise RuntimeError(
+                f"ollama captioner: cannot reach the daemon at {host} ({e.reason}) "
+                "— start Ollama, then `ollama pull " + model + "`.")
+        return (data.get("response") or "").strip()
+
+    return caption
