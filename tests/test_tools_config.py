@@ -1,14 +1,16 @@
-"""Configurable MCP tool surface: all tools on by default, optional ones can
-be disabled per-store to shrink prefill, core tools cannot. No hardcoded token
-ceiling — curation is per-deployment (owner direction 2026-06-16)."""
+"""Configurable MCP tool surface: memory tools on by default, optional ones can
+be disabled per-store to shrink prefill, core tools cannot, and the live senses
+ship OFF until opted in. No hardcoded token ceiling — curation is per-deployment
+(owner direction 2026-06-16)."""
 
 import tempfile
 import unittest
 from pathlib import Path
 
-from fornixdb.adapters.mcp_server import (CORE_TOOLS, TOOLS, FornixMCP,
-                                          active_tools, set_tool_enabled,
-                                          tool_tier, tools_disabled)
+from fornixdb.adapters.mcp_server import (CORE_TOOLS, DEFAULT_OFF_TOOLS, TOOLS,
+                                          FornixMCP, active_tools,
+                                          set_tool_enabled, tool_tier,
+                                          tools_disabled)
 
 
 class TestToolConfig(unittest.TestCase):
@@ -21,9 +23,12 @@ class TestToolConfig(unittest.TestCase):
         self.store.close()
         self.tmp.cleanup()
 
-    def test_default_is_all_tools_on(self):
-        self.assertEqual(tools_disabled(self.store), set())
-        self.assertEqual(len(active_tools(self.store)), len(TOOLS))
+    def test_default_memory_tools_on_senses_off(self):
+        # memory tools all on; the live senses are the only default-off set
+        self.assertEqual(tools_disabled(self.store), set(DEFAULT_OFF_TOOLS))
+        active = {t["name"] for t in active_tools(self.store)}
+        self.assertEqual(len(active), len(TOOLS) - len(DEFAULT_OFF_TOOLS))
+        self.assertTrue(DEFAULT_OFF_TOOLS.isdisjoint(active))
 
     def test_core_set_is_a_subset_of_defined_tools(self):
         names = {t["name"] for t in TOOLS}
@@ -37,7 +42,8 @@ class TestToolConfig(unittest.TestCase):
         self.assertIn("disabled", msg)
         active = {t["name"] for t in active_tools(self.store)}
         self.assertNotIn("export_markdown", active)
-        self.assertEqual(tools_disabled(self.store), {"export_markdown"})
+        self.assertEqual(tools_disabled(self.store),
+                         {"export_markdown"} | set(DEFAULT_OFF_TOOLS))
 
     def test_core_tool_cannot_be_disabled(self):
         msg = set_tool_enabled(self.store, "recall_memory", False)
@@ -71,6 +77,29 @@ class TestToolConfig(unittest.TestCase):
     def test_tier_labels(self):
         self.assertEqual(tool_tier("remember"), "core")
         self.assertEqual(tool_tier("export_markdown"), "optional")
+        self.assertEqual(tool_tier("look"), "sense")
+
+    def test_sense_tool_opt_in_round_trip(self):
+        # default off, not advertised
+        self.assertNotIn("look", {t["name"] for t in active_tools(self.store)})
+        # owner opts in -> advertised; other senses stay off (independent)
+        self.assertIn("enabled", set_tool_enabled(self.store, "look", True))
+        active = {t["name"] for t in active_tools(self.store)}
+        self.assertIn("look", active)
+        self.assertNotIn("feel", active)
+        self.assertNotIn("look", tools_disabled(self.store))
+        # and back off
+        set_tool_enabled(self.store, "look", False)
+        self.assertNotIn("look", {t["name"] for t in active_tools(self.store)})
+
+    def test_enabling_a_sense_does_not_disturb_optional_disables(self):
+        set_tool_enabled(self.store, "dream", False)      # a default-on opt-out
+        set_tool_enabled(self.store, "feel", True)        # a default-off opt-in
+        active = {t["name"] for t in active_tools(self.store)}
+        self.assertIn("feel", active)                     # opt-in honored
+        self.assertNotIn("dream", active)                 # opt-out still honored
+        # other senses remain off
+        self.assertNotIn("look", active)
 
 
 if __name__ == "__main__":

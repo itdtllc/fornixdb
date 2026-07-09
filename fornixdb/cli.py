@@ -1472,7 +1472,7 @@ def _dispatch(p, args, store, stores) -> int:
             tier = tool_tier(name)
             cost = estimate_tokens(_json.dumps(t))
             mark = "on " if on else "OFF"
-            lock = "core" if tier == "core" else "opt "
+            lock = {"core": "core", "sense": "sns "}.get(tier, "opt ")
             if args.full:
                 print(f"  [{mark}] {lock} ~{cost:>3}t  {name}")
                 print(f"          {t['description']}")
@@ -1480,13 +1480,15 @@ def _dispatch(p, args, store, stores) -> int:
                 desc = (t["description"][:54] + "…") if len(t["description"]) > 55 \
                     else t["description"]
                 print(f"  [{mark}] {lock} ~{cost:>3}t  {name:<16} {desc}")
-        print("\nAll tools are ON by default. Disable optional ('opt') tools to "
-              "shrink the per-turn prompt:\n  fornixdb tools disable <name>   "
-              "(or: fornixdb tools --profile minimal)\nCore tools cannot be "
-              "disabled. There is no universal token limit — but some devices "
-              "(small on-device models) have little prompt space, so trimming "
-              "may be REQUIRED there. Changes take effect on the next MCP "
-              "session/restart.")
+        print("\nMemory tools are ON by default; the live senses ('sns' — look / "
+              "feel / see / recaption) are OFF until you opt in, since they reach "
+              "a camera / the battery / a local model:\n  fornixdb tools enable "
+              "<name>    (turn a sense on)\n  fornixdb tools disable <name>   "
+              "(trim an optional tool)\n  fornixdb tools --profile minimal\n"
+              "Core tools cannot be disabled. There is no universal token limit — "
+              "but some devices (small on-device models) have little prompt space, "
+              "so trimming may be REQUIRED there. Changes take effect on the next "
+              "MCP session/restart.")
 
     elif args.cmd == "topics":
         rows = store.conn.execute(

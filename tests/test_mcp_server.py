@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 os.environ["FORNIXDB_TRANSCRIPTS"] = "off"  # dream must not scan this machine's
                                             # real ~/.claude/projects from tests
@@ -42,7 +43,11 @@ class TestProtocol(unittest.TestCase):
         self.assertEqual(r["serverInfo"]["name"], "fornixdb")
         self.assertIn("recall_timeline", r["instructions"])
         tools = self.srv.handle(req(2, "tools/list"))["result"]["tools"]
-        self.assertEqual({t["name"] for t in tools}, {t["name"] for t in TOOLS})
+        names = {t["name"] for t in tools}
+        # tools/list advertises the default-on set: the live senses ship off, so
+        # they are defined in TOOLS but not advertised until a store opts in.
+        self.assertEqual({t["name"] for t in TOOLS} - names,
+                         {"look", "feel", "see", "recaption"})
         self.assertEqual(len(tools), 21)
 
     def test_remember_recall_show_forget_cycle(self):
@@ -274,6 +279,63 @@ class TestProtocol(unittest.TestCase):
         # a genuine tool exception is still a result with isError, not a dead session
         r = self._call("recall_memory")   # missing required 'query' -> isError
         self.assertTrue(r["isError"])
+
+
+class TestSenses(unittest.TestCase):
+    """The default-off live-sense tools, dispatched via tools/call. The camera
+    and VLM are faked; feel needs neither (a literal reading works anywhere)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.srv = FornixMCP(db_path=Path(self.tmp.name) / "m.db", shared=False)
+
+    def tearDown(self):
+        self.srv.store.close()
+        self.tmp.cleanup()
+
+    def _call(self, name, **args):
+        return self.srv.handle(req(9, "tools/call", name=name, arguments=args))["result"]
+
+    def _fake_vlm(self, caption):
+        return mock.patch("fornixdb.adapters.mac_vision.vlm_captioner",
+                          return_value=lambda p: caption)
+
+    def test_senses_are_callable_though_default_off(self):
+        # tools/call permits a known tool even when unadvertised (default-off)
+        r = self._call("feel", reading="charge=80%, charging=yes")
+        self.assertFalse(r["isError"])
+        self.assertIn("stored #", r["content"][0]["text"])
+        # and it is recallable as a real tactile memory
+        r = self._call("recall_memory", query="charge charging")
+        self.assertIn("charge=80%", r["content"][0]["text"])
+
+    def test_look_captions_the_current_frame(self):
+        cam = mock.patch("fornixdb.adapters.mac_camera.open_stream",
+                         return_value=(iter([(0.0, b"\xff\xd8x")]), "camera"))
+        with cam, self._fake_vlm("a person at a desk"):
+            r = self._call("look", source="camera")
+        self.assertFalse(r["isError"])
+        self.assertEqual(r["content"][0]["text"], "a person at a desk")
+
+    def test_see_remembers_an_image_with_a_caption(self):
+        img = Path(self.tmp.name) / "shot.jpg"
+        img.write_bytes(b"\xff\xd8fake")
+        with self._fake_vlm("a red mug on a windowsill"):
+            r = self._call("see", image_path=str(img))
+        self.assertFalse(r["isError"])
+        self.assertIn("a red mug on a windowsill", r["content"][0]["text"])
+
+    def test_recaption_dry_run_reports_empty_backlog(self):
+        r = self._call("recaption", dry_run=True)
+        self.assertFalse(r["isError"])
+        self.assertIn("no watch keyframes await a caption", r["content"][0]["text"])
+
+    def test_missing_model_surfaces_as_a_clean_tool_error(self):
+        # no camera / Ollama in the test env: the handler must fail as an
+        # isError result, not crash the session
+        r = self._call("look", source="/no/such/clip.mov")
+        self.assertTrue(r["isError"])
+        self.assertIn("error", r["content"][0]["text"].lower())
 
 
 class TestStdioRoundTrip(unittest.TestCase):

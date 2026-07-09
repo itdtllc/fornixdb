@@ -7,6 +7,24 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-07-09
+
+### Added
+- **The live senses are now MCP tools — `look`, `feel`, `see`, `recaption` —
+  default-OFF.** An MCP client (Claude, Elira, any) can now perceive through the
+  standard tool interface, not just the CLI: `look` (one-shot "what do you see
+  right now?"), `feel` (capture the machine's battery/body state as a tactile
+  memory), `see` (caption + remember an image on disk), `recaption` (dream-pass
+  fill of watch placeholders). Because they reach hardware (a camera, the
+  battery) and a local model, they ship **off** — a new default-off tier
+  (`DEFAULT_OFF_TOOLS`, tracked via a separate `mcp_tools_enabled` key, tier
+  label `sense`). Turn them on per store with `fornixdb tools enable <name>` or
+  in `fornixdb configure`, where they now appear as toggles. A disabled sense
+  stays callable if a client already knows it; default-off only keeps it out of
+  `tools/list` (the prefill), so the memory-tool footprint is unchanged for
+  stores that don't opt in. Each fails loudly (a clean tool error, never a
+  crash) when the camera or model is unavailable.
+
 ## [0.8.1] - 2026-07-09
 
 ### Added

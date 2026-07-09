@@ -65,17 +65,32 @@ class TestTokens(unittest.TestCase):
         # like every optional tool, ship ON but can be disabled per deployment).
         import json
 
-        from fornixdb.adapters.mcp_server import INSTRUCTIONS, TOOLS
-        SCHEMA_TOKEN_BUDGET = 2110  # raised for link relation=distinct + dream sections
+        from fornixdb.adapters.mcp_server import (DEFAULT_OFF_TOOLS,
+                                                  INSTRUCTIONS, TOOLS)
+        # Two ceilings now that the live senses (look/feel/see/recaption) ship
+        # OFF by default: what a fresh store actually prefills is the memory tools
+        # only, and that DEFAULT set is held to the historical budget (the senses
+        # add nothing until opted in). The FULL set — every defined tool, senses
+        # included — has its own, deliberately higher ceiling for stores that
+        # enable the senses (owner principle 2026-06-25: raise the budget, never
+        # trim a description to fit).
+        DEFAULT_SCHEMA_TOKEN_BUDGET = 2110  # memory tools; link distinct + dream
+        FULL_SCHEMA_TOKEN_BUDGET = 2750     # + look/feel/see/recaption (opt-in)
         INSTRUCTIONS_TOKEN_BUDGET = 260
 
-        schema_tokens = estimate_tokens(json.dumps(TOOLS))
+        default_schema = [t for t in TOOLS if t["name"] not in DEFAULT_OFF_TOOLS]
+        schema_tokens = estimate_tokens(json.dumps(default_schema))
+        full_tokens = estimate_tokens(json.dumps(TOOLS))
         instr_tokens = estimate_tokens(INSTRUCTIONS)
         self.assertLessEqual(
-            schema_tokens, SCHEMA_TOKEN_BUDGET,
-            f"MCP tool schemas {schema_tokens} tok > budget "
-            f"{SCHEMA_TOKEN_BUDGET}; trim a description or raise the budget "
-            "deliberately")
+            schema_tokens, DEFAULT_SCHEMA_TOKEN_BUDGET,
+            f"DEFAULT MCP tool schemas {schema_tokens} tok > budget "
+            f"{DEFAULT_SCHEMA_TOKEN_BUDGET}; trim a description or raise the "
+            "budget deliberately")
+        self.assertLessEqual(
+            full_tokens, FULL_SCHEMA_TOKEN_BUDGET,
+            f"FULL MCP tool schemas {full_tokens} tok > budget "
+            f"{FULL_SCHEMA_TOKEN_BUDGET}; raise the budget deliberately")
         self.assertLessEqual(
             instr_tokens, INSTRUCTIONS_TOKEN_BUDGET,
             f"MCP instructions {instr_tokens} tok > budget "
