@@ -241,6 +241,30 @@ class TestWatchCli(unittest.TestCase):
         self.assertIn("watch[screen]: scene change", found)
 
 
+class TestQuietStderr(unittest.TestCase):
+    """The camera probe's fd-2 silencer: swallows backend chatter only inside
+    the block, and restores fd 2 after."""
+
+    def test_suppresses_fd2_inside_only_and_restores(self):
+        import os
+        # Point fd 2 at our own temp file (stand-in for the console), so the test
+        # is self-contained and doesn't depend on pytest's capture.
+        with tempfile.TemporaryFile() as console:
+            saved = os.dup(2)
+            os.dup2(console.fileno(), 2)
+            try:
+                with mac_camera._quiet_stderr():
+                    os.write(2, b"backend NOISE\n")     # should be swallowed
+                os.write(2, b"after RESTORE\n")         # should reach the console
+            finally:
+                os.dup2(saved, 2)
+                os.close(saved)
+            console.seek(0)
+            data = console.read()
+        self.assertNotIn(b"backend NOISE", data)         # silenced in-block
+        self.assertIn(b"after RESTORE", data)            # fd 2 restored after
+
+
 class TestLookCli(unittest.TestCase):
     """`fornixdb look` — one synchronous glance, camera + VLM faked."""
 

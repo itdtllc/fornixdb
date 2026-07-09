@@ -432,6 +432,13 @@ def connect(db_path: str | os.PathLike | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Wait up to 5s for a lock instead of erroring instantly. WAL lets readers
+    # and a writer coexist, but a checkpoint or a recall that writes (e.g.
+    # reinforcement) can still collide with a concurrent writer — most sharply
+    # when the live watch thread commits keyframes while the main connection
+    # recalls. Without this, that collision is an immediate SQLITE_BUSY; with it,
+    # SQLite blocks briefly and retries. Per-connection, so set on every open.
+    conn.execute("PRAGMA busy_timeout = 5000")
     rebuild_fts = _migrate(conn)
     conn.executescript(_SCHEMA)
     if rebuild_fts:

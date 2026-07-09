@@ -24,11 +24,39 @@ and no real waiting, the way the other adapters take injectable readers.
 """
 from __future__ import annotations
 
+import contextlib
+import os
 import time
 from pathlib import Path
 from typing import Callable, Iterator
 
 __all__ = ["camera_frames", "screen_frames", "file_frames", "open_stream"]
+
+
+@contextlib.contextmanager
+def _quiet_stderr():
+    """Silence C-level camera-backend chatter for the duration of a block.
+
+    Probing a non-existent camera index makes AVFoundation print
+    'OpenCV: out device of bound (0-0): N' and 'camera failed to properly
+    initialize!' straight to file descriptor 2 — not through Python's stderr or
+    OpenCV's logger, so neither `contextlib.redirect_stderr` nor
+    `cv2.setLogLevel` catches it. Redirect fd 2 to os.devnull for the block and
+    restore it after; scoped to the brief probe so real diagnostics elsewhere
+    are untouched. A no-op if the fd dance isn't available."""
+    try:
+        saved = os.dup(2)
+        devnull = os.open(os.devnull, os.O_WRONLY)
+    except OSError:                                  # pragma: no cover - env-dep
+        yield
+        return
+    try:
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        os.dup2(saved, 2)
+        os.close(devnull)
+        os.close(saved)
 
 Frame = bytes
 Grab = Callable[[], "Frame | None"]      # returns the next frame, or None at end
@@ -78,21 +106,25 @@ def _pick_camera(max_probe: int = 4) -> int:
     import numpy as np
 
     best_idx, best_brightness, found_any = 0, -1.0, False
-    for idx in range(max_probe):
-        cap = cv2.VideoCapture(idx)
-        if not cap.isOpened():
+    # Probing an index past the last real device makes the backend shout to fd 2
+    # ('out device of bound', 'camera failed to properly initialize!'); we handle
+    # the failure via isOpened()/frame checks, so keep the chatter off the console.
+    with _quiet_stderr():
+        for idx in range(max_probe):
+            cap = cv2.VideoCapture(idx)
+            if not cap.isOpened():
+                cap.release()
+                if found_any:
+                    break                          # no index gaps past the last real device
+                continue
+            found_any = True
+            frame = _warm_read(cap)
             cap.release()
-            if found_any:
-                break                              # no index gaps past the last real device
-            continue
-        found_any = True
-        frame = _warm_read(cap)
-        cap.release()
-        if frame is None:
-            continue
-        brightness = float(np.mean(frame))
-        if brightness > best_brightness:
-            best_idx, best_brightness = idx, brightness
+            if frame is None:
+                continue
+            brightness = float(np.mean(frame))
+            if brightness > best_brightness:
+                best_idx, best_brightness = idx, brightness
     return best_idx
 
 
