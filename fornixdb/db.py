@@ -13,8 +13,9 @@ import os
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 11  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
+SCHEMA_VERSION = 12  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
                     # v11: prospective (reminders — new table only, IF NOT EXISTS)
+                    # v12: prospective urgent/deliveries/last_delivery (nagging)
                     # v5: writer. v6: helpful_count/last_helpful (usefulness).
                     # v4: recall_feedback (negative feedback, new table only)
                     # v5: memory.writer (shared-tier writer provenance, B3)
@@ -196,10 +197,20 @@ CREATE TABLE IF NOT EXISTS embedding (
 -- becomes a normal episodic memory of the intention ("I reminded him") and
 -- decays like everything else. Cancelling a reminder = forget_memory on the
 -- memory row (CASCADE cleans this side-table).
+-- v12: urgent reminders NAG. urgent=0 (default): delivered_at is set the
+-- moment the reminder is surfaced — fire exactly once, done. urgent=1:
+-- delivery only increments deliveries/last_delivery; delivered_at means
+-- ACKNOWLEDGED (the owner responded after a delivery, observed by the host
+-- shell — never inferred by a model), and until then due() re-offers it every
+-- nag interval up to the attempt cap. deliveries/last_delivery double as the
+-- escalation state ("third time now:") and the give-up boundary.
 CREATE TABLE IF NOT EXISTS prospective (
-    memory_id    INTEGER PRIMARY KEY REFERENCES memory(id) ON DELETE CASCADE,
-    due          TEXT NOT NULL,
-    delivered_at TEXT
+    memory_id     INTEGER PRIMARY KEY REFERENCES memory(id) ON DELETE CASCADE,
+    due           TEXT NOT NULL,
+    delivered_at  TEXT,
+    urgent        INTEGER NOT NULL DEFAULT 0,
+    deliveries    INTEGER NOT NULL DEFAULT 0,
+    last_delivery TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_prospective_due ON prospective(due);
 
@@ -262,6 +273,14 @@ def _migrate(conn: sqlite3.Connection) -> bool:
     if mem_cols and "referenced_count" not in mem_cols:  # v8
         conn.execute("ALTER TABLE memory ADD COLUMN referenced_count INTEGER NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE memory ADD COLUMN last_referenced TEXT")
+    # v12: a v11 prospective table (0.8.5) predates the nag columns; SQLite
+    # adds them in place, defaults matching the schema (all existing reminders
+    # are non-urgent — exactly their 0.8.5 behavior)
+    pros_cols = [r[1] for r in conn.execute("PRAGMA table_info(prospective)")]
+    if pros_cols and "urgent" not in pros_cols:
+        conn.execute("ALTER TABLE prospective ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE prospective ADD COLUMN deliveries INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE prospective ADD COLUMN last_delivery TEXT")
     # v9: memory_link's CHECK bakes the relation list; a pre-'distinct' store
     # needs the table rebuilt in place (SQLite can't ALTER a CHECK). Rows are
     # copied verbatim; the child-table rebuild is safe under foreign_keys=ON.
