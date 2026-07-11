@@ -68,6 +68,13 @@ def parse_when(text: str, now: datetime | None = None) -> tuple[datetime, dateti
              "in the past hour", "this past hour", "within the last hour",
              "just now", "a moment ago", "recently", "right now"):
         return now - timedelta(hours=1), soon
+    # "the last minute" / "the past few minutes" — colloquial just-now, not a
+    # literal 60s (asked live 2026-07-10 and it fell through to ValueError)
+    if re.fullmatch(
+            r"(?:in\s+|within\s+)?(?:the\s+)?(?:last|past)\s+"
+            r"(?:minute|moment|(?:few|couple)(?:\s+of)?\s+(?:minutes|moments))",
+            t):
+        return now - timedelta(hours=1), soon
     # "past 2 hours" / "last 30 minutes" — range ending now
     m = re.fullmatch(
         r"(?:in\s+)?(?:the\s+)?(?:last|past)\s+(\d+)\s+(hour|hr|minute|min)s?", t)

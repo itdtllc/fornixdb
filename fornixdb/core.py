@@ -262,6 +262,12 @@ class MemoryStore:
                 f"kind must be one of {KINDS} (got {kind!r}); "
                 f"or a known alias {tuple(KIND_ALIASES)}")
         self._check_writable()
+        # Resolve the embedder BEFORE inserting: first resolution runs the
+        # missing-vector backfill, and with the new row already committed the
+        # backfill would count it as a gap — embedding it a first time and
+        # announcing a heal on every write from a fresh store handle (seen
+        # live 2026-07-10: every Elira sense call printed "embedded 1").
+        emb = self._resolve_embedder(embedder)
         from .budget import make_room  # lazy: avoids import cycle, free when no budget set
         make_room(self)
         cur = self.conn.execute(
@@ -288,7 +294,6 @@ class MemoryStore:
         # deployments never pay for it; pass embedder=False to skip explicitly.
         # Embedding must never block a write, so a failure here is swallowed —
         # `embed` backfill remains the safety net.
-        emb = self._resolve_embedder(embedder)
         if emb is not None:
             try:
                 from .vectors import embed_memory
