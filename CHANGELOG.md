@@ -7,6 +7,36 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-07-10
+
+### Added
+- **The ear: `senses.listen()` — one-shot hearing.** The audio twin of
+  `glance()`: capture a short clip from the microphone, answer "what do you
+  hear?" with a sound-scene gist, and remember it as an ordinary hearing
+  memory. Backed by the new `adapters/mac_audio.py` — `capture_clip`
+  (ffmpeg/avfoundation), `clap_tagger` (zero-shot sound-scene labels), and
+  `clap_embedder` — all sharing one CLAP tower
+  (`laion/larger_clap_music_and_speech`).
+- **The machine's warmth: `mac_proprioception.read_temperature()`.** Apple
+  Silicon die temperatures via the IOHID sensor interface (sudo-free;
+  calibration sensors excluded, hottest plausible die reported) plus the
+  battery thermistor via `ioreg`, so a body/feel adapter can say how warm the
+  machine actually is. Injectable `hid=` / `run=` seams keep it unit-testable;
+  degrades to `None`s on any failure.
+
+### Fixed
+- **`store()` resolves the embedder BEFORE inserting the new row.** The
+  embed-on-write first-use backfill ran after the new row was committed but
+  before it was embedded, counting the in-flight row itself as a gap — every
+  write from a fresh store handle printed `FornixDB: embedded 1 memories…`.
+- **`timeparse` understands colloquial just-now phrases.** "the last minute",
+  "the past few minutes", "a couple of moments" and friends now map to the
+  just-now window instead of raising.
+- **`capture_clip` runs ffmpeg with `-nostdin`.** ffmpeg inheriting the
+  caller's tty could flip the terminal into raw mode and race the host app for
+  keystrokes (it froze a voice-loop host); audio capture never touches stdin
+  now.
+
 ## [0.8.3] - 2026-07-09
 
 ### Fixed
