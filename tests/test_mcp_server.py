@@ -48,7 +48,7 @@ class TestProtocol(unittest.TestCase):
         # they are defined in TOOLS but not advertised until a store opts in.
         self.assertEqual({t["name"] for t in TOOLS} - names,
                          {"look", "feel", "see", "recaption"})
-        self.assertEqual(len(tools), 21)
+        self.assertEqual(len(tools), 22)
 
     def test_remember_recall_show_forget_cycle(self):
         out = self._call("remember", title="gpu-rule",

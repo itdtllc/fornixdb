@@ -94,6 +94,19 @@ TOOLS = [
          "project": {"type": "string", "description": "Project you're working in "
                      "(scopes recall). Omit to inherit a pinned active_project."}},
          "required": ["title", "content"]}},
+    {"name": "remind_me",
+     "description": "Prospective memory: store an intention to be surfaced when "
+                    "it's time ('remind me tomorrow morning to call the attorney'). "
+                    "Due reminders are delivered at session start and on the "
+                    "per-turn recall heartbeat. `when` takes a natural phrase — "
+                    "'in 20 minutes', 'tomorrow morning', 'friday at 3pm' — or an "
+                    "ISO timestamp.",
+     "inputSchema": {"type": "object", "properties": {
+         "what": {"type": "string", "description": "The intention, phrased as "
+                  "something to tell the owner when it fires."},
+         "when": {"type": "string", "description": "When to surface it."},
+         "project": {"type": "string"}},
+         "required": ["what", "when"]}},
     {"name": "remember_many",
      "description": "Store several memories in one call (batch). Use when you "
                     "accumulated multiple things to record, instead of many "
@@ -475,6 +488,16 @@ class FornixMCP:
                  project: str | None = None) -> str:
         return "\n".join(self._remember_one(title, content, kind, project))
 
+    def remind_me(self, what: str, when: str, project: str | None = None) -> str:
+        """Prospective memory: an intention stored with a due time, delivered
+        on the recall heartbeat / at session start when the clock arrives."""
+        from ..prospective import remind
+        try:
+            r = remind(self.store, what, when, project=project, source="mcp")
+        except ValueError as e:
+            return f"not set: {e}"
+        return f"Reminder #{r['id']} set — I'll surface it at {r['due']}: {what}"
+
     def remember_many(self, items: list, project: str | None = None) -> str:
         """Store several memories in one call — the friction-reducer for an
         agent that accumulated multiple things to record (§15.2 #1). Each item
@@ -656,6 +679,24 @@ class FornixMCP:
             out += (f"\nconsolidation DUE ({cs['reason']}) — offer the owner a "
                     "sleep/dream pass to reconcile outdated memories and weave "
                     "new links.")
+        # prospective memory: deliver what came due while nobody was listening,
+        # and preview what's ahead so the session starts oriented in time
+        from ..prospective import due as _due, upcoming as _upcoming
+        try:
+            overdue = _due(self.store)
+        except Exception:
+            overdue = []
+        if overdue:
+            out += ("\n⏰ REMINDERS DUE (came due while away — tell the owner "
+                    "now, plainly):\n" + "\n".join(
+                        f"- {r['gist']} (was due {r['due']})" for r in overdue))
+        try:
+            ahead = _upcoming(self.store, within_hours=48)
+        except Exception:
+            ahead = []
+        if ahead:
+            out += "\nupcoming reminders (next 48h):\n" + "\n".join(
+                f"- {r['gist']} (due {r['due']})" for r in ahead)
         from ..budget import machine_budget
         cap, _, defaulted = machine_budget()
         if defaulted and cap:

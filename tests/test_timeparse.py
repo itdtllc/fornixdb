@@ -59,6 +59,23 @@ class TestParseWhen(unittest.TestCase):
             self.assertEqual(s, NOW - timedelta(hours=1), phrase)
             self.assertEqual(e, NOW + timedelta(seconds=1), phrase)
 
+    def test_future_windows_for_prospective_queries(self):
+        # "what's coming up tomorrow?" over reminder rows (event_time = due)
+        s, e = self.r("tomorrow")                       # NOW is Wed 2026-06-10
+        self.assertEqual(s, datetime(2026, 6, 11))
+        self.assertEqual(e, datetime(2026, 6, 12))
+        s, e = self.r("tomorrow morning")
+        self.assertEqual((s, e), (datetime(2026, 6, 11), datetime(2026, 6, 11, 12)))
+        s, e = self.r("tomorrow evening")
+        self.assertEqual((s, e), (datetime(2026, 6, 11, 17), datetime(2026, 6, 12, 6)))
+        s, e = self.r("next week")
+        self.assertEqual((s, e), (datetime(2026, 6, 15), datetime(2026, 6, 22)))
+        s, e = self.r("next month")
+        self.assertEqual((s, e), (datetime(2026, 7, 1), datetime(2026, 8, 1)))
+        for phrase in ("upcoming", "coming up", "soon"):
+            s, e = self.r(phrase)
+            self.assertEqual((s, e), (NOW, NOW + timedelta(days=7)), phrase)
+
     def test_units_ago_is_a_single_window(self):
         s, e = self.r("2 hours ago")
         self.assertEqual(s, NOW - timedelta(hours=2))

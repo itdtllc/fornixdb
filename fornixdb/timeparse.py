@@ -90,6 +90,27 @@ def parse_when(text: str, now: datetime | None = None) -> tuple[datetime, dateti
             return now - timedelta(hours=n), now - timedelta(hours=n - 1)
         return now - timedelta(minutes=n), now - timedelta(minutes=n - 1)
 
+    # future windows — the query side of prospective memory ("what's coming
+    # up tomorrow?" over reminder rows, whose event_time is their due time)
+    if t == "tomorrow":
+        return _day(now + timedelta(days=1))
+    if t == "tomorrow morning":
+        return day0 + timedelta(hours=24), day0 + timedelta(hours=36)
+    if t == "tomorrow afternoon":
+        return day0 + timedelta(hours=36), day0 + timedelta(hours=41)
+    if t in ("tomorrow evening", "tomorrow night"):
+        return day0 + timedelta(hours=41), day0 + timedelta(hours=54)
+    if t == "next week":
+        start = _week_start(now) + timedelta(days=7)
+        return start, start + timedelta(days=7)
+    if t == "next month":
+        this_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        start = (this_start + timedelta(days=32)).replace(day=1)
+        nxt = (start + timedelta(days=32)).replace(day=1)
+        return start, nxt
+    if t in ("upcoming", "coming up", "soon", "later", "the future"):
+        return now, now + timedelta(days=7)
+
     if t == "this week":
         start = _week_start(now)
         return start, start + timedelta(days=7)
@@ -163,3 +184,141 @@ def parse_when(text: str, now: datetime | None = None) -> tuple[datetime, dateti
         pass
 
     raise ValueError(f"Don't understand time expression: {text!r}")
+
+
+# ---- prospective time: when should a reminder come back? ---------------------
+
+# Clock defaults for day-part words when a reminder names no time — chosen to
+# match how people mean them ("tomorrow morning" ≈ start of the working day).
+MORNING_H, AFTERNOON_H, EVENING_H = 9, 15, 19
+
+_CLOCK = re.compile(
+    r"(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?", re.IGNORECASE)
+
+
+def _parse_clock(s: str) -> tuple[int, int] | None:
+    """'3pm' / '3:30 pm' / '15:00' / 'noon' / 'midnight' → (hour, minute)."""
+    s = s.strip().lower()
+    if s == "noon":
+        return 12, 0
+    if s == "midnight":
+        return 0, 0
+    m = _CLOCK.fullmatch(s)
+    if not m:
+        return None
+    hour, minute = int(m.group(1)), int(m.group(2) or 0)
+    mer = (m.group(3) or "").replace(".", "")
+    if mer == "pm" and hour != 12:
+        hour += 12
+    elif mer == "am" and hour == 12:
+        hour = 0
+    elif not mer and not m.group(2):
+        return None    # bare "3" is ambiguous — require am/pm or a ':'
+    if hour > 23 or minute > 59:
+        return None
+    return hour, minute
+
+
+def parse_due(text: str, now: datetime | None = None) -> datetime:
+    """Parse a FUTURE natural time phrase into the single datetime it names —
+    the prospective twin of `parse_when`. Understands "in 20 minutes",
+    "tomorrow", "tomorrow morning", "tonight", "friday at 3pm", "at 9am",
+    "next week", "june 5", and ISO stamps. A clock time already past today
+    rolls forward ("at 9am" said at noon → tomorrow 9am): a reminder is
+    always in the future. Raises ValueError for phrases it doesn't
+    understand, or an explicit timestamp in the past.
+    """
+    now = now or datetime.now()
+    t = re.sub(r"\s+", " ", text.strip().lower())
+    day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # relative: "in 20 minutes", "in an hour", "in a few minutes",
+    # "in half an hour" — never rolled, they're future by construction
+    m = re.fullmatch(
+        r"in (?:about )?(\d+|an?|a few|a couple(?: of)?|half an?) "
+        r"(minute|min|hour|hr|day|week)s?", t)
+    if m:
+        word, unit = m.group(1), m.group(2)
+        n = {"a": 1.0, "an": 1.0, "a few": 3.0,
+             "a couple": 2.0, "a couple of": 2.0,
+             "half an": 0.5, "half a": 0.5}.get(word)
+        if n is None:
+            n = float(word)
+        per = {"minute": 60, "min": 60, "hour": 3600, "hr": 3600,
+               "day": 86400, "week": 7 * 86400}[unit]
+        return now + timedelta(seconds=n * per)
+
+    # optional trailing clock: "<phrase> at 3pm" (or "<phrase> 3pm")
+    when_part, clock = t, None
+    m = re.fullmatch(r"(.*?)(?:\s+at)?\s+"
+                     r"(noon|midnight|\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?)",
+                     t)
+    if m and m.group(1):
+        maybe = _parse_clock(m.group(2))
+        if maybe:
+            when_part, clock = m.group(1).strip(), maybe
+
+    def at(day: datetime, default_hour: int) -> datetime:
+        h, mi = clock if clock else (default_hour, 0)
+        return day.replace(hour=h, minute=mi, second=0, microsecond=0)
+
+    when_part = re.sub(r"^(?:on|this)\s+", "", when_part)
+
+    if when_part == "tomorrow":
+        return at(day0 + timedelta(days=1), MORNING_H)
+    if when_part == "tomorrow morning":
+        return at(day0 + timedelta(days=1), MORNING_H)
+    if when_part == "tomorrow afternoon":
+        return at(day0 + timedelta(days=1), AFTERNOON_H)
+    if when_part in ("tomorrow evening", "tomorrow night"):
+        return at(day0 + timedelta(days=1), EVENING_H)
+    if when_part in ("tonight", "evening"):
+        due = at(day0, EVENING_H)
+        return due if due > now else now + timedelta(hours=1)
+    if when_part in ("morning", "afternoon"):
+        due = at(day0, MORNING_H if when_part == "morning" else AFTERNOON_H)
+        return due if due > now else due + timedelta(days=1)
+
+    # "friday" / "next friday" [at 3pm] — the NEXT occurrence, never today
+    m = re.fullmatch(r"(?:next )?(" + "|".join(WEEKDAYS) + r")", when_part)
+    if m:
+        ahead = (WEEKDAYS.index(m.group(1)) - now.weekday()) % 7 or 7
+        return at(day0 + timedelta(days=ahead), MORNING_H)
+
+    if when_part == "next week":
+        return at(_week_start(now) + timedelta(days=7), MORNING_H)
+    if when_part == "next month":
+        this_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return at((this_start + timedelta(days=32)).replace(day=1), MORNING_H)
+
+    # "june 5" [at 3pm] — the next such date
+    m = re.fullmatch(r"(" + "|".join(MONTHS) + r")\s+(\d{1,2})", when_part)
+    if m:
+        d = datetime(now.year, MONTHS.index(m.group(1)) + 1, int(m.group(2)))
+        due = at(d, MORNING_H)
+        return due if due > now else due.replace(year=due.year + 1)
+
+    # bare clock time: "at 9am" / "9am" / "15:30" — today, rolled if past
+    if clock and when_part in ("", "at"):
+        due = at(day0, MORNING_H)
+        return due if due > now else due + timedelta(days=1)
+    maybe = _parse_clock(t)
+    if maybe:
+        clock = maybe
+        due = at(day0, MORNING_H)
+        return due if due > now else due + timedelta(days=1)
+
+    # explicit ISO date or timestamp — must actually be in the future
+    try:
+        d = datetime.fromisoformat(text.strip())
+        if len(text.strip()) <= 10:               # bare date → default morning
+            d = d.replace(hour=MORNING_H)
+        if d <= now:
+            raise ValueError(f"That time is in the past: {text!r}")
+        return d
+    except ValueError as e:
+        if "in the past" in str(e):
+            raise
+
+    raise ValueError(f"Don't understand when {text!r} is — try 'in 20 minutes', "
+                     "'tomorrow morning', 'friday at 3pm', or an exact time")

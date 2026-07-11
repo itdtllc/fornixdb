@@ -7,6 +7,31 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-07-10
+
+### Added
+- **Prospective memory — remembering to remember.** `remind_me(what, when)`
+  (MCP) / `fornixdb remind … --when …` (CLI) stores an intention as an
+  ordinary episodic row whose `event_time` is its due time, plus a
+  `prospective` side-table row carrying delivery state (schema v11, additive).
+  Hosts poll `prospective.due()` on their natural heartbeat — each chat turn,
+  a voice loop's idle tick, session start — and deliver what comes back;
+  `delivered_at` makes every reminder fire exactly once, then the row lives on
+  as a normal memory of the intention. `prospective.upcoming()` previews what's
+  ahead. No scheduler threads: the host owns the clock, the store owns the
+  intentions.
+- **`timeparse.parse_due()` — future time phrases.** "in 20 minutes",
+  "tomorrow morning", "tonight", "friday at 3pm", "next week", "june 5 at
+  6pm", ISO stamps; clock times already past today roll forward. `parse_when`
+  gained the matching future QUERY windows ("tomorrow", "next week",
+  "upcoming"), so `recall_timeline` answers "what's coming up?" from the same
+  reminder rows.
+- **Delivery is wired into the existing surfaces.** The per-turn proactive
+  recall block leads with due reminders (they bypass the relevance gates — a
+  reminder is due by clock, not by topical similarity); `startup_context`
+  reports what came due while nobody was listening plus the next 48 h; the
+  MCP tool set gains `remind_me` (default-on).
+
 ## [0.8.4] - 2026-07-10
 
 ### Added

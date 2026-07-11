@@ -299,6 +299,23 @@ def format_block(rows: list[dict], max_chars: int) -> str | None:
 _format_block = format_block
 
 
+def due_reminder_block(store: MemoryStore) -> str | None:
+    """Prospective-memory delivery: everything that has come due, formatted for
+    injection, marked delivered in the same call (a reminder fires exactly
+    once). None when nothing is due — or when delivery can't be recorded (a
+    frozen/read-only store must not re-chirp the same reminder every turn)."""
+    from .prospective import due
+    try:
+        rows = due(store)
+    except Exception:
+        return None
+    if not rows:
+        return None
+    lines = "\n".join(f"- {r['gist']} (due {r['due']})" for r in rows)
+    return ("[FornixDB ⏰ reminder DUE — the owner asked to be told at this "
+            f"time; tell them now, plainly:]\n{lines}")
+
+
 def proactive_recall(store: MemoryStore, prompt: str, *,
                      session_id: str | None = None,
                      limit: int | None = None,
@@ -307,13 +324,15 @@ def proactive_recall(store: MemoryStore, prompt: str, *,
     """The once-per-turn hook's whole job: a provenance-tagged "possibly-relevant
     past" block for `prompt`, or None when disabled / the prompt is trivial /
     nothing clears the relevance floor. ADDITIVE — the host's native injection
-    is untouched."""
+    is untouched. Due reminders ride the same heartbeat but skip the relevance
+    gates: a reminder is due by CLOCK, not by topical similarity to the prompt."""
     if not auto_background_enabled(store):              # ingest_mode=explicit
         return None
+    due_part = due_reminder_block(store)
     if get_config(store, "proactive_recall", "on") in ("off", "0", "false"):
-        return None
+        return due_part
     if not prompt or len(prompt.strip()) < MIN_PROMPT_CHARS:
-        return None
+        return due_part
     if limit is None:
         limit = int(get_config(store, "proactive_recall_limit", str(DEFAULT_LIMIT)))
     if max_chars is None:
@@ -338,4 +357,6 @@ def proactive_recall(store: MemoryStore, prompt: str, *,
             store.record_surfaced(ids)
         except Exception:
             pass
+    if due_part:
+        return due_part + (("\n\n" + block) if block else "")
     return block
