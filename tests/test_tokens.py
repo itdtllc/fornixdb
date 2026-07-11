@@ -58,7 +58,7 @@ class TestTokens(unittest.TestCase):
         # dream description naming its grown worklist: chronic-noise,
         # mis-scoped, dial report; owner principle 2026-06-25: never trim
         # tools/descriptions to fit — raise the budget) -> 2260 (remind_me —
-        # prospective memory, 0.8.5) —
+        # prospective memory, 0.8.5) -> 2300 (urgent nag param, 0.8.6) —
         # each a deliberate raise for named tools. This measures
         # ALL defined tools; the
         # live footprint is the
@@ -75,8 +75,9 @@ class TestTokens(unittest.TestCase):
         # included — has its own, deliberately higher ceiling for stores that
         # enable the senses (owner principle 2026-06-25: raise the budget, never
         # trim a description to fit).
-        DEFAULT_SCHEMA_TOKEN_BUDGET = 2260  # memory tools; link distinct + dream
-                                            # + remind_me (prospective, 0.8.5)
+        DEFAULT_SCHEMA_TOKEN_BUDGET = 2300  # memory tools; link distinct + dream
+                                            # + remind_me (prospective, 0.8.5;
+                                            # urgent nag param, 0.8.6)
         FULL_SCHEMA_TOKEN_BUDGET = 2900     # + look/feel/see/recaption (opt-in)
         INSTRUCTIONS_TOKEN_BUDGET = 260
 

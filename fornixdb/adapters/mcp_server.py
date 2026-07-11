@@ -105,6 +105,9 @@ TOOLS = [
          "what": {"type": "string", "description": "The intention, phrased as "
                   "something to tell the owner when it fires."},
          "when": {"type": "string", "description": "When to surface it."},
+         "urgent": {"type": "boolean", "default": False, "description":
+                    "ONLY when the owner says it's important/urgent: the "
+                    "reminder repeats every few minutes until they respond."},
          "project": {"type": "string"}},
          "required": ["what", "when"]}},
     {"name": "remember_many",
@@ -488,15 +491,20 @@ class FornixMCP:
                  project: str | None = None) -> str:
         return "\n".join(self._remember_one(title, content, kind, project))
 
-    def remind_me(self, what: str, when: str, project: str | None = None) -> str:
+    def remind_me(self, what: str, when: str, urgent: bool = False,
+                  project: str | None = None) -> str:
         """Prospective memory: an intention stored with a due time, delivered
-        on the recall heartbeat / at session start when the clock arrives."""
+        on the recall heartbeat / at session start when the clock arrives.
+        Urgent ones nag until the owner responds."""
         from ..prospective import remind
         try:
-            r = remind(self.store, what, when, project=project, source="mcp")
+            r = remind(self.store, what, when, urgent=urgent, project=project,
+                       source="mcp")
         except ValueError as e:
             return f"not set: {e}"
-        return f"Reminder #{r['id']} set — I'll surface it at {r['due']}: {what}"
+        extra = (" — and I'll repeat it every few minutes until they respond"
+                 if urgent else "")
+        return f"Reminder #{r['id']} set — I'll surface it at {r['due']}{extra}: {what}"
 
     def remember_many(self, items: list, project: str | None = None) -> str:
         """Store several memories in one call — the friction-reducer for an
@@ -681,15 +689,31 @@ class FornixMCP:
                     "new links.")
         # prospective memory: deliver what came due while nobody was listening,
         # and preview what's ahead so the session starts oriented in time
-        from ..prospective import due as _due, upcoming as _upcoming
+        from ..prospective import due as _due, unacknowledged, upcoming as _upcoming
         try:
             overdue = _due(self.store)
         except Exception:
             overdue = []
+        # AFTER due (order matters): report the exhausted-and-never-answered
+        # urgent reminders and re-arm their nag cycle — the new session is a
+        # fresh chance the owner is present; the next heartbeat re-delivers.
+        try:
+            never_answered = unacknowledged(self.store)
+        except Exception:
+            never_answered = []
+        if never_answered:
+            out += ("\n⚠ URGENT reminders the owner NEVER ACKNOWLEDGED "
+                    "(nagged a full cycle with no response — raise these "
+                    "first, and keep raising until they answer):\n"
+                    + "\n".join(f"- {r['gist']} (was due {r['due']})"
+                                for r in never_answered))
         if overdue:
             out += ("\n⏰ REMINDERS DUE (came due while away — tell the owner "
                     "now, plainly):\n" + "\n".join(
-                        f"- {r['gist']} (was due {r['due']})" for r in overdue))
+                        f"- {r['gist']} (was due {r['due']})"
+                        + (" [URGENT — repeats until they respond]"
+                           if r["urgent"] else "")
+                        for r in overdue))
         try:
             ahead = _upcoming(self.store, within_hours=48)
         except Exception:

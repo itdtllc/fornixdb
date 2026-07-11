@@ -7,6 +7,25 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-07-10
+
+### Added
+- **Urgent reminders nag until acknowledged.** `remind_me(..., urgent=true)` /
+  `fornixdb remind --urgent`: instead of firing exactly once, an urgent
+  reminder is re-delivered every `nag_interval_minutes` (config, default 5)
+  up to `nag_max_attempts` (default 6) — the way a person nags themself about
+  medication but not about the mail. What ends the nag is the only observable
+  evidence a reminder reached a person: the owner responding with *anything at
+  all* after a delivery (`prospective.ack()` / `fornixdb ack`, called by hosts
+  on every owner turn — never a model interpreting "got it"). An urgent
+  reminder that exhausts its attempts stops spamming the empty room but never
+  silently dies: `prospective.unacknowledged()` reports it at the next session
+  start and re-arms the cycle for the fresh chance at presence. Urgent
+  intentions are stored at salience 0.9, so the memory of them stays sharp
+  after delivery. Schema v12 (three additive columns on `prospective`;
+  existing 0.8.5 reminders migrate in place as non-urgent — behavior
+  unchanged). Normal reminders are untouched: fire once, done.
+
 ## [0.8.5] - 2026-07-10
 
 ### Added

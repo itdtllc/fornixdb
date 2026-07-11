@@ -152,6 +152,127 @@ class TestProspectiveStore(unittest.TestCase):
         self.assertTrue(any("dentist" in m["gist"] for m in rows))
 
 
+class TestUrgentNag(unittest.TestCase):
+    """v0.8.6: urgent reminders nag until acknowledged. Pinned clock, no
+    waiting — every interval is expressed through `now`."""
+
+    def setUp(self):
+        self.s = MemoryStore(conn=connect(":memory:"))
+        prospective.remind(self.s, "take the medication", "in 5 minutes",
+                           urgent=True, now=NOW)
+        self.t0 = NOW + timedelta(minutes=6)   # first moment it is due
+
+    def tearDown(self):
+        self.s.close()
+
+    def test_urgent_flag_and_salience(self):
+        row = self.s.conn.execute(
+            "SELECT p.urgent, m.salience FROM prospective p "
+            "JOIN memory m ON m.id = p.memory_id").fetchone()
+        self.assertEqual(row[0], 1)
+        self.assertEqual(row[1], prospective.URGENT_SALIENCE)
+
+    def test_nag_cycle_interval_and_cap(self):
+        r = prospective.due(self.s, now=self.t0)
+        self.assertEqual((r[0]["urgent"], r[0]["deliveries"]), (True, 1))
+        # within the interval: silent
+        self.assertEqual(prospective.due(self.s,
+                                         now=self.t0 + timedelta(minutes=4)), [])
+        # each elapsed interval re-delivers, counting up
+        t = self.t0
+        for n in (2, 3, 4, 5, 6):
+            t += timedelta(minutes=5)
+            r = prospective.due(self.s, now=t)
+            self.assertEqual(r[0]["deliveries"], n, f"delivery {n}")
+        # cap reached: active nagging stops
+        self.assertEqual(prospective.due(self.s,
+                                         now=t + timedelta(hours=2)), [])
+
+    def test_ack_closes_the_nag(self):
+        prospective.due(self.s, now=self.t0)                  # delivery 1
+        self.assertEqual(prospective.ack(self.s, now=self.t0), 1)
+        # closed for good — no re-delivery at any later time
+        self.assertEqual(prospective.due(self.s,
+                                         now=self.t0 + timedelta(hours=5)), [])
+
+    def test_ack_before_any_delivery_is_a_noop(self):
+        self.assertEqual(prospective.ack(self.s, now=NOW), 0)
+        # still fires when due
+        self.assertEqual(len(prospective.due(self.s, now=self.t0)), 1)
+
+    def test_ack_ignores_normal_reminders(self):
+        prospective.remind(self.s, "check the mail", "in 5 minutes", now=NOW)
+        rows = prospective.due(self.s, now=self.t0)           # both fire
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(prospective.ack(self.s, now=self.t0), 1)  # urgent only
+
+    def test_unacknowledged_reports_and_rearms(self):
+        t = self.t0
+        prospective.due(self.s, now=t)
+        for _ in range(5):
+            t += timedelta(minutes=5)
+            prospective.due(self.s, now=t)                    # exhaust 6 attempts
+        self.assertEqual(prospective.due(self.s, now=t + timedelta(hours=1)), [])
+        rows = prospective.unacknowledged(self.s, now=t + timedelta(hours=1))
+        self.assertEqual(len(rows), 1)
+        self.assertIn("medication", rows[0]["gist"])
+        # re-armed: the next heartbeat nags again from attempt 1
+        r = prospective.due(self.s, now=t + timedelta(hours=1, minutes=1))
+        self.assertEqual(r[0]["deliveries"], 1)
+
+    def test_unacknowledged_empty_while_mid_cycle(self):
+        prospective.due(self.s, now=self.t0)                  # only delivery 1
+        self.assertEqual(prospective.unacknowledged(self.s, now=self.t0), [])
+
+    def test_nag_dials_read_config(self):
+        from fornixdb.multistore import set_config
+        set_config(self.s, "nag_interval_minutes", "1")
+        set_config(self.s, "nag_max_attempts", "2")
+        prospective.due(self.s, now=self.t0)                  # 1
+        r = prospective.due(self.s, now=self.t0 + timedelta(minutes=1))
+        self.assertEqual(r[0]["deliveries"], 2)               # short interval
+        self.assertEqual(prospective.due(self.s,
+                                         now=self.t0 + timedelta(minutes=9)), [])
+
+    def test_peek_counts_nothing(self):
+        rows = prospective.due(self.s, now=self.t0, deliver=False)
+        self.assertEqual(rows[0]["deliveries"], 0)
+        self.assertEqual(prospective.due(self.s, now=self.t0)[0]["deliveries"], 1)
+
+
+class TestV12Migration(unittest.TestCase):
+    def test_v11_prospective_table_gains_nag_columns(self):
+        # a 0.8.5 store has the three-column prospective table; opening it
+        # with 0.8.6 must add the nag columns in place, defaults = non-urgent
+        import os
+        import sqlite3
+        import tempfile
+
+        from fornixdb.db import connect
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            old = sqlite3.connect(path)
+            old.executescript(
+                "CREATE TABLE prospective ("
+                "memory_id INTEGER PRIMARY KEY, due TEXT NOT NULL, "
+                "delivered_at TEXT);"
+                "INSERT INTO prospective VALUES (1, '2026-07-11T09:00:00', NULL);")
+            old.commit()
+            old.close()
+            conn = connect(path)
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(prospective)")]
+            self.assertIn("urgent", cols)
+            self.assertIn("deliveries", cols)
+            self.assertIn("last_delivery", cols)
+            row = conn.execute("SELECT urgent, deliveries FROM prospective "
+                               "WHERE memory_id=1").fetchone()
+            self.assertEqual(tuple(row), (0, 0))    # 0.8.5 rows stay non-urgent
+            conn.close()
+        finally:
+            os.unlink(path)
+
+
 class TestDueReminderBlock(unittest.TestCase):
     def setUp(self):
         self.s = MemoryStore(conn=connect(":memory:"))

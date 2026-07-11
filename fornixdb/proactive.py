@@ -300,18 +300,26 @@ _format_block = format_block
 
 
 def due_reminder_block(store: MemoryStore) -> str | None:
-    """Prospective-memory delivery: everything that has come due, formatted for
-    injection, marked delivered in the same call (a reminder fires exactly
-    once). None when nothing is due — or when delivery can't be recorded (a
-    frozen/read-only store must not re-chirp the same reminder every turn)."""
-    from .prospective import due
+    """Prospective-memory delivery on the per-turn heartbeat. The owner's
+    prompt arriving IS the acknowledgment signal for anything urgent that was
+    delivered on a previous turn (they typed after seeing it), so ack() runs
+    first; then everything now due is formatted for injection. Normal
+    reminders fire exactly once; urgent ones keep reappearing every nag
+    interval until acknowledged. None when nothing is due — or when delivery
+    can't be recorded (a frozen/read-only store must not re-chirp)."""
+    from .prospective import ack, due
     try:
+        ack(store)
         rows = due(store)
     except Exception:
         return None
     if not rows:
         return None
-    lines = "\n".join(f"- {r['gist']} (due {r['due']})" for r in rows)
+    lines = "\n".join(
+        f"- {r['gist']} (due {r['due']})"
+        + (f" [URGENT — delivery {r['deliveries']}; repeats until the owner "
+           "responds]" if r["urgent"] else "")
+        for r in rows)
     return ("[FornixDB ⏰ reminder DUE — the owner asked to be told at this "
             f"time; tell them now, plainly:]\n{lines}")
 
