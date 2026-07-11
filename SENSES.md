@@ -116,7 +116,11 @@ state, thermal pressure, network identity, display and audio-route changes.
 Commits are change-driven, gists are templated text ("switched to home
 network, on power, external display connected"), and notably **no
 ModalEmbedder is required at all**: the gist lane alone makes machine state
-recallable, demonstrating that the two lanes are genuinely independent. The
+recallable, demonstrating that the two lanes are genuinely independent.
+Shipped (0.8.4): `adapters/mac_proprioception.read_temperature()` reads the
+Apple Silicon die sensors (IOHID, no sudo) and the battery thermistor, so
+"how do you feel?" can honestly include how warm the thinking has made the
+machine. The
 same pattern with real sensor-domain embedders is the robot-endpoint story
 (force, contact, IMU streams) that FornixDB's store-per-endpoint design
 anticipates.
@@ -124,14 +128,16 @@ anticipates.
 ## Reference binding: a laptop's camera and microphone
 
 Local-first holds — captioners and modality embedders run on device, like
-everything else here. A concrete first binding, candidates not commitments:
-camera frames sampled at ~10 Hz with a small CLIP-family image embedder
-driving the gate; a compact vision-language model writing captions *only on
-commit* (never at sample rate); local speech-to-text feeding transcripts into
-the existing text path untouched; a CLAP-family model embedding non-speech
-sound. The cost profile is the point: the sampling loop runs only the cheap
-embedder, the expensive models run only on committed events, and an idle
-scene costs approximately nothing.
+everything else here. The first bindings have shipped: `senses.watch()`
+samples camera frames with a CLIP-family embedder driving the gate and a
+compact vision-language model writing captions *only on commit* (never at
+sample rate); `senses.glance()` is the look-once, right-now variant; and as
+of 0.8.4 `senses.listen()` is the ear — a short microphone clip answered
+with a sound-scene gist from a CLAP model (`adapters/mac_audio.py`), with a
+speech lane feeding transcripts into the existing text path untouched. The
+cost profile is the point: the sampling loop runs only the cheap embedder,
+the expensive models run only on committed events, and an idle scene costs
+approximately nothing.
 
 **Privacy stance.** Capture is explicit and session-scoped — the owner starts
 `watch`/`hear` and sessions end by command or timeout; the OS camera/mic
