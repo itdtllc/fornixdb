@@ -245,6 +245,21 @@ def main(argv: list[str] | None = None) -> int:
     tp.add_argument("--max-chars", type=int,
                     help="character budget for the output")
 
+    rm = sub.add_parser("remind", help='prospective memory: fornixdb remind '
+                                       '"call the attorney" --when "tomorrow 9am"')
+    rm.add_argument("what", help="the intention to surface when it's time")
+    rm.add_argument("--when", required=True,
+                    help='"in 20 minutes", "tomorrow morning", "friday at 3pm", ISO')
+    rm.add_argument("--project")
+    rm.add_argument("--topic", action="append", default=[], help="repeatable")
+
+    dp = sub.add_parser("due", help="reminders that have come due (marks them "
+                                    "delivered; --peek to look without consuming)")
+    dp.add_argument("--peek", action="store_true",
+                    help="don't mark delivered — just look")
+    dp.add_argument("--upcoming", type=float, metavar="HOURS", default=None,
+                    help="also list undelivered reminders due within HOURS")
+
     hp = sub.add_parser("show", help="full detail of one memory (reinforces it)")
     hp.add_argument("ref", help="memory id or name")
     hp.add_argument("--no-reinforce", action="store_true")
@@ -697,6 +712,31 @@ def _dispatch(p, args, store, stores) -> int:
                   f"(cos {sug['cosine']}) — if this updates it, "
                   f"`supersede {sug['id']} {mem_id}`; if related, "
                   f"`link {mem_id} {sug['id']}`", file=sys.stderr)
+
+    elif args.cmd == "remind":
+        from .prospective import remind
+        try:
+            r = remind(store, args.what, args.when,
+                       project=args.project, topics=args.topic, source="cli")
+        except (ValueError, FrozenStoreError) as e:
+            print(f"not stored: {e}", file=sys.stderr)
+            return 1
+        print(f"reminder #{r['id']} due {r['due']}: {r['gist']}")
+
+    elif args.cmd == "due":
+        from .prospective import due as due_now, upcoming
+        rows = due_now(store, deliver=not args.peek)
+        if not rows:
+            print("nothing due.")
+        for r in rows:
+            mark = "(peek)" if args.peek else "(delivered)"
+            print(f"#{r['id']} due {r['due']} {mark}  {r['gist']}")
+        if args.upcoming is not None:
+            ahead = upcoming(store, within_hours=args.upcoming)
+            if ahead:
+                print(f"upcoming (next {args.upcoming:g}h):")
+                for r in ahead:
+                    print(f"  #{r['id']} due {r['due']}  {r['gist']}")
 
     elif args.cmd == "recall":
         since = until = None

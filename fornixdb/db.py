@@ -13,7 +13,8 @@ import os
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 10  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
+SCHEMA_VERSION = 11  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
+                    # v11: prospective (reminders — new table only, IF NOT EXISTS)
                     # v5: writer. v6: helpful_count/last_helpful (usefulness).
                     # v4: recall_feedback (negative feedback, new table only)
                     # v5: memory.writer (shared-tier writer provenance, B3)
@@ -187,6 +188,20 @@ CREATE TABLE IF NOT EXISTS embedding (
     vector    BLOB NOT NULL,
     PRIMARY KEY (memory_id, chunk)
 );
+
+-- v11: prospective memory — "remembering to remember" (Einstein & McDaniel).
+-- A reminder is an ordinary memory row (kind=episodic, event_time = when it's
+-- due, so the timeline shows it) plus one row here carrying the delivery
+-- state. delivered_at is a tombstone, not a delete: once surfaced, the row
+-- becomes a normal episodic memory of the intention ("I reminded him") and
+-- decays like everything else. Cancelling a reminder = forget_memory on the
+-- memory row (CASCADE cleans this side-table).
+CREATE TABLE IF NOT EXISTS prospective (
+    memory_id    INTEGER PRIMARY KEY REFERENCES memory(id) ON DELETE CASCADE,
+    due          TEXT NOT NULL,
+    delivered_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_prospective_due ON prospective(due);
 
 -- v10: the senses' latent lane. A perceptual memory keeps its caption gist
 -- embedded in `embedding` like every other memory (the cross-modal text

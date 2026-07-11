@@ -21,7 +21,7 @@ class TestTokens(unittest.TestCase):
         r = report(self.s)
         fixed = r["fixed_per_session"]
         self.assertGreater(fixed["mcp_tool_schemas"]["tokens"], 100)
-        self.assertEqual(fixed["mcp_tool_schemas"]["tools"], 21)
+        self.assertEqual(fixed["mcp_tool_schemas"]["tools"], 22)
         self.assertEqual(fixed["total_tokens"],
                          fixed["mcp_tool_schemas"]["tokens"]
                          + fixed["mcp_instructions"]["tokens"]
@@ -57,7 +57,8 @@ class TestTokens(unittest.TestCase):
         # 2110 (link `relation` param + distinct-ok accept semantics, and the
         # dream description naming its grown worklist: chronic-noise,
         # mis-scoped, dial report; owner principle 2026-06-25: never trim
-        # tools/descriptions to fit — raise the budget) —
+        # tools/descriptions to fit — raise the budget) -> 2260 (remind_me —
+        # prospective memory, 0.8.5) —
         # each a deliberate raise for named tools. This measures
         # ALL defined tools; the
         # live footprint is the
@@ -74,8 +75,9 @@ class TestTokens(unittest.TestCase):
         # included — has its own, deliberately higher ceiling for stores that
         # enable the senses (owner principle 2026-06-25: raise the budget, never
         # trim a description to fit).
-        DEFAULT_SCHEMA_TOKEN_BUDGET = 2110  # memory tools; link distinct + dream
-        FULL_SCHEMA_TOKEN_BUDGET = 2750     # + look/feel/see/recaption (opt-in)
+        DEFAULT_SCHEMA_TOKEN_BUDGET = 2260  # memory tools; link distinct + dream
+                                            # + remind_me (prospective, 0.8.5)
+        FULL_SCHEMA_TOKEN_BUDGET = 2900     # + look/feel/see/recaption (opt-in)
         INSTRUCTIONS_TOKEN_BUDGET = 260
 
         default_schema = [t for t in TOOLS if t["name"] not in DEFAULT_OFF_TOOLS]
