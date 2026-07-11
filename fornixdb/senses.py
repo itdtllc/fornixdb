@@ -43,8 +43,8 @@ from typing import Callable, Protocol
 from .salience import cosine
 from .vectors import from_blob, to_blob
 
-__all__ = ["ModalEmbedder", "see", "hear", "watch", "feel", "feel_gist",
-           "modal_vector", "modal_neighbors"]
+__all__ = ["ModalEmbedder", "see", "hear", "watch", "glance", "listen",
+           "feel", "feel_gist", "modal_vector", "modal_neighbors"]
 
 
 class ModalEmbedder(Protocol):
@@ -155,6 +155,21 @@ def see(store, image_path: str, *, caption: str | None = None,
 
 # -------------------------------------------------------------------- sound
 
+def _sound_gist(sound_caption: str, transcript: str | None
+                ) -> tuple[str, str | None]:
+    """Merge hear()'s two lanes into (gist, detail): the sound scene leads,
+    the speech is quoted into the gist and lands whole in detail."""
+    gist = sound_caption.strip()
+    detail = None
+    if transcript:
+        transcript = transcript.strip()
+    if transcript:
+        quoted = transcript if len(transcript) <= 120 else transcript[:117] + "…"
+        gist = f'{gist} — said: "{quoted}"'
+        detail = transcript
+    return gist, detail
+
+
 def hear(store, audio_path: str, *, sound_caption: str | None = None,
          sound_tagger: Callable[[str], str] | None = None,
          transcript: str | None = None,
@@ -188,13 +203,7 @@ def hear(store, audio_path: str, *, sound_caption: str | None = None,
     if transcript is None and transcriber is not None:
         transcript = transcriber(artifact)
 
-    gist = sound_caption.strip()
-    detail = None
-    if transcript:
-        transcript = transcript.strip()
-        quoted = transcript if len(transcript) <= 120 else transcript[:117] + "…"
-        gist = f'{gist} — said: "{quoted}"'
-        detail = transcript
+    gist, detail = _sound_gist(sound_caption, transcript)
     return _percept(store, gist, sense="sound", artifact=artifact,
                     detail=detail, event_time=event_time,
                     event_time_end=event_time_end, topics=topics,
@@ -333,6 +342,75 @@ def glance(store, source: str, captioner: Callable[[str], str], *,
         # is the only cleanup — an ephemeral glance leaves nothing on disk.
         if not keep_keyframe:
             Path(keyframe).unlink(missing_ok=True)
+
+
+def listen(store, source: str = "mic", *, seconds: float = 8.0,
+           sound_tagger: Callable[[str], str],
+           transcriber: Callable[[str], str | None] | None = None,
+           embedder: "ModalEmbedder | None" = None,
+           remember: bool = False, keep_clip: bool = False,
+           clip_dir: str | None = None,
+           topics: list[str] | None = None, project: str | None = None,
+           session_id: str | None = None) -> str:
+    """Listen once, right now — the answer to "what do you hear?".
+
+    The audio twin of `glance()`. Records `seconds` from the microphone
+    (`source`: "mic" | "mic:N" for avfoundation device N | an existing audio
+    file, for tests and verification) and runs hear()'s two lanes on the clip:
+    the REQUIRED sound scene via `sound_tagger` (a local audio captioner,
+    e.g. adapters.mac_audio.clap_tagger()) and the ADDITIONAL speech lane via
+    `transcriber` (a local STT returning None when no words were spoken).
+    Returns the merged gist sentence — "acoustic guitar — said: \"…\"".
+
+    Ephemeral by default (`remember=False`): caption and delete, nothing
+    written — a pure perception query. `remember=True` records it through
+    hear() with the capture's real event-time span; `keep_clip` then leaves
+    the WAV on disk (default: store the words, drop the clip — the fidelity
+    ladder, exactly like a glance keyframe). A file `source` is never
+    deleted — the caller owns it."""
+    from datetime import datetime, timedelta
+
+    from .adapters import mac_audio
+
+    captured = source == "mic" or source.startswith("mic:")
+    if captured:
+        device = source.split(":", 1)[1] if ":" in source else "0"
+        if clip_dir is None:
+            row = store.conn.execute("PRAGMA database_list").fetchone()
+            base = Path(row[2]).parent if row and row[2] else Path.cwd()
+            clip_dir = str(base / "senses" / "listen")
+        Path(clip_dir).mkdir(parents=True, exist_ok=True)
+        start = datetime.now()
+        stamp = start.strftime("%Y%m%dT%H%M%S")
+        clip = mac_audio.capture_clip(
+            seconds, device=device,
+            out_path=str(Path(clip_dir) / f"listen-{stamp}.wav"))
+        event_time = start.isoformat(timespec="seconds")
+        event_time_end = (start + timedelta(seconds=seconds)
+                          ).isoformat(timespec="seconds")
+    else:
+        clip = _resolve(source, "listen")
+        event_time = event_time_end = None
+
+    try:
+        sound_caption = (sound_tagger(clip) or "").strip()
+        transcript = transcriber(clip) if transcriber is not None else None
+        gist, _ = _sound_gist(sound_caption, transcript)
+        if remember and sound_caption:
+            mid = hear(store, clip, sound_caption=sound_caption,
+                       transcript=transcript, embedder=embedder,
+                       event_time=event_time, event_time_end=event_time_end,
+                       topics=topics, project=project, session_id=session_id)
+            if captured and not keep_clip:
+                from . import watchloop
+                watchloop._drop_keyframe(store, mid, clip)  # words survive
+        return gist
+    finally:
+        # An ephemeral listen leaves nothing on disk; a remembered one already
+        # dropped the clip above (second unlink = harmless no-op). Only a
+        # caller-owned file source or keep_clip leaves the audio behind.
+        if captured and not keep_clip:
+            Path(clip).unlink(missing_ok=True)
 
 
 def feel_gist(sensor: str, reading) -> str:

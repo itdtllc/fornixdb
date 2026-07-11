@@ -158,6 +158,44 @@ class TestPmsetParse(unittest.TestCase):
                              "state": None, "remaining": None})
 
 
+class TestTemperature(unittest.TestCase):
+    def test_battery_temp_parses_centidegrees(self):
+        self.assertEqual(mp.parse_battery_temp('    "Temperature" = 3065\n'),
+                         30.6)
+
+    def test_battery_temp_absent_or_implausible_is_none(self):
+        self.assertIsNone(mp.parse_battery_temp("no such key"))
+        self.assertIsNone(mp.parse_battery_temp('"Temperature" = 0'))
+        self.assertIsNone(mp.parse_battery_temp('"Temperature" = 25000'))
+
+    def test_pick_cpu_temp_prefers_die_and_skips_calibration(self):
+        sensors = [("PMU tcal", 51.8), ("PMU tdie7", 38.7),
+                   ("PMU tdie6", 38.5), ("NAND CH0 temp", 41.0)]
+        # tcal (51.8) is hottest but excluded; die sensors beat the NAND one
+        self.assertEqual(mp.pick_cpu_temp(sensors), 38.7)
+
+    def test_pick_cpu_temp_falls_back_to_hottest_plausible(self):
+        self.assertEqual(
+            mp.pick_cpu_temp([("SOC Sensor", 44.2), ("bogus", 250.0)]), 44.2)
+        self.assertIsNone(mp.pick_cpu_temp([]))
+        self.assertIsNone(mp.pick_cpu_temp([("PMU tcal", 51.8)]))
+
+    def test_read_temperature_combines_both_thermometers(self):
+        def fake_run(*a, **k):
+            class P:
+                stdout = '  "Temperature" = 3065\n'
+            return P()
+        r = mp.read_temperature(hid=lambda: [("PMU tdie1", 38.5)],
+                                run=fake_run)
+        self.assertEqual(r, {"cpu_c": 38.5, "battery_c": 30.6})
+
+    def test_read_temperature_degrades_to_nones(self):
+        def broken_run(*a, **k):
+            raise OSError("no ioreg")
+        r = mp.read_temperature(hid=lambda: [], run=broken_run)
+        self.assertEqual(r, {"cpu_c": None, "battery_c": None})
+
+
 class TestBatteryFrames(unittest.TestCase):
     def fake_reader(self, *seq):
         it = iter(seq)

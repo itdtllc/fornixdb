@@ -38,7 +38,8 @@ import subprocess
 import time
 from typing import Callable, Iterator
 
-__all__ = ["parse_batt", "read_battery", "battery_frames"]
+__all__ = ["parse_batt", "read_battery", "battery_frames",
+           "parse_battery_temp", "pick_cpu_temp", "read_temperature"]
 
 _SOURCE_RE = re.compile(r"Now drawing from '([^']+)'")
 _PERCENT_RE = re.compile(r"(\d+)%")
@@ -89,6 +90,150 @@ def read_battery(*, timeout: float = 5.0) -> dict:
                          capture_output=True, text=True,
                          timeout=timeout).stdout
     return parse_batt(out)
+
+
+# ---- temperature — the machine's warmth as a feeling -------------------------
+#
+# Two thermometers, both sudo-free:
+#   • CPU die sensors via the IOHID event system (Apple Silicon exposes them
+#     as HID services; the same source `macmon`/`smctemp` read). Private API,
+#     reached with ctypes — degrades to None anywhere it isn't available.
+#   • The battery's own thermistor from `ioreg` (AppleSmartBattery
+#     "Temperature", hundredths of °C) — works on any Mac laptop.
+
+_BATT_TEMP_RE = re.compile(r'"Temperature"\s*=\s*(\d+)')
+
+
+def parse_battery_temp(text: str) -> float | None:
+    """Battery temperature in °C from `ioreg -rn AppleSmartBattery` output.
+    Pure — no subprocess. None when the key is absent (desktops, truncation)
+    or implausible."""
+    m = _BATT_TEMP_RE.search(text)
+    if not m:
+        return None
+    c = int(m.group(1)) / 100.0
+    return round(c, 1) if 0.0 < c < 100.0 else None
+
+
+def pick_cpu_temp(sensors: list[tuple[str, float]]) -> float | None:
+    """The hottest die temperature from named HID sensor readings. Pure.
+
+    Prefers sensors named like the die ("tdie…"); otherwise falls back to the
+    hottest plausible reading. Calibration references ("tcal") report a fixed
+    ~52° regardless of load and are never real warmth, so they are excluded."""
+    plausible = [(n, t) for n, t in sensors
+                 if 0.0 < t < 120.0 and "cal" not in n.lower()]
+    die = [t for n, t in plausible if "tdie" in n.lower()]
+    pool = die or [t for _, t in plausible]
+    return round(max(pool), 1) if pool else None
+
+
+def _hid_temperatures() -> list[tuple[str, float]]:
+    """All temperature sensors the IOHID event system exposes, as
+    (product_name, celsius). Empty list when the private API is unavailable
+    (Intel Macs, hardened runtimes, future OS changes) — never raises."""
+    try:
+        import ctypes
+        import ctypes.util
+
+        cf = ctypes.CDLL(ctypes.util.find_library("CoreFoundation"))
+        iokit = ctypes.CDLL("/System/Library/Frameworks/IOKit.framework/IOKit")
+
+        cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+        cf.CFStringCreateWithCString.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+        cf.CFNumberCreate.restype = ctypes.c_void_p
+        cf.CFNumberCreate.argtypes = [
+            ctypes.c_void_p, ctypes.c_long, ctypes.c_void_p]
+        cf.CFDictionaryCreate.restype = ctypes.c_void_p
+        cf.CFDictionaryCreate.argtypes = (
+            [ctypes.c_void_p] * 3 + [ctypes.c_long] + [ctypes.c_void_p] * 2)
+        cf.CFArrayGetCount.restype = ctypes.c_long
+        cf.CFArrayGetCount.argtypes = [ctypes.c_void_p]
+        cf.CFArrayGetValueAtIndex.restype = ctypes.c_void_p
+        cf.CFArrayGetValueAtIndex.argtypes = [ctypes.c_void_p, ctypes.c_long]
+        cf.CFStringGetCString.restype = ctypes.c_bool
+        cf.CFStringGetCString.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]
+
+        iokit.IOHIDEventSystemClientCreate.restype = ctypes.c_void_p
+        iokit.IOHIDEventSystemClientCreate.argtypes = [ctypes.c_void_p]
+        iokit.IOHIDEventSystemClientSetMatching.restype = None
+        iokit.IOHIDEventSystemClientSetMatching.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p]
+        iokit.IOHIDEventSystemClientCopyServices.restype = ctypes.c_void_p
+        iokit.IOHIDEventSystemClientCopyServices.argtypes = [ctypes.c_void_p]
+        iokit.IOHIDServiceClientCopyProperty.restype = ctypes.c_void_p
+        iokit.IOHIDServiceClientCopyProperty.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p]
+        iokit.IOHIDServiceClientCopyEvent.restype = ctypes.c_void_p
+        iokit.IOHIDServiceClientCopyEvent.argtypes = [
+            ctypes.c_void_p, ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]
+        iokit.IOHIDEventGetFloatValue.restype = ctypes.c_double
+        iokit.IOHIDEventGetFloatValue.argtypes = [ctypes.c_void_p, ctypes.c_int64]
+
+        UTF8 = 0x08000100
+
+        def cfstr(s: str):
+            return cf.CFStringCreateWithCString(None, s.encode(), UTF8)
+
+        def cfnum(n: int):
+            v = ctypes.c_int64(n)
+            return cf.CFNumberCreate(None, 4, ctypes.byref(v))  # SInt64
+
+        # Temperature sensors live at AppleVendor usage page 0xff00, usage 5.
+        keys = (ctypes.c_void_p * 2)(cfstr("PrimaryUsagePage"),
+                                     cfstr("PrimaryUsage"))
+        vals = (ctypes.c_void_p * 2)(cfnum(0xFF00), cfnum(5))
+        match = cf.CFDictionaryCreate(None, keys, vals, 2, None, None)
+
+        client = iokit.IOHIDEventSystemClientCreate(None)
+        if not client:
+            return []
+        iokit.IOHIDEventSystemClientSetMatching(client, match)
+        services = iokit.IOHIDEventSystemClientCopyServices(client)
+        if not services:
+            return []
+
+        KIOHIDEventTypeTemperature = 15
+        product = cfstr("Product")
+        buf = ctypes.create_string_buffer(256)
+        out: list[tuple[str, float]] = []
+        for i in range(cf.CFArrayGetCount(services)):
+            svc = cf.CFArrayGetValueAtIndex(services, i)
+            ev = iokit.IOHIDServiceClientCopyEvent(
+                svc, KIOHIDEventTypeTemperature, 0, 0)
+            if not ev:
+                continue
+            celsius = iokit.IOHIDEventGetFloatValue(
+                ev, KIOHIDEventTypeTemperature << 16)  # event field base
+            name = "?"
+            ref = iokit.IOHIDServiceClientCopyProperty(svc, product)
+            if ref and cf.CFStringGetCString(ref, buf, 256, UTF8):
+                name = buf.value.decode(errors="replace")
+            out.append((name, celsius))
+        return out
+    except Exception:
+        return []
+
+
+def read_temperature(*, timeout: float = 5.0,
+                     hid: Callable[[], list[tuple[str, float]]] | None = None,
+                     run: Callable[..., "subprocess.CompletedProcess"] | None = None,
+                     ) -> dict:
+    """The machine's warmth: {"cpu_c": 38.5 | None, "battery_c": 30.7 | None}.
+    Either thermometer may be absent (Intel HID, no battery) — its key is then
+    None, never an exception. `hid`/`run` are injectable for tests."""
+    sensors = (hid or _hid_temperatures)()
+    reading: dict = {"cpu_c": pick_cpu_temp(sensors), "battery_c": None}
+    try:
+        out = (run or subprocess.run)(
+            ["ioreg", "-rn", "AppleSmartBattery"],
+            capture_output=True, text=True, timeout=timeout).stdout
+        reading["battery_c"] = parse_battery_temp(out or "")
+    except Exception:
+        pass
+    return reading
 
 
 def _coarsen(reading: dict, percent_step: int) -> dict:

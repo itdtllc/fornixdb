@@ -48,6 +48,17 @@ class TestParseWhen(unittest.TestCase):
         s, e = self.r("last 30 minutes")
         self.assertEqual(s, NOW - timedelta(minutes=30))
 
+    def test_colloquial_last_minute_is_just_now(self):
+        # "what just happened in the last minute" means the immediate past,
+        # not a literal 60 seconds — same window as "just now"
+        for phrase in ("the last minute", "last minute", "in the last minute",
+                       "the past minute", "within the last minute",
+                       "the last few minutes", "past few minutes",
+                       "the last couple of minutes", "in the past few moments"):
+            s, e = self.r(phrase)
+            self.assertEqual(s, NOW - timedelta(hours=1), phrase)
+            self.assertEqual(e, NOW + timedelta(seconds=1), phrase)
+
     def test_units_ago_is_a_single_window(self):
         s, e = self.r("2 hours ago")
         self.assertEqual(s, NOW - timedelta(hours=2))
