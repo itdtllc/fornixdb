@@ -7,6 +7,29 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-07-11
+
+### Fixed
+- **A 0-row `ack()` no longer parks the store's write lock.** Hosts call
+  `prospective.ack()` on every owner turn, and almost every call matches
+  nothing — but the `UPDATE` still opened a write transaction, and the commit
+  only ran when rows changed. The connection then held the WAL write lock
+  indefinitely, so every *other* connection's writes died with "database is
+  locked" after the busy timeout. A host sharing one connection everywhere
+  never sees it; one connection per thread hits it immediately (found live
+  2026-07-11 when it took out a voice host's camera and hearing mid-demo —
+  the sense paths open their own store connections and died at connect).
+  `ack()` now commits unconditionally.
+- **Spoken-word numerals in time phrases.** Voice hosts hand the transcriber's
+  text straight to `parse_due`/`parse_when`, and Whisper writes small numbers
+  as words: "remind me in five minutes" and "the last several minutes" both
+  failed live while typed "in 2 minutes" worked. Both parsers now normalize
+  whole-word numerals (one…nineteen, twenty/thirty/forty/fifty, compounds
+  like "twenty-five") to digits before matching — this also lets clock times
+  arrive spoken ("friday at three pm") — and "several" is understood: "in
+  several minutes" schedules ~5 minutes out, "the last several minutes" is
+  the colloquial just-now window.
+
 ## [0.8.6] - 2026-07-10
 
 ### Added

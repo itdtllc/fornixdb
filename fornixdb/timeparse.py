@@ -18,6 +18,30 @@ MONTHS = (
 )
 
 
+# Spoken-word numerals → digits, applied before any pattern matching in BOTH
+# parsers. Voice hosts get their phrases from a transcriber, and Whisper
+# writes small numbers as WORDS — "remind me in five minutes" reached
+# parse_due exactly like that in the 2026-07-11 live demo and fell through to
+# ValueError while typed "in 2 minutes" worked. Whole words only; compounds
+# ("twenty-five", "twenty five") collapse first so the tens word isn't
+# swallowed alone.
+_ONES = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+         "six": 6, "seven": 7, "eight": 8, "nine": 9}
+_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50}
+_SINGLES = {**_ONES, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+            "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17,
+            "eighteen": 18, "nineteen": 19, **_TENS}
+_COMPOUND_RE = re.compile(
+    r"\b(" + "|".join(_TENS) + r")[-\s](" + "|".join(_ONES) + r")\b")
+_SINGLE_RE = re.compile(r"\b(" + "|".join(_SINGLES) + r")\b")
+
+
+def _digitize(t: str) -> str:
+    t = _COMPOUND_RE.sub(
+        lambda m: str(_TENS[m.group(1)] + _ONES[m.group(2)]), t)
+    return _SINGLE_RE.sub(lambda m: str(_SINGLES[m.group(1)]), t)
+
+
 def _day(d: datetime) -> tuple[datetime, datetime]:
     start = d.replace(hour=0, minute=0, second=0, microsecond=0)
     return start, start + timedelta(days=1)
@@ -34,7 +58,7 @@ def parse_when(text: str, now: datetime | None = None) -> tuple[datetime, dateti
     Raises ValueError for phrases it does not understand.
     """
     now = now or datetime.now()
-    t = text.strip().lower()
+    t = _digitize(text.strip().lower())
 
     if t in ("today",):
         return _day(now)
@@ -72,7 +96,7 @@ def parse_when(text: str, now: datetime | None = None) -> tuple[datetime, dateti
     # literal 60s (asked live 2026-07-10 and it fell through to ValueError)
     if re.fullmatch(
             r"(?:in\s+|within\s+)?(?:the\s+)?(?:last|past)\s+"
-            r"(?:minute|moment|(?:few|couple)(?:\s+of)?\s+(?:minutes|moments))",
+            r"(?:minute|moment|(?:few|couple|several)(?:\s+of)?\s+(?:minutes|moments))",
             t):
         return now - timedelta(hours=1), soon
     # "past 2 hours" / "last 30 minutes" — range ending now
@@ -229,17 +253,17 @@ def parse_due(text: str, now: datetime | None = None) -> datetime:
     understand, or an explicit timestamp in the past.
     """
     now = now or datetime.now()
-    t = re.sub(r"\s+", " ", text.strip().lower())
+    t = _digitize(re.sub(r"\s+", " ", text.strip().lower()))
     day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
     # relative: "in 20 minutes", "in an hour", "in a few minutes",
     # "in half an hour" — never rolled, they're future by construction
     m = re.fullmatch(
-        r"in (?:about )?(\d+|an?|a few|a couple(?: of)?|half an?) "
+        r"in (?:about )?(\d+|an?|a few|a couple(?: of)?|several|half an?) "
         r"(minute|min|hour|hr|day|week)s?", t)
     if m:
         word, unit = m.group(1), m.group(2)
-        n = {"a": 1.0, "an": 1.0, "a few": 3.0,
+        n = {"a": 1.0, "an": 1.0, "a few": 3.0, "several": 5.0,
              "a couple": 2.0, "a couple of": 2.0,
              "half an": 0.5, "half a": 0.5}.get(word)
         if n is None:

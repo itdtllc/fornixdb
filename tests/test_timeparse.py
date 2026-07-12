@@ -129,6 +129,19 @@ class TestParseWhen(unittest.TestCase):
         s, e = self.r("2026")
         self.assertEqual((s, e), (datetime(2026, 1, 1), datetime(2027, 1, 1)))
 
+    def test_spoken_word_numerals(self):
+        # Whisper writes small numbers as words; "the last several minutes"
+        # and spoken counts like "five" failed live 2026-07-11.
+        s, e = self.r("the last five minutes")
+        self.assertEqual(s, NOW - timedelta(minutes=5))
+        s, e = self.r("the last several minutes")   # colloquial just-now
+        self.assertEqual(s, NOW - timedelta(hours=1))
+        s, e = self.r("two hours ago")
+        self.assertEqual((s, e), (NOW - timedelta(hours=2),
+                                  NOW - timedelta(hours=1)))
+        s, e = self.r("the past twenty minutes")
+        self.assertEqual(s, NOW - timedelta(minutes=20))
+
     def test_garbage_raises(self):
         with self.assertRaises(ValueError):
             self.r("the day the music died")

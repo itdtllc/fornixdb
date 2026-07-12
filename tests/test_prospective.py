@@ -25,6 +25,22 @@ class TestParseDue(unittest.TestCase):
         self.assertEqual(self.d("in 2 days"), NOW + timedelta(days=2))
         self.assertEqual(self.d("in 1 week"), NOW + timedelta(days=7))
 
+    def test_relative_spoken_word_numerals(self):
+        # Voice hosts hand over Whisper transcripts, which write small numbers
+        # as WORDS — "remind me in five minutes" failed live 2026-07-11 while
+        # typed "in 2 minutes" worked.
+        self.assertEqual(self.d("in five minutes"), NOW + timedelta(minutes=5))
+        self.assertEqual(self.d("in one minute"), NOW + timedelta(minutes=1))
+        self.assertEqual(self.d("in twenty minutes"), NOW + timedelta(minutes=20))
+        self.assertEqual(self.d("in twenty-five minutes"),
+                         NOW + timedelta(minutes=25))
+        self.assertEqual(self.d("in twenty five minutes"),
+                         NOW + timedelta(minutes=25))
+        self.assertEqual(self.d("in two hours"), NOW + timedelta(hours=2))
+        self.assertEqual(self.d("in several minutes"), NOW + timedelta(minutes=5))
+        # word numerals reach clock times too: "friday at three pm"
+        self.assertEqual(self.d("friday at three pm").hour, 15)
+
     def test_tomorrow_parts(self):
         self.assertEqual(self.d("tomorrow"), datetime(2026, 7, 11, 9))
         self.assertEqual(self.d("tomorrow morning"), datetime(2026, 7, 11, 9))
@@ -199,6 +215,17 @@ class TestUrgentNag(unittest.TestCase):
         self.assertEqual(prospective.ack(self.s, now=NOW), 0)
         # still fires when due
         self.assertEqual(len(prospective.due(self.s, now=self.t0)), 1)
+
+    def test_ack_with_nothing_pending_leaves_no_open_transaction(self):
+        # Hosts call ack() on EVERY owner turn, almost always matching 0 rows.
+        # The UPDATE still opens a write transaction; without an unconditional
+        # commit the connection parks the WAL write lock forever and every
+        # other connection's writes die with "database is locked" (2026-07-11:
+        # killed Elira's camera/senses mid-demo once her host moved to
+        # per-thread connections).
+        self.assertEqual(prospective.ack(self.s, now=NOW), 0)
+        self.assertFalse(self.s.conn.in_transaction,
+                         "0-row ack() left a write transaction open")
 
     def test_ack_ignores_normal_reminders(self):
         prospective.remind(self.s, "check the mail", "in 5 minutes", now=NOW)

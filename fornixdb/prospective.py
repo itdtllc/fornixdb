@@ -153,8 +153,14 @@ def ack(store: MemoryStore, now: datetime | None = None) -> int:
         "UPDATE prospective SET delivered_at = ? "
         "WHERE delivered_at IS NULL AND urgent = 1 AND deliveries > 0",
         (now_iso,))
-    if cur.rowcount:
-        store.conn.commit()
+    # Commit UNCONDITIONALLY: executing the UPDATE opens a write transaction
+    # and takes the WAL write lock even when it matches 0 rows (the common
+    # case — hosts call ack() every owner turn). Skipping the commit then
+    # parks that lock on this connection forever, and every OTHER connection's
+    # write dies with "database is locked" after the busy timeout (2026-07-11:
+    # this took out Elira's camera/senses mid-demo once her host went to
+    # per-thread connections; a shared singleton had masked it for months).
+    store.conn.commit()
     return cur.rowcount
 
 
