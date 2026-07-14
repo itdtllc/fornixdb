@@ -22,7 +22,7 @@ It is a **memory, not a mind**: it stores, indexes, ranks, and retrieves. It nev
 - **Remembering to remember** *(prospective memory)*. *"Remind me tomorrow morning to call the attorney"* stores an intention with a due time; when the clock arrives it is delivered through the host's own heartbeat — the next chat turn, a voice assistant's idle tick, or session start — exactly once. Mark it **urgent** and it nags instead: repeated every few minutes until the owner responds with anything at all, and resurfaced at the next session start rather than ever dying silently. Future phrases work on the timeline too: *"what's coming up?"* reads the same rows forward.
 - **Recall by subject.** Keyword + ranked relevance returns a one-line **gist** first; full **detail** is fetched only when the conversation drills in, so recall stays cheap in the context window.
 - **Recall by meaning** *(on by default, never required)*. A small local embedding model adds similarity by meaning — *"the glitch where her eyes sparkled"* finds the right memory with zero shared words. It ships by default but is never required: switch it off (`FORNIXDB_VECTORS=off`) or run on hardware that can't load it, and pure keyword + time still works.
-- **A memory that adapts.** New knowledge supersedes old *without erasing it* (the trail of corrections stays queryable) — just **re-`remember` under the same title** and the prior version is kept as history, so a finding that evolves mid-investigation (hypothesis → corrected diagnosis → fix) stays *one* current memory instead of three contradictory ones. Unused memories fade in ranking while frequently-used ones stay sharp; an explicit "not that one" downweights a wrong recall hit for similar queries only — retractable, never deleted.
+- **A memory that adapts.** New knowledge supersedes old *without erasing it* (the trail of corrections stays queryable) — just **re-`remember` under the same title** and the prior version is kept as history, so a finding that evolves mid-investigation (hypothesis → corrected diagnosis → fix) stays *one* current memory instead of three contradictory ones. Unused memories fade in ranking while frequently-used ones stay sharp; an explicit "not that one" downweights a wrong recall hit for similar queries only — retractable, never deleted. A memory that keeps getting *pushed* proactively but is never acted on eventually stops being pushed — muted from the proactive channels while staying fully available to a direct recall, and un-muted the moment it earns a reference again.
 - **Honesty flags.** Stale, unverified facts come back marked as such; duplicates across stores answer once; a downweighted or auto-captured result says so. Provenance travels with every answer.
 - **You stay in charge.** Capture policy is yours (only-when-asked / offer / auto). Never-delete is the default; true deletion happens only at your explicit consent, and forgets least-important-first.
 
@@ -64,7 +64,7 @@ active development branch and can change through the day; for a stable checkout,
 install a tagged release instead:
 
 ```bash
-pip install "git+https://github.com/itdtllc/fornixdb@v0.8.7"
+pip install "git+https://github.com/itdtllc/fornixdb@v0.8.8"
 ```
 
 Releases are listed at <https://github.com/itdtllc/fornixdb/releases>; see

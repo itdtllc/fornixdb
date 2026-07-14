@@ -7,6 +7,34 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+## [0.8.8] - 2026-07-14
+
+### Changed
+- **Chronically-unreferenced memories are muted from the proactive-push
+  channels.** Push noise concentrates in a handful of memories that surface
+  every session and are never once acted on downstream. The cosine floor
+  provably can't filter them — useful and noise push-cosines fully overlap
+  (measured 2026-07-12) — but each memory's own *push outcome history* can. A
+  memory pushed `>= N` times with `<= M` downstream references (defaults 8 / 0,
+  config-tunable) is now proactive-suppressed: excluded from the L3/L4/L5 push
+  channels only. It is **never** hidden from explicit `recall`/`show`/`timeline`
+  (a hard invariant), and it is redeemable — `show`, `mark_helpful`, a
+  supersede, or a gist edit clears the suppression, and the scan itself
+  un-suppresses any row that has since earned a reference.
+
+### Added
+- **`fornixdb suppress`** — `--scan` (dry-run the rule against push-outcome
+  stats), `--apply`, `--list`, `--undo`. The scan reuses the same
+  push-statistics pass as the use-credit loop, so there is one source of truth.
+  Suppression decisions are logged to `suppress_log.jsonl` beside the store, and
+  the `dream` pass refreshes them at pass-open (gated exactly like the
+  use-credit refresh, with the cross-store id-collision guard).
+
+### Migration
+- **Schema v13** adds `proactive_suppressed_at` plus the justifying push stats.
+  The migration is an idempotent, nullable `ALTER` — no data is rewritten and
+  existing rows stay unsuppressed until a scan runs.
+
 ## [0.8.7] - 2026-07-11
 
 ### Fixed

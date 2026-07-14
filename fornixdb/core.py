@@ -418,6 +418,10 @@ class MemoryStore:
             (new_id, old_id),
         )
         self.conn.commit()
+        # content changed: the successor is a fresh (unsuppressed) row, and the
+        # old row is tombstoned — clear any suppression on it so the audit trail
+        # doesn't carry a stale flag on a row that no longer participates.
+        self.clear_proactive_suppression([old_id], "superseded")
 
     def tombstone(self, memory_id: int) -> None:
         """Retire a memory with no successor ("forget"). The row is kept and
@@ -453,6 +457,10 @@ class MemoryStore:
                           (gist, memory_id))
         self.conn.execute("DELETE FROM embedding WHERE memory_id = ?", (memory_id,))
         self.conn.commit()
+        # a rewritten gist is a content change — the old push-outcome history no
+        # longer describes this text, so re-evaluate: clear suppression and let a
+        # future scan re-classify it on the new gist.
+        self.clear_proactive_suppression([memory_id], "gist_rewritten")
         emb = self._resolve_embedder(embedder)
         if emb is not None:
             try:
@@ -541,6 +549,7 @@ class MemoryStore:
                WHERE id = ?""",
             (ts, ts, ts, HELPFUL_BUMP, SALIENCE_CAP, row["id"]))
         self.conn.commit()
+        self.clear_proactive_suppression([row["id"]], "marked_helpful")
         out = self.conn.execute(
             "SELECT id, gist, kind, helpful_count, last_helpful, recall_count, "
             "salience FROM memory WHERE id = ?", (row["id"],)).fetchone()
@@ -1092,6 +1101,12 @@ class MemoryStore:
               else (ts, bump, SALIENCE_CAP, i)) for i in ids],
         )
         self.conn.commit()
+        # Redemption: reinforcement is a deliberate single-target engagement
+        # (show, explicit recall detail) — the host demonstrated the memory
+        # matters, so it earns its way back into the push channels. Passive
+        # listing (reinforce=False, e.g. a push candidate-gather) does NOT redeem.
+        if reinforce:
+            self.clear_proactive_suppression(ids, "reinforced")
 
     def record_surfaced(self, ids: list[int]) -> None:
         """Count a proactive PUSH impression: this memory was injected unsolicited
@@ -1137,6 +1152,105 @@ class MemoryStore:
         )
         self.conn.commit()
         return sum(1 for n in counts.values() if int(n) > 0)
+
+    # ---------------------------------------------------- proactive suppression
+    # A memory chronically PUSHED but never REFERENCED is push-noise the cosine
+    # floor provably can't filter (useful vs noise cosines overlap — measured
+    # 2026-07-12). Push OUTCOME history separates them cleanly, so such a memory
+    # is proactive-SUPPRESSED: excluded from the L3/L4/L5 push channels only.
+    # These methods are mechanical (set / clear / list + a beside-the-store
+    # audit log); the RULE that decides which ids qualify lives in suppress.py,
+    # exactly as usefulness_scan owns policy and record_referenced owns the write.
+    # INVARIANT: suppression never touches recall/show/timeline — a suppressed
+    # memory is always still explicitly reachable.
+
+    def _suppress_log_path(self) -> str | None:
+        """suppress_log.jsonl beside the store db (like floor_log) — an audit
+        trail of every suppress/un-suppress with its justification. None for an
+        in-memory store."""
+        from .proactive import floor_log_path_for
+        from pathlib import Path
+        p = floor_log_path_for(self)
+        return str(Path(p).with_name("suppress_log.jsonl")) if p else None
+
+    def _log_suppression(self, event: str, records: list[dict]) -> None:
+        path = self._suppress_log_path()
+        if not path or not records:
+            return
+        import json
+        ts = now_iso()
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                for r in records:
+                    f.write(json.dumps({"ts": ts, "event": event, **r},
+                                       ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def suppress_proactive(self, stats: dict[int, tuple], at: str | None = None) -> int:
+        """Mark memories proactive-suppressed. `stats` is {id: (pushed, referenced)}
+        — the justifying counts, stored so `suppress --list` can show WHY without
+        re-scanning. Only rows that EXIST and are NOT already suppressed are touched
+        (idempotent; re-running the scan never re-stamps or double-logs). Returns the
+        number newly suppressed. Frozen/read-only stores skip silently."""
+        if not stats or self.frozen():
+            return 0
+        newly = []
+        for i, pr in stats.items():
+            row = self.conn.execute(
+                "SELECT proactive_suppressed_at FROM memory WHERE id = ?", (int(i),)
+            ).fetchone()
+            if row is None or row["proactive_suppressed_at"] is not None:
+                continue                 # gone, or already suppressed
+            newly.append((int(i), int(pr[0]), int(pr[1])))
+        if not newly:
+            return 0
+        ts = at or now_iso()
+        self.conn.executemany(
+            """UPDATE memory SET proactive_suppressed_at = ?,
+                                 suppressed_pushed = ?, suppressed_referenced = ?
+               WHERE id = ?""",
+            [(ts, p, r, i) for (i, p, r) in newly])
+        self.conn.commit()
+        self._log_suppression("suppress", [
+            {"id": i, "pushed": p, "referenced": r, "reason": "scan"}
+            for (i, p, r) in newly])
+        return len(newly)
+
+    def clear_proactive_suppression(self, ids, reason: str) -> int:
+        """Redeem memories — un-suppress so they can push again. Called on the
+        deliberate single-target signals that a suppressed memory actually matters:
+        show/explicit-recall reinforcement, mark_helpful, and content change
+        (supersede/set-gist). Logs only rows that were genuinely suppressed (so a
+        no-op reinforce doesn't spam the log). Returns the number cleared. Frozen
+        stores skip silently."""
+        ids = [int(i) for i in ids]
+        if not ids or self.frozen():
+            return 0
+        ph = ",".join("?" * len(ids))
+        cleared = [r["id"] for r in self.conn.execute(
+            f"SELECT id FROM memory WHERE id IN ({ph}) "
+            "AND proactive_suppressed_at IS NOT NULL", ids)]
+        if not cleared:
+            return 0
+        ph2 = ",".join("?" * len(cleared))
+        self.conn.execute(
+            f"""UPDATE memory SET proactive_suppressed_at = NULL,
+                                  suppressed_pushed = NULL, suppressed_referenced = NULL
+                WHERE id IN ({ph2})""", cleared)
+        self.conn.commit()
+        self._log_suppression("unsuppress",
+                              [{"id": i, "reason": reason} for i in cleared])
+        return len(cleared)
+
+    def proactive_suppressed(self) -> list[dict]:
+        """Every currently-suppressed memory with its justifying stats — the
+        `suppress --list` view. Ordered by push count (loudest noise first)."""
+        return [dict(r) for r in self.conn.execute(
+            """SELECT id, gist, kind, project, suppressed_pushed,
+                      suppressed_referenced, proactive_suppressed_at
+               FROM memory WHERE proactive_suppressed_at IS NOT NULL
+               ORDER BY suppressed_pushed DESC, id ASC""")]
 
     def topics_for(self, ids: list[int]) -> dict[int, list[str]]:
         """Batch-fetch topic names for several memories in one query (the proactive
@@ -1214,6 +1328,9 @@ class MemoryStore:
                 "SELECT kind, count(*) c FROM memory GROUP BY kind")},
             "superseded": q(
                 "SELECT count(*) c FROM memory WHERE superseded_by IS NOT NULL").fetchone()["c"],
+            "proactive_suppressed": q(
+                "SELECT count(*) c FROM memory WHERE proactive_suppressed_at IS NOT NULL"
+            ).fetchone()["c"],
             "topics": q("SELECT count(*) c FROM topic").fetchone()["c"],
             "links": q("SELECT count(*) c FROM memory_link").fetchone()["c"],
             "sessions": q("SELECT count(*) c FROM session").fetchone()["c"],

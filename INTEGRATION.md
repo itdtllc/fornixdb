@@ -325,6 +325,16 @@ to the model's context.
   additive, positive-and-negative-by-disuse attack on cross-project noise — it
   never deletes or hides a memory. Off-switch: `config usefulness_floor_adapt
   off` reverts to one flat floor for every memory.
+- **Chronic never-used pushers get muted outright (per-memory suppression).**
+  Fading raises the bar but a stubborn cross-project row can still clear it every
+  session. When a memory has been pushed `>= N` times with `<= M` downstream
+  references (defaults 8 / 0), `fornixdb suppress --apply` (or the `dream`
+  pass) mutes it from the L3/L4/L5 push channels entirely. This is still not a
+  delete or a hide: explicit `recall_memory`/`show`/`timeline` return the row
+  unchanged (a hard invariant), and the suppression is *redeemable* — a `show`,
+  a `mark_helpful`, a supersede, or a gist edit clears it, and the scan itself
+  un-suppresses any row that has since earned a reference. `suppress --list`
+  shows what's muted; `--undo` lifts it manually.
 - **Pulses scope to the active project.** When a pulse knows which project is
   active, a memory that doesn't *belong* to it clears a higher push floor, so it
   only surfaces on a strong match, not a weak coincidence. A memory **belongs**

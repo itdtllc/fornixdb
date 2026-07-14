@@ -42,7 +42,7 @@ from datetime import datetime, timedelta
 from .core import RHYTHMIC_RECALL_COS, STRUCTURAL_TOPICS, MemoryStore
 from .multistore import get_config
 from .proactive import (HEADER, _is_low_information, _log_floor_decision,
-                        row_line)
+                        push_suppressed, row_line)
 
 DEFAULT_K = 3               # per-domain top-k gathered into the field
 DEFAULT_RECENT_DAYS = 14    # the recent/deep-past episodic split
@@ -148,6 +148,8 @@ def _neighborhood(store: MemoryStore, lit_ids: set[int],
     for r in rows:
         if r["id"] in lit_ids or r["id"] in exclude or _is_low_information(r):
             continue
+        if push_suppressed(store, r):   # suppression holds even via link spread
+            continue
         r["score"] = 0.0    # structural candidate: earns its place via settling
         out.append(r)
     return out
@@ -204,6 +206,10 @@ def run_field(store: MemoryStore, thought: str, *,
             if kept >= k:
                 break
             if r["id"] in exclude or _is_low_information(r):
+                continue
+            if push_suppressed(store, r):     # excluded from the push field (L5)
+                _log_floor_decision(store, "L5", thought, r, r.get("vec_cos"),
+                                    floor, floor, "suppressed")
                 continue
             cos = r.get("vec_cos")
             if has_vectors:
