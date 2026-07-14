@@ -101,6 +101,19 @@ def _is_low_information(row: dict) -> bool:
     return (row.get("kind") == "episodic"
             and len(_content_words(row.get("gist", ""))) < MIN_EPISODIC_CONTENT_WORDS)
 
+def push_suppressed(store: MemoryStore, row: dict) -> bool:
+    """True when this memory is PROACTIVE-SUPPRESSED — chronically pushed but
+    never referenced (suppress.py's rule stamped `proactive_suppressed_at`), so it
+    is dropped from the L3/L4/L5 PUSH candidate-gather. The single shared gate for
+    all three rungs: `relevant_memories` (L3/L4) and `run_field` (L5) both call it.
+    NEVER consulted by explicit recall/show/timeline — a suppressed memory stays
+    fully reachable. Reversible per store via `config proactive_suppression off`
+    (then this is a pure no-op and every stamped row pushes again)."""
+    if row.get("proactive_suppressed_at") is None:
+        return False
+    return get_config(store, "proactive_suppression", "on") not in ("off", "0", "false")
+
+
 DEFAULT_LIMIT = 3        # top-K injected — a handful of pointers, not a dump
 DEFAULT_MAX_CHARS = 600  # block budget; gists are short, so this rarely bites
 MIN_PROMPT_CHARS = 12    # "ok"/"yes"/"continue" carry no subject to recall on
@@ -246,6 +259,14 @@ def relevant_memories(store: MemoryStore, prompt: str, *,
     out: list[dict] = []
     for r in candidates:
         cos = r.get("vec_cos")
+        # Proactive suppression: a memory chronically pushed but never referenced
+        # is dropped from the push stream entirely (the cosine floor can't separate
+        # it — the outcome history can). Logged as 'suppressed' so floor-stats sees
+        # it; explicit recall/show/timeline are unaffected (this path is push-only).
+        if push_suppressed(store, r):
+            _log_floor_decision(store, channel, prompt, r, cos, floor, floor,
+                                "suppressed")
+            continue
         # Per-memory floor: a memory proven useful clears a slightly lower bar; one
         # pushed-but-ignored or belonging to a different context clears a higher
         # one (the two-dial noise fix). No-op when both dials are off.

@@ -13,7 +13,14 @@ import os
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 12  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
+SCHEMA_VERSION = 13  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
+                    # v13: proactive_suppressed_at + justifying stats — a memory
+                    #     chronically pushed (>=N) but never referenced is excluded
+                    #     from the L3/L4/L5 PUSH channels (never from explicit
+                    #     recall/show/timeline). The cosine floor provably can't
+                    #     separate this population (useful vs noise cosines overlap);
+                    #     per-memory push OUTCOME history can. Redeemable (see
+                    #     core.clear_proactive_suppression).
                     # v11: prospective (reminders — new table only, IF NOT EXISTS)
                     # v12: prospective urgent/deliveries/last_delivery (nagging)
                     # v5: writer. v6: helpful_count/last_helpful (usefulness).
@@ -102,6 +109,19 @@ CREATE TABLE IF NOT EXISTS memory (
                            -- as ignored noise. Materialized by `usefulness-scan
                            -- --apply` from session transcripts (absolute set).
     last_referenced TEXT,  -- when a push of this memory was last used downstream
+    proactive_suppressed_at TEXT,  -- v13: set when a memory is PROACTIVE-SUPPRESSED
+                           -- — chronically pushed (surfaced) but never referenced,
+                           -- so it is excluded from the L3/L4/L5 PUSH channels. It
+                           -- is NEVER hidden from explicit recall/show/timeline
+                           -- (invariant). NULL = eligible to push. Redeemable:
+                           -- show/mark_helpful/supersede/set-gist clear it (see
+                           -- core.clear_proactive_suppression). The floor cosine
+                           -- provably can't separate this population (useful vs
+                           -- noise cosines overlap); push OUTCOME history can.
+    suppressed_pushed     INTEGER,  -- v13: the push count that justified suppression
+    suppressed_referenced INTEGER,  -- v13: the referenced count at suppression time
+                           -- (0 by the rule) — kept so `suppress --list` can show
+                           -- WHY without re-scanning transcripts
     superseded_by   INTEGER REFERENCES memory(id),
     superseded_time TEXT
 );
@@ -273,6 +293,12 @@ def _migrate(conn: sqlite3.Connection) -> bool:
     if mem_cols and "referenced_count" not in mem_cols:  # v8
         conn.execute("ALTER TABLE memory ADD COLUMN referenced_count INTEGER NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE memory ADD COLUMN last_referenced TEXT")
+    if mem_cols and "proactive_suppressed_at" not in mem_cols:  # v13
+        # nullable, no default: an existing store's rows are all push-eligible
+        # (NULL) until the next suppress scan classifies them — no data rewrite
+        conn.execute("ALTER TABLE memory ADD COLUMN proactive_suppressed_at TEXT")
+        conn.execute("ALTER TABLE memory ADD COLUMN suppressed_pushed INTEGER")
+        conn.execute("ALTER TABLE memory ADD COLUMN suppressed_referenced INTEGER")
     # v12: a v11 prospective table (0.8.5) predates the nag columns; SQLite
     # adds them in place, defaults matching the schema (all existing reminders
     # are non-urgent — exactly their 0.8.5 behavior)

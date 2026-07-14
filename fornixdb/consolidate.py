@@ -453,6 +453,37 @@ def use_credit_refresh(store: MemoryStore) -> dict | None:
             "outcomes": outcomes_from_scan(result)}
 
 
+def suppress_refresh(store: MemoryStore) -> dict | None:
+    """The judgment-free push-SUPPRESSION refresh, run once per dream pass right
+    after the use-credit refresh (they read the same transcript scan): mute the
+    memories chronically pushed but never referenced, and un-suppress any that have
+    since earned a reference. Same closing-of-the-loop as `suppress --scan --apply`.
+
+    Gated EXACTLY like use_credit_refresh — the id-collision hazard is identical: a
+    transcript's `#id`s belong to the one store the host injects from, so the scan
+    runs only against this store's `transcripts_path` (env FORNIXDB_TRANSCRIPTS
+    overrides; `off` skips). An Elira-style consumer with no configured path never
+    suppresses from a foreign transcript. Skipped (returns None) when the feature is
+    off (`proactive_suppression off`), the dream hook is off (`dream_suppress off`),
+    or there is no existing transcripts path. Never raises: a scan failure must not
+    kill the dream."""
+    if store._setting_off("dream_suppress") or store._setting_off("proactive_suppression"):
+        return None
+    import os
+    src = (os.environ.get("FORNIXDB_TRANSCRIPTS")
+           or get_config(store, "transcripts_path") or "")
+    if not src or src.strip().lower() in ("off", "none", "no", "false", "0"):
+        return None
+    src = os.path.expanduser(src)
+    if not os.path.exists(src):
+        return None
+    try:
+        from .suppress import scan_and_apply
+        return scan_and_apply(store, src, apply=True)
+    except Exception:
+        return None
+
+
 def _reproject_scan(store: MemoryStore) -> list:
     """Mis-scoped rows are the OTHER root of cross-project push noise (the floor
     penalty and project-scoped pulse only treat symptoms of a wrong/missing
@@ -763,12 +794,16 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
     # never counting the store's prior supersede history.
     marker = get_config(store, "dream_pass_super0")
     credit = None
+    suppression = None
     if marker is None:
         marker = str(_superseded_count(store))
         set_config(store, "dream_pass_super0", marker)
         # opening a pass refreshes the push use-credit BEFORE proposing, so the
         # chronic-noise list below runs on current counts, not stale ones
         credit = use_credit_refresh(store)
+        # ...then re-classify chronic push-noise on those fresh counts: suppress
+        # the never-referenced, redeem any that just earned a reference
+        suppression = suppress_refresh(store)
     st = status(store)
     work = propose(store)
     woven = 0
@@ -828,6 +863,11 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
                       f"{'' if credit['sessions'] == 1 else 's'} — "
                       f"{credit['credited']} of {credit['memories_scanned']} "
                       "pushed memories proven used downstream)")
+    ap = (suppression or {}).get("applied") or {}
+    if ap.get("newly_suppressed") or ap.get("redeemed"):
+        narrative += (f"\n(pass open: push-noise scan — {ap['newly_suppressed']} "
+                      f"memory(ies) muted, {ap['redeemed']} redeemed; "
+                      f"{suppression.get('total_suppressed', 0)} suppressed total)")
     # dial report: read the accrued telemetry back at the decision moment. The
     # scan-derived rules only have their honest inputs at pass open (credit);
     # the field-log rule reads on every call.
@@ -850,8 +890,9 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
                       f"still hold{'s' if one else ''} a templated placeholder — "
                       "run `recaption` with a local VLM to fill real captions.")
     return {"status": st, "counts": counts, "work": work, "woven": woven,
-            "applied": applied, "use_credit": credit, "dials": dials,
-            "awaiting_captions": awaiting_captions, "narrative": narrative}
+            "applied": applied, "use_credit": credit, "suppression": suppression,
+            "dials": dials, "awaiting_captions": awaiting_captions,
+            "narrative": narrative}
 
 
 def supersede_suggestion(store: MemoryStore, new_id: int, text: str,

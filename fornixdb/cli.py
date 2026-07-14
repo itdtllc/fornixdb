@@ -574,6 +574,25 @@ def main(argv: list[str] | None = None) -> int:
                           "stops scoring proven-useful pushes as ignored noise "
                           "(idempotent absolute set)")
 
+    spp = sub.add_parser("suppress",
+                         help="per-memory push suppression: mute memories chronically "
+                              "PUSHED but never REFERENCED (push-noise the cosine floor "
+                              "can't filter). Never hides from recall/show/timeline.")
+    spg = spp.add_mutually_exclusive_group()
+    spg.add_argument("--scan", action="store_true",
+                     help="scan transcripts and report chronic push-noise (default "
+                          "action). Dry-run unless --apply.")
+    spg.add_argument("--list", dest="list_", action="store_true",
+                     help="list currently-suppressed memories and why")
+    spg.add_argument("--undo", metavar="ID", type=int,
+                     help="redeem one memory: clear its suppression so it pushes again")
+    spp.add_argument("--apply", action="store_true",
+                     help="with --scan: write the suppressions (and un-suppress any "
+                          "row that has since earned a downstream reference)")
+    spp.add_argument("--transcripts", metavar="PATH", default="~/.claude/projects",
+                     help="a .jsonl transcript or a directory of them "
+                          "(default: ~/.claude/projects)")
+
     vp = sub.add_parser("value",
                         help="one-shot 'how useful has FornixDB been?': cost (token "
                              "footprint) + reach (vs flat memory) + used (referenced-"
@@ -1605,6 +1624,8 @@ def _dispatch(p, args, store, stores) -> int:
             counts = referenced_counts_from_scan(result)
             credited = store.record_referenced(counts)
             result["applied"] = {"memories_scanned": len(counts), "credited": credited}
+        n_suppressed = len(store.proactive_suppressed())
+        result["proactive_suppressed"] = n_suppressed
         if args.json:
             print(json.dumps(result, indent=2, default=str))
         else:
@@ -1613,6 +1634,37 @@ def _dispatch(p, args, store, stores) -> int:
                 print(f"\napplied: use-credit written for {result['applied']['credited']} "
                       f"memory(ies) referenced downstream "
                       f"(of {result['applied']['memories_scanned']} pushed).")
+            print(f"\nproactive-suppressed: {n_suppressed} memory(ies) muted from the "
+                  "push channels (`fornixdb suppress --scan` to refresh, --list to see).")
+
+    elif args.cmd == "suppress":
+        from . import suppress as sup
+        if args.undo is not None:
+            n = store.clear_proactive_suppression([args.undo], "cli_undo")
+            msg = {"undo": args.undo, "cleared": n}
+            print(json.dumps(msg) if args.json else
+                  (f"redeemed #{args.undo} — it can push again."
+                   if n else f"#{args.undo} was not suppressed; nothing to undo."))
+        elif args.list_:
+            rows = store.proactive_suppressed()
+            if args.json:
+                print(json.dumps(rows, indent=2, default=str))
+            else:
+                if not rows:
+                    print("no memories are proactive-suppressed.")
+                else:
+                    print(f"proactive-suppressed memories ({len(rows)}):")
+                    for r in rows:
+                        print(f"  #{r['id']:<5} pushed {r['suppressed_pushed']}, "
+                              f"referenced {r['suppressed_referenced']}  "
+                              f"since {(r['proactive_suppressed_at'] or '')[:10]}  "
+                              f"{(r['gist'] or '')[:60]}")
+        else:   # --scan (default)
+            report = sup.scan_and_apply(store, args.transcripts, apply=args.apply)
+            if args.json:
+                print(json.dumps(report, indent=2, default=str))
+            else:
+                print(sup.format_report(report))
 
     elif args.cmd == "reproject":
         from . import reproject as rp
