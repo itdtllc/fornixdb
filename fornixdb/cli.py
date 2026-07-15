@@ -246,7 +246,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="character budget for the output")
 
     rm = sub.add_parser("remind", help='prospective memory: fornixdb remind '
-                                       '"call the attorney" --when "tomorrow 9am"')
+                                       '"talk to Joe about his vacation plans" --when "tomorrow 9am"')
     rm.add_argument("what", help="the intention to surface when it's time")
     rm.add_argument("--when", required=True,
                     help='"in 20 minutes", "tomorrow morning", "friday at 3pm", ISO')

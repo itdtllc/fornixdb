@@ -12,7 +12,7 @@ from fornixdb.core import MemoryStore
 from fornixdb.field import (DEFAULT_MAX_CHARS, field_block, field_recall,
                             format_field_debug, run_field, settle)
 from fornixdb.multistore import set_config
-from fornixdb.proactive import HEADER
+from fornixdb.proactive import HEADER, row_line
 
 
 def iso(days_ago: int) -> str:
@@ -239,6 +239,38 @@ class TestBeatLog(FieldBase):
         self.assertIsNotNone(b["dissent_shadow"])   # shadow logged...
         self.assertFalse(b["dissent_emitted"])      # ...while the line is off
         self.assertIn("ms", b)
+
+    def test_dissent_emitted_tracks_the_block_not_the_computation(self):
+        # The whole point of the corrected flag: dissent_emitted is TRUE only
+        # when the tension line actually reached the injected block, so a
+        # downstream reference measurement counts host exposures, not shadows.
+        k, r = self._seed_pattern()
+        did = self.s.store(
+            "Seam freeze fix attempted on the jacket pattern instead",
+            kind="semantic")
+        set_config(self.s, "floor_log", "on")
+        set_config(self.s, "parallel_dissent", "on")
+        _, ids = field_recall(self.s, "seam freeze fix")
+        b = self._beats()[0]
+        self.assertIn(did, b["emitted"])            # the tension id reached the block
+        self.assertTrue(b["dissent_emitted"])       # ...so it counts as emitted
+        self.assertEqual(b["dissent_shadow"], did)
+
+    def test_tension_line_is_reserved_from_the_budget_trim(self):
+        # the minority report must survive a budget that exactly fits the winning
+        # cluster — under the old append-last/pop-first order it was trimmed away.
+        self._seed_pattern()
+        self.s.store("Seam freeze fix attempted on the jacket pattern instead",
+                     kind="semantic")
+        set_config(self.s, "parallel_dissent", "on")
+        fr = run_field(self.s, "seam freeze fix")
+        st = settle(self.s, fr)
+        self.assertIsNotNone(st.dissent)             # dissent on + shadow exists
+        winners = "\n".join([HEADER, st.direction]
+                            + [row_line(m) for m in st.rows])
+        block = field_block(st, len(winners))        # no room left for tension
+        self.assertIn("tension:", block)             # ...yet it survives (reserved)
+        self.assertGreater(len(block), len(winners))  # riding one line on top
 
     def test_degraded_and_abstained_beats_are_logged(self):
         self.s.store("Render pipeline notes mention the word budget",

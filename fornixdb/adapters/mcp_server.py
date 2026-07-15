@@ -96,7 +96,7 @@ TOOLS = [
          "required": ["title", "content"]}},
     {"name": "remind_me",
      "description": "Prospective memory: store an intention to be surfaced when "
-                    "it's time ('remind me tomorrow morning to call the attorney'). "
+                    "it's time ('remind me tomorrow morning to talk to Joe about his vacation plans'). "
                     "Due reminders are delivered at session start and on the "
                     "per-turn recall heartbeat. `when` takes a natural phrase — "
                     "'in 20 minutes', 'tomorrow morning', 'friday at 3pm' — or an "
