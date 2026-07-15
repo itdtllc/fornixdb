@@ -7,6 +7,26 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+## [0.8.9] - 2026-07-15
+
+### Fixed
+- **The field's minority report (`parallel_dissent`) now actually reaches the
+  model.** The tension line was appended last to the settled L5 block and the
+  char-budget trim popped from the end first — so it was always the first line
+  cut. With `parallel_dissent` on, it reached the model in 0 of 237 settled
+  injections. The winning cluster is now trimmed to budget *first*, then the
+  tension line is reserved on top (only when the cluster it dissents from
+  survived) — it costs one extra short line, and only on genuine dissent.
+- **`dissent_emitted` in the field log now means what it says.** It recorded
+  "dissent was computed" (`parallel_dissent` on and a shadow existed), not
+  "the tension line reached the block" — conflating shadows the model never saw
+  with real exposures. It is now true only when the dissenting id actually
+  survived render + trim into the emitted block.
+
+### Changed
+- The L5 field's winner-cluster budget (`parallel_block_max_chars`) default is
+  now 500, up from 400 (still below the L3/L4 budget of 600).
+
 ## [0.8.8] - 2026-07-14
 
 ### Changed

@@ -2,7 +2,7 @@
 
 Retrospective memory answers "what happened?"; prospective memory carries an
 INTENTION forward to the moment it matters: "remind me tomorrow morning to
-call the attorney." Humans do this constantly and badly; a store with a clock
+talk to Joe about his vacation plans." Humans do this constantly and badly; a store with a clock
 column can do it perfectly.
 
 The design reuses everything the store already has. A reminder is an ordinary

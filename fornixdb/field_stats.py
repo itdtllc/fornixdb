@@ -88,9 +88,10 @@ def format_report(s: dict, path: str | None) -> str:
                     if g["topics_only"] > g["links_only"] + g["mixed"] else ""))
     lines.append(f"neighborhood rows emitted: {s['neighborhood_emitted']} beat(s)")
     lines.append(f"dissent: shadow existed on {s['dissent_shadow']} settled "
-                 f"beat(s), emitted on {s['dissent_emitted']} "
-                 "(shadow>0 with emitted=0 = evidence to weigh turning "
-                 "`parallel_dissent` on)")
+                 f"beat(s), tension line reached the block on {s['dissent_emitted']} "
+                 "(emitted = the id survived render+trim into the injected block, "
+                 "NOT just computed; shadow>0 with `parallel_dissent` off keeps "
+                 "emitted=0 — turning it on is what lets emitted rise)")
     if s["ms_median"] is not None:
         lines.append(f"cost: median {s['ms_median']:.0f} ms/beat, "
                      f"max {s['ms_max']:.0f} ms")

@@ -46,7 +46,8 @@ from .proactive import (HEADER, _is_low_information, _log_floor_decision,
 
 DEFAULT_K = 3               # per-domain top-k gathered into the field
 DEFAULT_RECENT_DAYS = 14    # the recent/deep-past episodic split
-DEFAULT_MAX_CHARS = 400     # block budget — an L5 beat costs what an L4 beat costs
+DEFAULT_MAX_CHARS = 500     # winner-cluster budget (still < L4's 600); the
+                            # reserved tension line rides one short line on top
 DEFAULT_LIMIT = 3           # settled gists emitted (the narrow output)
 
 # settling bonuses — corroboration raises SCORE, floors stay honest (§6 of the
@@ -464,7 +465,13 @@ def _log_field_beat(store: MemoryStore, thought: str, fr: FieldResult,
             fr.domains_of.get(i) == {"neighborhood"} for i in emitted),
         "emitted": emitted,
         "dissent_shadow": (st.dissent_shadow or {}).get("id"),
-        "dissent_emitted": st.dissent is not None,
+        # TRUE only when the tension line actually reached the injected block:
+        # the id survived render + char-budget trim and is in `emitted`. NOT
+        # "dissent was computed" (st.dissent is not None) — that conflates a
+        # config-on shadow with a real host exposure and makes every downstream
+        # reference measurement count beats the model never saw.
+        "dissent_emitted": ((st.dissent or {}).get("id") in emitted
+                            if st.dissent is not None else False),
         "ms": round(ms, 1),
     }
     try:
@@ -479,17 +486,28 @@ def _log_field_beat(store: MemoryStore, thought: str, fr: FieldResult,
 def field_block(st: Settled, max_chars: int) -> str | None:
     """The narrow output: standard provenance header, the direction line when
     the field settled, the winning gists, and (config-gated) one tension line —
-    the field's minority report. Same whole-line budget trim as L3/L4."""
+    the field's minority report.
+
+    The winning cluster shares `max_chars` (whole-line trim from the end, like
+    L3/L4). The tension line is then RESERVED — appended after the trim and never
+    a trim casualty — so it costs one extra short line, only on genuine dissent.
+    (It used to be appended last and popped FIRST, so `parallel_dissent` on still
+    put the minority report in front of the model 0 times: measured 0 of 237
+    settled injections, 2026-07-15.)"""
     if not st.rows:
         return None
     lines = [HEADER]
     if st.direction:
         lines.append(st.direction)
     lines += [row_line(m) for m in st.rows]
-    if st.dissent is not None:
-        lines.append("tension: " + row_line(st.dissent))
+    # trim the winning cluster to budget FIRST; the tension line is added after
     while len(lines) > 1 and len("\n".join(lines)) > max_chars:
         lines.pop()
+    # the minority report rides one reserved line on top of the winner budget,
+    # but only when the settled cluster it dissents from actually survived the trim
+    winners_survived = any(l is not HEADER and l is not st.direction for l in lines)
+    if st.dissent is not None and winners_survived:
+        lines.append("tension: " + row_line(st.dissent))
     # a header-plus-direction husk with no memory lines is not a block
     if all(l is st.direction or l == HEADER or l.startswith("tension:")
            for l in lines):

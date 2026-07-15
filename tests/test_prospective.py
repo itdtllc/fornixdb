@@ -100,7 +100,7 @@ class TestProspectiveStore(unittest.TestCase):
         self.s.close()
 
     def test_remind_stores_memory_plus_due_row(self):
-        r = prospective.remind(self.s, "call the attorney", "tomorrow 9am",
+        r = prospective.remind(self.s, "talk to Joe about his vacation plans", "tomorrow 9am",
                                now=NOW)
         self.assertEqual(r["due"], "2026-07-11T09:00:00")
         row = self.s.conn.execute(
@@ -108,7 +108,7 @@ class TestProspectiveStore(unittest.TestCase):
             (r["id"],)).fetchone()
         self.assertEqual(row[0], "episodic")
         self.assertEqual(row[1], "2026-07-11T09:00:00")
-        self.assertIn("call the attorney", row[2])
+        self.assertIn("talk to Joe about his vacation plans", row[2])
         p = self.s.conn.execute(
             "SELECT due, delivered_at FROM prospective WHERE memory_id=?",
             (r["id"],)).fetchone()
