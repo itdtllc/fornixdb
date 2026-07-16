@@ -95,7 +95,7 @@ Two further tools bridge the store to Markdown — the format the AI ecosystem w
 | Tool | Contract | Maps to |
 |---|---|---|
 | `import_markdown(path, frontmatter?)` | Import Markdown into the store. **Default:** an arbitrary document is chunked by heading into one memory per section (gist = heading, detail = section text; heading hierarchy → `refines` links, `[[wikilinks]]` → `relates`). **`frontmatter=true`:** a directory of frontmatter memory files, one file → one memory. Idempotent — a re-import skips memories already present by name. | `import-markdown` |
-| `export_markdown(out_dir, project?, kind?, include_superseded?)` | Export memories to a directory of human-readable `.md` files (frontmatter + detail + a `## Related` footer of `[[wikilinks]]`) plus a `MEMORY.md` index. Round-trips with `import_markdown frontmatter=true`. | `export-markdown` |
+| `export_markdown(out_dir, project?, kind?, include_superseded?)` | Export memories to a directory of human-readable `.md` files (frontmatter + detail + a `## Related` footer of `[[wikilinks]]`) plus a `FornixDB.md` index. Round-trips with `import_markdown frontmatter=true`. | `export-markdown` |
 
 Why chunk a document instead of storing it whole: recall returns — and the model re-prefills — only the relevant section, not the entire doc. The measured win and a guided walkthrough are in the README ("Markdown in, Markdown out") and `examples/markdown_bridge_demo.py`; the benefit is regression-guarded by `tests/test_markdown_benefit.py`.
 

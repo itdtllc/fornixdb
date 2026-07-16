@@ -181,6 +181,31 @@ class TestHybridRecall(unittest.TestCase):
         self.assertIsNotNone(seen["keep"])
         self.assertGreater(seen["keep"], 2)         # wider than `limit`
 
+    def test_blend_keep_is_limit_independent(self):
+        # Regression (2026-07-16): the blend keep-set scaled with `limit`, so a
+        # mid-ranked bm25 row kept its keyword relevance in a wide fetch but
+        # lost it in a narrow one — the same query returned a DIFFERENT ORDER
+        # at different limits (live: eval #17 rank 4 at k=5 vs rank 2 at 15).
+        # A row's score must not depend on how many rows the caller asked for,
+        # so the keep depth is a constant.
+        s = mem_store()
+        s.store("shared marker seed")
+        backfill(s, self.emb)
+        keeps = []
+        orig = MemoryStore._recall_fts
+
+        def spy(self, q, mode, limit, *a, **k):
+            keeps.append(k.get("keep"))
+            return orig(self, q, mode, limit, *a, **k)
+
+        MemoryStore._recall_fts = spy
+        try:
+            s.recall("shared marker", embedder=self.emb, limit=3)
+            s.recall("shared marker", embedder=self.emb, limit=12)
+        finally:
+            MemoryStore._recall_fts = orig
+        self.assertEqual(len(set(keeps)), 1)        # same keep at every limit
+
 
 class TestEmbedOnWrite(unittest.TestCase):
     """store() embeds inline when the store uses vectors, so a memory written

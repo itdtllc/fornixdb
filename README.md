@@ -64,7 +64,7 @@ active development branch and can change through the day; for a stable checkout,
 install a tagged release instead:
 
 ```bash
-pip install "git+https://github.com/itdtllc/fornixdb@v0.8.8"
+pip install "git+https://github.com/itdtllc/fornixdb@v0.8.10"
 ```
 
 Releases are listed at <https://github.com/itdtllc/fornixdb/releases>; see
@@ -264,7 +264,7 @@ python3 -m examples.markdown_bridge_demo   # ingest → recall → measured bene
 
 On the sample note it returns the right section ranked first every time and costs **~7.6× fewer tokens to answer** than the whole-document baseline; the ratio grows with document size. The benefit is guarded by `tests/test_markdown_benefit.py`, so it cannot silently regress.
 
-**Export — your memory as readable, git-diffable files.** `export-markdown` writes one `.md` per memory (frontmatter + detail + a `## Related` links footer) plus a `MEMORY.md` index:
+**Export — your memory as readable, git-diffable files.** `export-markdown` writes one `.md` per memory (frontmatter + detail + a `## Related` links footer) plus a `FornixDB.md` index:
 
 ```bash
 python3 -m fornixdb export-markdown ./memory-export

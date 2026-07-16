@@ -23,10 +23,37 @@ class TestRecallHasAnswer(unittest.TestCase):
         # token anchor, trusted regardless of (store-dependent) bm25 magnitude
         self.assertTrue(recall_has_answer([{"relevance": 3.0}]))
 
-    def test_vector_store_keyword_only_overlap_abstains(self):
-        # vectors were computed (vec_cos present) but the top hit is semantically
-        # dissimilar — keyword overlap with no semantic match is noise, not an answer
-        self.assertFalse(recall_has_answer([{"vec_cos": 0.0, "relevance": 10.0}]))
+    def test_vector_store_weak_keyword_overlap_abstains(self):
+        # vectors were computed (vec_cos present), the top hit is semantically
+        # dissimilar AND its literal-token anchor is weak (below the calibrated
+        # positive band) — tangential keyword overlap is noise, not an answer
+        self.assertFalse(recall_has_answer(
+            [{"vec_cos": 0.0, "kw_rel": 3.0, "relevance": 3.0}]))
+
+    def test_hybrid_strong_keyword_anchor_is_answer(self):
+        # regression for the 2026-07-16 live false-abstain: rank-1 anchored by
+        # literal tokens ("qwen 72b … consumer", kw_rel 18.4) at TRUE cosine
+        # 0.297 — just under the 0.30 shortlist floor, so vec_cos read 0.0.
+        # Hybrid recall must trust the same anchor keyword-only mode trusts
+        # when the raw cosine corroborates it.
+        self.assertTrue(recall_has_answer(
+            [{"vec_cos": 0.0, "raw_cos": 0.297, "kw_rel": 18.4,
+              "relevance": 18.4}]))
+
+    def test_hybrid_uncorroborated_keyword_anchor_abstains(self):
+        # regression for the 'capital of France' leak: common-token overlap can
+        # push bm25 over the anchor band (kw_rel 9.26) on a grown store, but
+        # its raw cosine ~0 betrays it — semantically unrelated, stay abstained
+        self.assertFalse(recall_has_answer(
+            [{"vec_cos": 0.0, "raw_cos": 0.001, "kw_rel": 9.26,
+              "relevance": 9.26}]))
+
+    def test_hybrid_keyword_anchor_below_band_abstains(self):
+        # the calibrated negative band (clear negatives sat < 5.2) stays quiet
+        # even with a corroborating cosine
+        self.assertFalse(recall_has_answer(
+            [{"vec_cos": 0.11, "raw_cos": 0.2, "kw_rel": 5.1,
+              "relevance": 5.2}]))
 
     def test_weak_vector_match_abstains(self):
         self.assertFalse(recall_has_answer([{"vec_cos": 0.1, "relevance": 2.0}]))

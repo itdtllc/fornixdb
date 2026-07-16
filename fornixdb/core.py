@@ -92,6 +92,12 @@ VECTOR_WEIGHT = 15.0      # scales cosine into the -bm25 range. Tuned 2026-06-11
                           # Pure rank fusion (RRF) was tried first: fixed the
                           # miss but flattened hit@1 78→56% — margins matter.
 VECTOR_MIN_COS = 0.30     # noise floor: weaker similarity is no evidence at all
+# How many keyword rows survive into the vector blend (and how far FTS
+# overfetches for the salience/recency re-rank). A CONSTANT on purpose: when
+# this scaled with `limit`, the same query returned a different ORDER at
+# different limits, because a mid-ranked bm25 row kept its keyword relevance
+# in a wide fetch but lost it in a narrow one (2026-07-16, eval case #17).
+FTS_BLEND_KEEP = 100
 
 # Abstention gate (FornixDB #191, owner observation 2026-06-13): recall used to
 # return its top-k even when nothing was actually relevant, so a consumer (esp.
@@ -107,6 +113,19 @@ VECTOR_MIN_COS = 0.30     # noise floor: weaker similarity is no evidence at all
 # cos<0.12 AND relevance<5.2). The ambiguous middle is left to the consumer on
 # purpose — no single threshold separates weak-but-relevant from weak-noise.
 RECALL_ANSWER_COS = 0.30  # a real vector match (== the include floor)
+# The OR leg of that same calibration (implemented 2026-07-16 after a live
+# false-abstain: a rank-1 hit anchored by literal tokens — "qwen 72b … consumer",
+# keyword relevance 18.4 — sat at TRUE cosine 0.297, just under the 0.30
+# shortlist floor, so vec_cos read 0.0 and the cosine-only gate suppressed a
+# real answer). Keyword-ONLY recall already trusts every FTS anchor; hybrid
+# recall now trusts one too, but with BOTH checks — bm25 alone regressed a
+# clean negative ('capital of France' matched common tokens at kw_rel 9.26,
+# raw cosine 0.001), so the anchor must also be corroborated by the raw
+# (unfloored) cosine at a low bar: the 2026-06-13 calibration put clear
+# negatives at cos < 0.12. bm25 magnitudes are store-dependent, so these are
+# provisional like the other constants — tune against the eval fence.
+RECALL_ANSWER_KW_REL = 7.1   # literal-token anchor: calibrated positive band
+RECALL_ANSWER_KW_COS = 0.15  # raw-cosine corroboration for that anchor
 # Unsolicited PUSH needs a higher bar than an explicit PULL. When the user asks
 # (recall_memory), surfacing a weak 0.30 match is acceptable — they invited it.
 # When memory injects itself every turn (proactive recall), that same 0.30 floor
@@ -134,18 +153,29 @@ def recall_has_answer(rows: list[dict]) -> bool:
     say it doesn't know — recall must NOT pose as the answer). Reports presence
     only; never prescribes the next action.
 
-    The gate lives in the VECTOR regime: cosine is a normalized, store-
-    independent signal, so a weak top cosine means weak-noise-as-answer (the
-    failure that strands a small model). In pure keyword-only recall there is
-    no cosine on the rows — an FTS hit there is a literal token anchor by
+    The gate lives primarily in the VECTOR regime: cosine is a normalized,
+    store-independent signal, so a weak top cosine means weak-noise-as-answer
+    (the failure that strands a small model). In pure keyword-only recall there
+    is no cosine on the rows — an FTS hit there is a literal token anchor by
     definition, so it is trusted (this is also the pre-gate behavior; bm25
-    magnitudes are store-dependent and make no portable threshold)."""
+    magnitudes are store-dependent and make no portable threshold). In HYBRID
+    recall the same literal anchor deserves the same trust: a top hit whose
+    pre-blend keyword relevance clears the calibrated positive band
+    (RECALL_ANSWER_KW_REL) is a real match even when its cosine is weak —
+    otherwise turning vectors ON makes a keyword-answerable question abstain."""
     if not rows:
         return False
     top = rows[0]
     if top.get("vec_cos") is None:        # keyword-only recall: trust the FTS anchor
         return True
-    return float(top["vec_cos"]) >= RECALL_ANSWER_COS
+    if float(top["vec_cos"]) >= RECALL_ANSWER_COS:
+        return True
+    # hybrid keyword anchor: a strong literal-token match whose raw (unfloored)
+    # cosine corroborates it — semantically-unrelated common-token overlap
+    # (raw cosine ~0) stays abstained no matter how big its bm25 sum
+    raw = float(top.get("raw_cos", top["vec_cos"]) or 0.0)
+    return (float(top.get("kw_rel") or 0.0) >= RECALL_ANSWER_KW_REL
+            and raw >= RECALL_ANSWER_KW_COS)
 
 # Negative feedback (explicit mark_irrelevant, query-conditional penalty; shipped
 # 2026-06-12). When the current query is similar to a query a
@@ -632,6 +662,12 @@ class MemoryStore:
         # the top `limit`) so a row with weak keyword + strong semantic match
         # carries its bm25 relevance into the blend instead of being re-added
         # later with relevance 0 — that erasure sank eval #17 (rank 1 -> 4).
+        # The overfetch is a CONSTANT, not limit-scaled: a row's score must not
+        # depend on how many rows the caller asked for. When keep was
+        # max(limit*5, 25), a keyword row ranked 26th by bm25 kept its keyword
+        # relevance at limit=15 but lost it at limit=5 — the same query returned
+        # a different ORDER at different limits (seen live 2026-07-16: eval #17
+        # rank 4 at k=5 vs rank 2 at limit=15).
         if self._setting_off("associative_recall"):
             # L0/L1 boundary (ROADMAP: L0 = "exact lookups, no ranking"). When
             # associative recall is disabled the store behaves as a plain keyed
@@ -641,7 +677,7 @@ class MemoryStore:
                                            include_superseded, since, until)
         else:
             emb = self._resolve_embedder(embedder)
-            keep = max(limit * 5, 25) if emb is not None else limit
+            keep = FTS_BLEND_KEEP if emb is not None else limit
             rows = self._recall_fts(query, "AND", limit, kind, project,
                                     include_superseded, since, until, keep=keep)
             if not rows:
@@ -811,10 +847,12 @@ class MemoryStore:
         # rank-1 hits (seen live: a 0.37-cosine top hit read as 0.0 < gate).
         # The same VECTOR_MIN_COS noise floor applies as for the shortlist.
         unscored = [mid for mid in by_id if mid not in neighbors]
+        raw_cos: dict[int, float] = {}      # sub-floor cosines, kept for the gate
         if unscored:
             try:
                 from .vectors import cosines_for
                 for mid, cos in cosines_for(self, emb, query, unscored).items():
+                    raw_cos[mid] = cos
                     if cos >= VECTOR_MIN_COS:
                         neighbors[mid] = cos
             except Exception:
@@ -825,8 +863,9 @@ class MemoryStore:
         for mid, row in by_id.items():
             cos = max(neighbors.get(mid, 0.0), 0.0)
             row["vec_cos"] = cos            # exposed for the abstention gate
-            row["relevance"] = (float(row.get("relevance") or 0.0)
-                                + VECTOR_WEIGHT * cos)
+            row["raw_cos"] = max(cos, raw_cos.get(mid, 0.0))  # unfloored, for the gate
+            row["kw_rel"] = float(row.get("relevance") or 0.0)  # pre-blend FTS
+            row["relevance"] = (row["kw_rel"] + VECTOR_WEIGHT * cos)
             row["score"] = self._score(row, now)
             out.append(row)
         out.sort(key=lambda r: r["score"], reverse=True)
@@ -861,8 +900,9 @@ class MemoryStore:
         keep = limit if keep is None else keep
         # overfetch generously for the salience/recency re-rank headroom, then
         # return `keep` rows (= limit normally; the wider blend set when vectors
-        # follow, so their bm25 relevance survives into _blend_vectors)
-        params.append(max(keep, limit * 5, 25))
+        # follow, so their bm25 relevance survives into _blend_vectors). The
+        # overfetch depth is constant so the re-ranked order is limit-stable.
+        params.append(max(keep, FTS_BLEND_KEEP))
         try:
             rows = [dict(r) for r in self.conn.execute(sql, params)]
         except sqlite3.OperationalError:
