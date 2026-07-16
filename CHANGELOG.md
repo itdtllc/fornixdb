@@ -5,6 +5,13 @@ versioning. While the project is pre-1.0 the public API may still evolve between
 minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
 active development branch and can change through the day.
 
+## [Unreleased]
+
+### Documentation
+- README: new "Long-running agents and loops" section — what proactive recall,
+  mid-loop checkpointing, and exactly-once reminder delivery add to a scheduled
+  or self-pacing agent loop, plus the sub-agent and parallel-loops behavior.
+
 ## [0.8.11] - 2026-07-16
 
 ### Added

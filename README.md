@@ -193,6 +193,19 @@ Each store also carries an owner-settable **capture mode** (`config capture_mode
 
 All of this is safe to run **at the same time**: a store file can be hit concurrently by several agents, several processes (MCP server, hooks, CLI), and several threads sharing one `MemoryStore` handle — writers serialize through WAL + per-store busy timeout (`config busy_timeout_ms`), schema migrations are single-winner, and reminders fire exactly once no matter how many hosts poll. Details in INTEGRATION.md §Concurrency.
 
+## Long-running agents and loops
+
+A looping agent — a session re-woken on a schedule (Claude Code's `/loop`, a cron-driven agent, any host that re-prompts the same conversation on an interval) — is where a memory earns its keep, because loops are exactly where context windows fail. What FornixDB adds to a loop:
+
+- **Proactive recall fires every iteration.** Injection is seam-driven — each wakeup's prompt and each tool call gets its beat — so the loop receives "possibly-relevant past" continuously for as long as it runs, with no extra wiring beyond the host's normal hooks.
+- **Recall survives context compaction.** Long-running sessions get their conversation summarized or truncated by the host; the store doesn't. Checkpoint decisions and durable facts mid-loop (`store`, or `jot` for cheap raw capture) and iteration 40 can retrieve associatively what iteration 2 decided, after the conversation text is gone.
+- **Reminders make loops punctual.** A loop that polls `due` each wakeup is a delivery host for prospective memory — and delivery is exactly-once across hosts, so a reminder set for 9am fires in one session even when a loop *and* an interactive session are open on the same store.
+- **Checkpoint explicitly; don't rely on session capture.** Passive episodic capture writes at session *end*, so a loop that never ends never auto-captures. The mid-loop checkpoint habit above is the fix.
+- **Sub-agents don't inherit pulses.** Helper agents a loop spawns run outside the host's injection seam; give them the recall tools and they use memory explicitly, but ambient injection belongs to the main conversation.
+- **Parallel loops stay coherent, not entangled.** Several loops on one store — even in different projects — each pulse under their own active project: off-context memories must clear a higher relevance floor (`project_scoped_pulse`), unscoped general facts flow to all, and nothing is ever hidden from explicit recall. Concurrent access is safe per the section above.
+
+One loop is one remembering agent; parallelism comes from running several sessions, and the store is the shared substrate that keeps them coherent rather than a coordinator between them.
+
 ## Configuration at a glance
 
 `fornixdb config` with no arguments prints **every** store setting at once — capture mode, ingest mode, vectors, disk budget, frozen state, proactive recall, and the MCP tool surface — alongside the **suggested defaults** for each (and which aren't applied yet). `fornixdb doctor` adds a health pass: schema currency, the host-side hooks that make capture and proactive recall actually fire (the most common silent gap, since those live in the host's `settings.json`, not in FornixDB), config smells, and a **config-integrity** check that flags any setting you've stored that no code actually reads (a typo, or a key with no effect). The one recommended setting **not** applied out of the box is a disk cap (never-delete is the default) — `fornixdb doctor --apply-suggested` sets it to a figure scaled to the device (20% of free disk, capped at 2 GB).
