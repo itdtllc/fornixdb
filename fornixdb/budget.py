@@ -330,15 +330,18 @@ def _prune(store: MemoryStore, target_bytes: float, dry_run: bool) -> dict:
         batch = [c["id"] for c in cands[:PRUNE_BATCH]]
         cands = cands[PRUNE_BATCH:]
         ph = ",".join("?" * len(batch))
-        # cold-archive files that hold detail for rows about to go away
-        arc_paths = {r["location"] for r in store.conn.execute(
-            f"SELECT location FROM detail_archive WHERE memory_id IN ({ph}) "
-            "AND location IS NOT NULL", batch)}
-        store.conn.execute(
-            f"UPDATE memory SET superseded_by = NULL WHERE superseded_by IN ({ph})",
-            batch)
-        store.conn.execute(f"DELETE FROM memory WHERE id IN ({ph})", batch)
-        store.conn.commit()
+        # one transaction per batch: the archive-path lookup and the deletes
+        # see one consistent state (VACUUM stays outside — it can't run in a
+        # transaction)
+        with store.write_txn() as conn:
+            # cold-archive files that hold detail for rows about to go away
+            arc_paths = {r["location"] for r in conn.execute(
+                f"SELECT location FROM detail_archive WHERE memory_id IN ({ph}) "
+                "AND location IS NOT NULL", batch)}
+            conn.execute(
+                f"UPDATE memory SET superseded_by = NULL WHERE superseded_by IN ({ph})",
+                batch)
+            conn.execute(f"DELETE FROM memory WHERE id IN ({ph})", batch)
         deleted += batch
         for path in arc_paths:
             _compact_archive(store, Path(path))

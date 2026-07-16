@@ -263,18 +263,33 @@ CREATE TABLE IF NOT EXISTS candidate (
 
 def _migrate(conn: sqlite3.Connection) -> bool:
     """v1 → v2, before the schema script runs (IF NOT EXISTS would keep the
-    old shapes). Returns True if the FTS index must be rebuilt."""
+    old shapes). Returns True if the FTS index must be rebuilt.
+
+    Runs INSIDE the caller's BEGIN IMMEDIATE transaction (see _setup): every
+    ALTER here is non-idempotent, and the column probes below decide what to
+    run — probing must happen under the write lock or two processes opening
+    the store after a version bump both see the stale shape and both ALTER
+    (the loser dies with 'duplicate column name'). No executescript in here:
+    executescript implicitly COMMITs the open transaction."""
     try:
         fts_cols = [r[1] for r in conn.execute("PRAGMA table_info(memory_fts)")]
     except sqlite3.OperationalError:
         fts_cols = []
     rebuild = bool(fts_cols) and "name" not in fts_cols
     if rebuild:
-        conn.executescript(
-            "DROP TRIGGER IF EXISTS memory_ai;"
-            "DROP TRIGGER IF EXISTS memory_ad;"
-            "DROP TRIGGER IF EXISTS memory_au;"
-            "DROP TABLE memory_fts;")
+        for stmt in (
+                "DROP TRIGGER IF EXISTS memory_ai",
+                "DROP TRIGGER IF EXISTS memory_ad",
+                "DROP TRIGGER IF EXISTS memory_au",
+                "DROP TABLE memory_fts"):
+            conn.execute(stmt)
+        # Persist the decision: the rebuild itself runs after the schema
+        # script recreates memory_fts, outside this transaction. A second
+        # process connecting in that window re-probes, sees no memory_fts,
+        # and would otherwise conclude nothing needs rebuilding — the flag
+        # makes whoever gets there next finish the job.
+        conn.execute("INSERT OR REPLACE INTO meta(key, value) "
+                     "VALUES ('fts_rebuild_pending', '1')")
     emb_cols = [r[1] for r in conn.execute("PRAGMA table_info(embedding)")]
     if emb_cols and "chunk" not in emb_cols:
         # derived data — drop and re-run `embed` (cheap) rather than migrate rows
@@ -314,17 +329,17 @@ def _migrate(conn: sqlite3.Connection) -> bool:
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_link'"
     ).fetchone()
     if link_row and link_row[0] and "'distinct'" not in link_row[0]:
-        conn.executescript(f"""
-            CREATE TABLE memory_link_v9 (
-                memory_id  INTEGER NOT NULL REFERENCES memory(id) ON DELETE CASCADE,
-                related_id INTEGER NOT NULL REFERENCES memory(id) ON DELETE CASCADE,
-                relation   TEXT NOT NULL CHECK (relation IN {RELATIONS!r}),
-                PRIMARY KEY (memory_id, related_id, relation)
-            );
-            INSERT INTO memory_link_v9 SELECT * FROM memory_link;
-            DROP TABLE memory_link;
-            ALTER TABLE memory_link_v9 RENAME TO memory_link;
-        """)
+        for stmt in (
+                f"""CREATE TABLE memory_link_v9 (
+                    memory_id  INTEGER NOT NULL REFERENCES memory(id) ON DELETE CASCADE,
+                    related_id INTEGER NOT NULL REFERENCES memory(id) ON DELETE CASCADE,
+                    relation   TEXT NOT NULL CHECK (relation IN {RELATIONS!r}),
+                    PRIMARY KEY (memory_id, related_id, relation)
+                )""",
+                "INSERT INTO memory_link_v9 SELECT * FROM memory_link",
+                "DROP TABLE memory_link",
+                "ALTER TABLE memory_link_v9 RENAME TO memory_link"):
+            conn.execute(stmt)
     return rebuild
 
 
@@ -431,13 +446,41 @@ def _register_store(path: Path) -> None:
             _restrict_to_owner_path(reg.parent, is_dir=True)
         stores = []
         if reg.exists():
-            stores = json.loads(reg.read_text() or "[]")
+            try:
+                stores = json.loads(reg.read_text() or "[]")
+            except ValueError:
+                stores = []  # unreadable registry: start over — membership
+                             # self-heals because every connect re-registers
         if p not in stores:
             stores.append(p)
-            reg.write_text(json.dumps(sorted(stores), indent=1))
-            _restrict_to_owner_path(reg)  # paths reveal which AIs keep stores where
+            # Write-to-temp + atomic rename: two agents connecting at once can
+            # still lose the OTHER's brand-new entry (last writer wins), which
+            # the next connect repairs — but no reader ever sees a torn file,
+            # which does NOT self-repair (json.loads fails → registry dark).
+            tmp = reg.with_name(f"{reg.name}.{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(sorted(stores), indent=1))
+            _restrict_to_owner_path(tmp)  # paths reveal which AIs keep stores where
+            os.replace(tmp, reg)
     except Exception:
         pass
+
+
+def append_log_line(path: str | os.PathLike, payload: str) -> None:
+    """Append `payload` (one or more complete lines) to a side-log with a
+    SINGLE O_APPEND write. Hook processes, host threads, and CLI runs all
+    append to the same floor/field/suppress logs; a buffered text-mode
+    f.write can split a large record across syscalls, tearing a line through
+    the middle of another writer's. One os.write under O_APPEND keeps each
+    payload contiguous. Created files are owner-only, like the store itself."""
+    data = payload.encode("utf-8")
+    if not data.endswith(b"\n"):
+        data += b"\n"
+    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+    fd = os.open(path, flags, 0o600)
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
 
 
 def _restrict_to_owner_path(path: Path, *, is_dir: bool = False) -> None:
@@ -481,34 +524,106 @@ def _restrict_to_owner(path: Path) -> None:
             _restrict_to_owner_path(f)
 
 
-def connect(db_path: str | os.PathLike | None = None) -> sqlite3.Connection:
-    """Open (creating if needed) an fornixdb store and return the connection."""
+DEFAULT_BUSY_TIMEOUT_MS = 5000
+
+
+def _stored_version(conn: sqlite3.Connection) -> int | None:
+    """The store's recorded schema_version, or None (fresh store, pre-meta
+    store, or anything unreadable — all of which mean 'run setup')."""
+    try:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        return int(row[0]) if row else None
+    except (sqlite3.OperationalError, ValueError):
+        return None
+
+
+def _configured_busy_timeout_ms(conn: sqlite3.Connection) -> int:
+    """`config busy_timeout_ms <ms>` — how long a connection waits on a locked
+    store before erroring. The default suits interactive hosts; a store that
+    coexists with long admin passes (dream, shrink/VACUUM) can raise it."""
+    try:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'busy_timeout_ms'").fetchone()
+        if row:
+            ms = int(str(row[0]).strip())
+            if ms > 0:
+                return ms
+    except (sqlite3.OperationalError, ValueError):
+        pass
+    return DEFAULT_BUSY_TIMEOUT_MS
+
+
+def _setup(conn: sqlite3.Connection) -> None:
+    """Migrate and create the schema, serialized against concurrent openers.
+
+    The stored schema_version is probed first WITHOUT any lock: a store that is
+    already current — every connect after the first — skips migration entirely
+    and the schema script below is pure no-ops (IF NOT EXISTS on existing
+    objects writes nothing), so routine connects take no write lock at all and
+    can open even while another process holds the store for a long admin op.
+
+    On a version change, BEGIN IMMEDIATE serializes the migrators: exactly one
+    process runs the ALTERs; the others block on the lock, re-probe inside
+    _migrate, and find nothing left to do. Consequence of the version gate:
+    ANY schema change must bump SCHEMA_VERSION, or existing stores never run
+    the new statements."""
+    if _stored_version(conn) != SCHEMA_VERSION:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            _migrate(conn)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+    conn.executescript(_SCHEMA)
+    try:
+        pending = conn.execute(
+            "SELECT 1 FROM meta WHERE key = 'fts_rebuild_pending'").fetchone()
+        if pending:
+            conn.execute("INSERT INTO memory_fts(memory_fts) VALUES('rebuild')")
+            conn.execute("DELETE FROM meta WHERE key = 'fts_rebuild_pending'")
+            conn.commit()
+    except sqlite3.OperationalError:
+        # rebuild lost a lock race — the flag stays set for the next opener;
+        # roll back so a half-done rebuild doesn't sit on an open transaction
+        conn.rollback()
+    if _stored_version(conn) != SCHEMA_VERSION:
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES ('schema_version', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (str(SCHEMA_VERSION),),
+        )
+        conn.commit()
+
+
+def connect(db_path: str | os.PathLike | None = None, *,
+            check_same_thread: bool = True) -> sqlite3.Connection:
+    """Open (creating if needed) an fornixdb store and return the connection.
+
+    check_same_thread=False is for callers that manage their own per-thread
+    confinement (MemoryStore keeps one connection per thread and only needs
+    the flag off so close() can run from a different thread); everyone else
+    should keep the default and let sqlite3 catch cross-thread sharing."""
     path = Path(db_path).expanduser() if db_path else default_db_path()
     if not path.parent.exists():  # new dirs owner-only; existing dirs untouched
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         _restrict_to_owner_path(path.parent, is_dir=True)  # Windows ACL too
     creating = path.name != ":memory:" and not path.exists()
     _register_store(path)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    # Wait up to 5s for a lock instead of erroring instantly. WAL lets readers
-    # and a writer coexist, but a checkpoint or a recall that writes (e.g.
-    # reinforcement) can still collide with a concurrent writer — most sharply
-    # when the live watch thread commits keyframes while the main connection
-    # recalls. Without this, that collision is an immediate SQLITE_BUSY; with it,
-    # SQLite blocks briefly and retries. Per-connection, so set on every open.
-    conn.execute("PRAGMA busy_timeout = 5000")
-    rebuild_fts = _migrate(conn)
-    conn.executescript(_SCHEMA)
-    if rebuild_fts:
-        conn.execute("INSERT INTO memory_fts(memory_fts) VALUES('rebuild')")
-    conn.execute(
-        "INSERT INTO meta(key, value) VALUES ('schema_version', ?) "
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        (str(SCHEMA_VERSION),),
-    )
-    conn.commit()
+    # Wait for a lock instead of erroring instantly. WAL lets readers and a
+    # writer coexist, but writers still serialize — and a BEGIN IMMEDIATE
+    # (write_txn, migration) queues here rather than failing. Per-connection,
+    # so set on every open; configurable per store via `config busy_timeout_ms`
+    # (read after setup — the meta table may not exist yet on a fresh store).
+    conn.execute(f"PRAGMA busy_timeout = {DEFAULT_BUSY_TIMEOUT_MS}")
+    _setup(conn)
+    ms = _configured_busy_timeout_ms(conn)
+    if ms != DEFAULT_BUSY_TIMEOUT_MS:
+        conn.execute(f"PRAGMA busy_timeout = {ms}")
     if creating:
         _restrict_to_owner(path)
         _announce_new_store(path)

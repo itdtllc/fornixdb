@@ -147,31 +147,39 @@ def tier_down(store: MemoryStore, dry_run: bool = False,
     now = datetime.now()
     moved = {"consolidated": 0, "cold": 0, "pressure": pressure}
     ph = ",".join("?" * len(kinds))
-    rows = store.conn.execute(
-        f"SELECT * FROM memory WHERE kind IN ({ph}) AND detail IS NOT NULL "
-        "AND retention_tier IN ('hot','consolidated')", list(kinds)).fetchall()
-    # cold candidates include already-consolidated rows (detail is NULL there)
-    rows += store.conn.execute(
-        f"SELECT * FROM memory WHERE kind IN ({ph}) AND retention_tier = 'consolidated' "
-        "AND detail IS NULL", list(kinds)).fetchall()
 
-    for row in rows:
-        try:
-            age = (now - datetime.fromisoformat(row["event_time"])).days
-        except (ValueError, TypeError):
-            continue
-        eff = store.effective_salience(dict(row), now)
-        if row["retention_tier"] != "cold" and eff < k_below and age > k_age:
-            if not dry_run:
-                _cold_row(store, row)
-            moved["cold"] += 1
-        elif (row["retention_tier"] == "hot" and row["detail"]
-              and eff < c_below and age > c_age):
-            if not dry_run:
-                _consolidate_row(store, row)
-            moved["consolidated"] += 1
-    if not dry_run:
-        store.conn.commit()
+    def _pass(conn) -> None:
+        rows = conn.execute(
+            f"SELECT * FROM memory WHERE kind IN ({ph}) AND detail IS NOT NULL "
+            "AND retention_tier IN ('hot','consolidated')", list(kinds)).fetchall()
+        # cold candidates include already-consolidated rows (detail is NULL there)
+        rows += conn.execute(
+            f"SELECT * FROM memory WHERE kind IN ({ph}) AND retention_tier = 'consolidated' "
+            "AND detail IS NULL", list(kinds)).fetchall()
+        for row in rows:
+            try:
+                age = (now - datetime.fromisoformat(row["event_time"])).days
+            except (ValueError, TypeError):
+                continue
+            eff = store.effective_salience(dict(row), now)
+            if row["retention_tier"] != "cold" and eff < k_below and age > k_age:
+                if not dry_run:
+                    _cold_row(store, row)
+                moved["cold"] += 1
+            elif (row["retention_tier"] == "hot" and row["detail"]
+                  and eff < c_below and age > c_age):
+                if not dry_run:
+                    _consolidate_row(store, row)
+                moved["consolidated"] += 1
+
+    if dry_run:
+        _pass(store.conn)
+    else:
+        # one transaction around select + moves: a second pass racing this one
+        # waits on the lock, then re-selects and skips the rows already tiered
+        # (instead of archiving the same detail twice)
+        with store.write_txn() as conn:
+            _pass(conn)
     return moved
 
 

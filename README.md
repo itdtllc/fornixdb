@@ -191,6 +191,8 @@ Memory topology is configurable, not fixed. Each AI gets its **own store** (its 
 
 Each store also carries an owner-settable **capture mode** (`config capture_mode explicit|suggest|auto`) that connected AIs read at startup: remember only when asked, offer to remember at checkpoints (default), or store autonomously.
 
+All of this is safe to run **at the same time**: a store file can be hit concurrently by several agents, several processes (MCP server, hooks, CLI), and several threads sharing one `MemoryStore` handle — writers serialize through WAL + per-store busy timeout (`config busy_timeout_ms`), schema migrations are single-winner, and reminders fire exactly once no matter how many hosts poll. Details in INTEGRATION.md §Concurrency.
+
 ## Configuration at a glance
 
 `fornixdb config` with no arguments prints **every** store setting at once — capture mode, ingest mode, vectors, disk budget, frozen state, proactive recall, and the MCP tool surface — alongside the **suggested defaults** for each (and which aren't applied yet). `fornixdb doctor` adds a health pass: schema currency, the host-side hooks that make capture and proactive recall actually fire (the most common silent gap, since those live in the host's `settings.json`, not in FornixDB), config smells, and a **config-integrity** check that flags any setting you've stored that no code actually reads (a typo, or a key with no effect). The one recommended setting **not** applied out of the box is a disk cap (never-delete is the default) — `fornixdb doctor --apply-suggested` sets it to a figure scaled to the device (20% of free disk, capped at 2 GB).

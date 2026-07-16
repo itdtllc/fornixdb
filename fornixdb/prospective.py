@@ -75,22 +75,25 @@ def remind(store: MemoryStore, what: str, when: str, *,
     now = now or datetime.now()
     due_at = parse_due(when, now)
     gist = f"Reminder: {what.strip()}"
+    due_iso = due_at.isoformat(timespec="seconds")
+    # The prospective row rides INSIDE store()'s insert transaction: both rows
+    # commit together or not at all. Two separate commits used to leave a dud
+    # on a crash between them — a row that reads as a memory of the intention
+    # but never fires.
     mid = store.store(
         gist, detail,
         kind="episodic",
         topics=list(dict.fromkeys(["reminder"] + (topics or []))),
         project=project,
-        event_time=due_at.isoformat(timespec="seconds"),
+        event_time=due_iso,
         session_id=session_id,
         salience=URGENT_SALIENCE if urgent else 0.5,
         source=source,
+        _in_txn=lambda conn, mem_id: conn.execute(
+            "INSERT INTO prospective (memory_id, due, urgent) VALUES (?, ?, ?)",
+            (mem_id, due_iso, 1 if urgent else 0)),
     )
-    store.conn.execute(
-        "INSERT INTO prospective (memory_id, due, urgent) VALUES (?, ?, ?)",
-        (mid, due_at.isoformat(timespec="seconds"), 1 if urgent else 0))
-    store.conn.commit()
-    return {"id": mid, "due": due_at.isoformat(timespec="seconds"),
-            "gist": gist, "urgent": urgent}
+    return {"id": mid, "due": due_iso, "gist": gist, "urgent": urgent}
 
 
 def _rows(store: MemoryStore, where: str, params: tuple) -> list[dict]:
@@ -118,27 +121,31 @@ def due(store: MemoryStore, now: datetime | None = None, *,
     interval_min, cap = _nag_dials(store)
     renag_before = (now - timedelta(minutes=interval_min)
                     ).isoformat(timespec="seconds")
-    rows = _rows(
-        store,
-        "p.due <= ? AND (p.urgent = 0 OR p.deliveries = 0 "
-        "OR (p.deliveries < ? AND p.last_delivery <= ?))",
-        (now_iso, cap, renag_before))
-    if deliver and rows:
-        normal = [r["id"] for r in rows if not r["urgent"]]
-        nagging = [r["id"] for r in rows if r["urgent"]]
-        if normal:
-            store.conn.executemany(
-                "UPDATE prospective SET delivered_at = ? WHERE memory_id = ?",
-                [(now_iso, i) for i in normal])
-        if nagging:
-            store.conn.executemany(
-                "UPDATE prospective SET deliveries = deliveries + 1, "
-                "last_delivery = ? WHERE memory_id = ?",
-                [(now_iso, i) for i in nagging])
-        store.conn.commit()
-        for r in rows:
-            if r["urgent"]:
-                r["deliveries"] += 1        # count includes this delivery
+    where = ("p.due <= ? AND (p.urgent = 0 OR p.deliveries = 0 "
+             "OR (p.deliveries < ? AND p.last_delivery <= ?))")
+    params = (now_iso, cap, renag_before)
+    if not deliver:
+        return _rows(store, where, params)
+    # SELECT and claim inside ONE write transaction: two hosts polling the
+    # same store (a voice loop and a chat session) must not both pick up the
+    # same reminder — the loser waits on the lock, re-selects, sees it claimed.
+    with store.write_txn() as conn:
+        rows = _rows(store, where, params)
+        if rows:
+            normal = [r["id"] for r in rows if not r["urgent"]]
+            nagging = [r["id"] for r in rows if r["urgent"]]
+            if normal:
+                conn.executemany(
+                    "UPDATE prospective SET delivered_at = ? WHERE memory_id = ?",
+                    [(now_iso, i) for i in normal])
+            if nagging:
+                conn.executemany(
+                    "UPDATE prospective SET deliveries = deliveries + 1, "
+                    "last_delivery = ? WHERE memory_id = ?",
+                    [(now_iso, i) for i in nagging])
+    for r in rows:
+        if r["urgent"]:
+            r["deliveries"] += 1        # count includes this delivery
     return rows
 
 
@@ -173,13 +180,18 @@ def unacknowledged(store: MemoryStore, now: datetime | None = None, *,
     present — nags again from attempt 1."""
     now = now or datetime.now()
     _, cap = _nag_dials(store)
-    rows = _rows(store, "p.urgent = 1 AND p.deliveries >= ? AND p.due <= ?",
-                 (cap, now.isoformat(timespec="seconds")))
-    if rearm and rows:
-        store.conn.executemany(
-            "UPDATE prospective SET deliveries = 0, last_delivery = NULL "
-            "WHERE memory_id = ?", [(r["id"],) for r in rows])
-        store.conn.commit()
+    where = "p.urgent = 1 AND p.deliveries >= ? AND p.due <= ?"
+    params = (cap, now.isoformat(timespec="seconds"))
+    if not rearm:
+        return _rows(store, where, params)
+    # same select-then-claim shape as due(): serialize concurrent session
+    # starts so only one host reports-and-rearms each exhausted reminder
+    with store.write_txn() as conn:
+        rows = _rows(store, where, params)
+        if rows:
+            conn.executemany(
+                "UPDATE prospective SET deliveries = 0, last_delivery = NULL "
+                "WHERE memory_id = ?", [(r["id"],) for r in rows])
     return rows
 
 
