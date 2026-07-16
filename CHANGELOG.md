@@ -7,6 +7,24 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+## [0.8.10] - 2026-07-16
+
+### Fixed
+- Hybrid recall's abstention gate no longer false-abstains on a top hit
+  anchored by literal tokens whose cosine sits just under the vector
+  shortlist floor: `recall_has_answer` now implements the keyword leg of its
+  original calibration — a strong FTS anchor (`kw_rel ≥ 7.1`) corroborated
+  by the raw, unfloored cosine (`≥ 0.15`) counts as a real answer. Pure
+  common-token overlap (raw cosine ~0) still abstains regardless of its
+  bm25 magnitude.
+- Ranking is now limit-stable: the keyword keep-set and FTS re-rank
+  overfetch were scaled by `limit`, so the same query could return a
+  different *order* depending on how many rows the caller asked for (a
+  mid-ranked bm25 row kept its keyword relevance in a wide fetch but lost
+  it in a narrow one). Both depths are now the constant `FTS_BLEND_KEEP`.
+- `pyproject.toml` version caught up (the 0.8.9 release bumped
+  `__init__.py` only, so pip-installed copies reported 0.8.8).
+
 ## [0.8.9] - 2026-07-15
 
 ### Fixed
