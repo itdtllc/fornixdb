@@ -15,7 +15,10 @@ from __future__ import annotations
 import math
 import re
 import sqlite3
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from .db import KIND_ALIASES, KINDS, RELATIONS, connect
 
@@ -233,13 +236,80 @@ def _fts_query(text: str, mode: str = "AND") -> str:
 
 
 class MemoryStore:
+    """One handle to one store. Safe to share across threads: each thread
+    gets its own SQLite connection to the same file (WAL serializes them,
+    exactly as separate processes are serialized). An injected `conn` or an
+    in-memory store pins a single fixed connection instead — those stay
+    single-thread, which sqlite3's own cross-thread check enforces."""
+
     def __init__(self, db_path=None, conn: sqlite3.Connection | None = None):
-        self.conn = conn or connect(db_path)
+        self._db_path = db_path
+        self._fixed_conn: sqlite3.Connection | None = None
+        self._local = threading.local()
+        self._conns: list[sqlite3.Connection] = []
+        self._conns_lock = threading.Lock()
+        self._embedder_lock = threading.Lock()
+        if conn is not None:
+            self._fixed_conn = conn
+        elif db_path is not None and Path(db_path).name == ":memory:":
+            # per-thread connections would each open a DIFFERENT empty db
+            self._fixed_conn = connect(db_path)
+        else:
+            _ = self.conn  # eager: creation/migration happen at construction
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        if self._fixed_conn is not None:
+            return self._fixed_conn
+        c = getattr(self._local, "conn", None)
+        if c is None:
+            # check_same_thread=False ONLY so close() can run from another
+            # thread — each connection is still used by its own thread alone
+            # (that confinement is exactly what this property provides).
+            c = connect(self._db_path, check_same_thread=False)
+            self._local.conn = c
+            with self._conns_lock:
+                self._conns.append(c)
+        return c
+
+    @contextmanager
+    def write_txn(self):
+        """BEGIN IMMEDIATE transaction for every multi-statement or
+        read-then-act write. Two guarantees a bare implicit transaction does
+        not give: (1) the write lock is taken BEFORE the reads, so what was
+        read is still true when the writes land — no second process can slip
+        a write between a SELECT and its UPDATE; (2) all statements commit or
+        roll back together. Re-entrant: inside an open transaction it joins
+        rather than nests, and the outermost owner commits."""
+        conn = self.conn
+        if conn.in_transaction:
+            yield conn
+            return
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
 
     def close(self) -> None:
-        """Release the SQLite connection. Required on Windows before the db
-        file can be moved or deleted (open files can't be unlinked there)."""
-        self.conn.close()
+        """Release every SQLite connection this store opened (one per thread
+        that used it). Required on Windows before the db file can be moved or
+        deleted (open files can't be unlinked there). Call it after worker
+        threads are done — closing a connection mid-query raises in that
+        thread."""
+        if self._fixed_conn is not None:
+            self._fixed_conn.close()
+            return
+        with self._conns_lock:
+            conns, self._conns = self._conns, []
+        for c in conns:
+            try:
+                c.close()
+            except Exception:
+                pass
+        self._local = threading.local()  # a later use reopens, never sees a closed conn
 
     def __enter__(self):
         return self
@@ -285,6 +355,12 @@ class MemoryStore:
         recorded_time: str | None = None,
         writer: str | None = None,
         embedder=None,  # None = auto (embed when this store uses vectors); False = skip
+        _in_txn=None,   # private seam: callable(conn, mem_id) run INSIDE the
+                        # insert transaction, so a companion row (e.g. a
+                        # prospective reminder) commits or rolls back WITH the
+                        # memory row. Raw statements on `conn` only — the
+                        # self-committing store methods would end the
+                        # transaction early.
     ) -> int:
         kind = KIND_ALIASES.get(kind, kind)
         if kind not in KINDS:
@@ -300,24 +376,30 @@ class MemoryStore:
         emb = self._resolve_embedder(embedder)
         from .budget import make_room  # lazy: avoids import cycle, free when no budget set
         make_room(self)
-        cur = self.conn.execute(
-            """INSERT INTO memory (name, kind, event_time, event_time_end,
-                                   recorded_time, session_id, project, gist, detail,
-                                   salience, source, source_ref, writer)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                name, kind,
-                event_time or now_iso(), event_time_end,
-                recorded_time or now_iso(),
-                session_id, project, gist, detail,
-                min(max(salience, 0.0), SALIENCE_CAP), source, source_ref,
-                writer,
-            ),
-        )
-        mem_id = cur.lastrowid
-        for topic in topics or []:
-            self.tag(mem_id, topic)
-        self.conn.commit()
+        # One transaction for the row, its topics, and any _in_txn companion:
+        # a reminder used to be able to lose its prospective row to a crash
+        # between two commits (a dud that reads as a memory but never fires),
+        # and a row could land with only some of its topics.
+        with self.write_txn() as conn:
+            cur = conn.execute(
+                """INSERT INTO memory (name, kind, event_time, event_time_end,
+                                       recorded_time, session_id, project, gist, detail,
+                                       salience, source, source_ref, writer)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    name, kind,
+                    event_time or now_iso(), event_time_end,
+                    recorded_time or now_iso(),
+                    session_id, project, gist, detail,
+                    min(max(salience, 0.0), SALIENCE_CAP), source, source_ref,
+                    writer,
+                ),
+            )
+            mem_id = cur.lastrowid
+            for topic in topics or []:
+                self._apply_topic(conn, mem_id, topic)
+            if _in_txn is not None:
+                _in_txn(conn, mem_id)
         # Embed on write so a vector-using store can recall this memory by
         # meaning immediately. Auto-resolution only loads a model when the
         # store already uses vectors (see _resolve_embedder), so keyword-only
@@ -359,15 +441,21 @@ class MemoryStore:
             linked.append(row["id"])
         return linked
 
-    def tag(self, memory_id: int, topic: str) -> None:
-        self._check_writable()
+    @staticmethod
+    def _apply_topic(conn: sqlite3.Connection, memory_id: int, topic: str) -> None:
+        """The tag statements without a commit — for callers composing them
+        into a larger transaction (store's insert txn) as well as tag()."""
         topic = topic.strip().lower()
-        self.conn.execute("INSERT OR IGNORE INTO topic(name) VALUES (?)", (topic,))
-        self.conn.execute(
+        conn.execute("INSERT OR IGNORE INTO topic(name) VALUES (?)", (topic,))
+        conn.execute(
             """INSERT OR IGNORE INTO memory_topic(memory_id, topic_id)
                SELECT ?, id FROM topic WHERE name = ?""",
             (memory_id, topic),
         )
+
+    def tag(self, memory_id: int, topic: str) -> None:
+        self._check_writable()
+        self._apply_topic(self.conn, memory_id, topic)
         self.conn.commit()
 
     def link(self, memory_id: int, related_id: int, relation: str = "relates") -> None:
@@ -430,24 +518,27 @@ class MemoryStore:
         if old_id == new_id:
             raise ValueError("a memory cannot supersede itself")
         self._check_writable()
-        # the successor inherits the unique name handle unless it has its own,
-        # so `show <name>` keeps resolving to the live version
-        names = {r["id"]: r["name"] for r in self.conn.execute(
-            "SELECT id, name FROM memory WHERE id IN (?, ?)", (old_id, new_id))}
-        if names.get(old_id) and not names.get(new_id):
-            self.conn.execute("UPDATE memory SET name = NULL WHERE id = ?", (old_id,))
-            self.conn.execute("UPDATE memory SET name = ? WHERE id = ?",
-                              (names[old_id], new_id))
-        self.conn.execute(
-            "UPDATE memory SET superseded_by = ?, superseded_time = ? WHERE id = ?",
-            (new_id, now_iso(), old_id),
-        )
-        self.conn.execute(
-            "INSERT OR IGNORE INTO memory_link(memory_id, related_id, relation) "
-            "VALUES (?,?, 'supersedes')",
-            (new_id, old_id),
-        )
-        self.conn.commit()
+        # write_txn: the name probe and the handoff must see one consistent
+        # state — two processes superseding the same row concurrently could
+        # otherwise both read the old name and both hand it off
+        with self.write_txn() as conn:
+            # the successor inherits the unique name handle unless it has its
+            # own, so `show <name>` keeps resolving to the live version
+            names = {r["id"]: r["name"] for r in conn.execute(
+                "SELECT id, name FROM memory WHERE id IN (?, ?)", (old_id, new_id))}
+            if names.get(old_id) and not names.get(new_id):
+                conn.execute("UPDATE memory SET name = NULL WHERE id = ?", (old_id,))
+                conn.execute("UPDATE memory SET name = ? WHERE id = ?",
+                             (names[old_id], new_id))
+            conn.execute(
+                "UPDATE memory SET superseded_by = ?, superseded_time = ? WHERE id = ?",
+                (new_id, now_iso(), old_id),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO memory_link(memory_id, related_id, relation) "
+                "VALUES (?,?, 'supersedes')",
+                (new_id, old_id),
+            )
         # content changed: the successor is a fresh (unsuppressed) row, and the
         # old row is tombstoned — clear any suppression on it so the audit trail
         # doesn't carry a stale flag on a row that no longer participates.
@@ -745,9 +836,16 @@ class MemoryStore:
         if embedder is not None:
             return embedder
         if not hasattr(self, "_auto_embedder"):
-            self._auto_embedder = self._auto_resolve_embedder()
-            if self._auto_embedder is not None:
-                self._maybe_backfill_vectors(self._auto_embedder)
+            # double-checked: first vector use from N threads at once must
+            # load the model and run the missing-vector backfill ONCE, not N
+            # times (observed live: six threads, six model loads, six
+            # identical backfills of the same 56 rows)
+            with self._embedder_lock:
+                if not hasattr(self, "_auto_embedder"):
+                    emb = self._auto_resolve_embedder()
+                    self._auto_embedder = emb
+                    if emb is not None:
+                        self._maybe_backfill_vectors(emb)
         return self._auto_embedder
 
     def _maybe_backfill_vectors(self, emb):
@@ -1220,10 +1318,10 @@ class MemoryStore:
         import json
         ts = now_iso()
         try:
-            with open(path, "a", encoding="utf-8") as f:
-                for r in records:
-                    f.write(json.dumps({"ts": ts, "event": event, **r},
-                                       ensure_ascii=False) + "\n")
+            from .db import append_log_line
+            append_log_line(path, "\n".join(
+                json.dumps({"ts": ts, "event": event, **r}, ensure_ascii=False)
+                for r in records))
         except Exception:
             pass
 
@@ -1235,23 +1333,26 @@ class MemoryStore:
         number newly suppressed. Frozen/read-only stores skip silently."""
         if not stats or self.frozen():
             return 0
-        newly = []
-        for i, pr in stats.items():
-            row = self.conn.execute(
-                "SELECT proactive_suppressed_at FROM memory WHERE id = ?", (int(i),)
-            ).fetchone()
-            if row is None or row["proactive_suppressed_at"] is not None:
-                continue                 # gone, or already suppressed
-            newly.append((int(i), int(pr[0]), int(pr[1])))
-        if not newly:
-            return 0
-        ts = at or now_iso()
-        self.conn.executemany(
-            """UPDATE memory SET proactive_suppressed_at = ?,
-                                 suppressed_pushed = ?, suppressed_referenced = ?
-               WHERE id = ?""",
-            [(ts, p, r, i) for (i, p, r) in newly])
-        self.conn.commit()
+        # write_txn: the already-suppressed probe and the stamp are one unit,
+        # so two concurrent scans can't both classify a row as new (idempotence
+        # would survive a double-stamp, but the audit log would double-log)
+        with self.write_txn() as conn:
+            newly = []
+            for i, pr in stats.items():
+                row = conn.execute(
+                    "SELECT proactive_suppressed_at FROM memory WHERE id = ?", (int(i),)
+                ).fetchone()
+                if row is None or row["proactive_suppressed_at"] is not None:
+                    continue                 # gone, or already suppressed
+                newly.append((int(i), int(pr[0]), int(pr[1])))
+            if not newly:
+                return 0
+            ts = at or now_iso()
+            conn.executemany(
+                """UPDATE memory SET proactive_suppressed_at = ?,
+                                     suppressed_pushed = ?, suppressed_referenced = ?
+                   WHERE id = ?""",
+                [(ts, p, r, i) for (i, p, r) in newly])
         self._log_suppression("suppress", [
             {"id": i, "pushed": p, "referenced": r, "reason": "scan"}
             for (i, p, r) in newly])

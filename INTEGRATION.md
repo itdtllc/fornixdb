@@ -573,6 +573,31 @@ the empty string for the agent's own (primary) store, the alias (`"shared"`)
 otherwise. Remember that row ids collide across stores; `shared:12` and `12`
 are different memories.
 
+## Concurrency (threads, processes, agents on one machine)
+
+A store file is safe to hit from every direction at once — hook processes,
+an MCP server, CLI runs, and a host's own threads:
+
+- **Threads**: one `MemoryStore` can be shared across threads; it keeps one
+  SQLite connection per thread internally. No per-thread store ceremony is
+  needed (it remains harmless). Call `close()` after worker threads finish.
+- **Processes**: WAL journaling plus a per-store busy timeout serialize
+  writers; schema migration on version bumps is single-winner (concurrent
+  openers wait, then find the work done). `config busy_timeout_ms <ms>`
+  (default 5000) sets how long a connection waits on a locked store —
+  raise it on a store that coexists with long admin passes (`dream`,
+  `shrink`/VACUUM).
+- **Read-then-act writes** (supersede's name handoff, reminder delivery,
+  tier/prune passes) run under `MemoryStore.write_txn()`, a BEGIN IMMEDIATE
+  transaction: what was read is still true when the write lands. Use it for
+  any new multi-statement write.
+- **Reminders fire once machine-wide**: `prospective.due()` claims rows
+  inside the transaction, so several hosts polling the same store deliver
+  each reminder exactly once (urgent nag cycles count once per interval).
+- **Side files**: floor/field/suppress logs append whole lines (single
+  O_APPEND write — concurrent writers interleave lines, never tear one);
+  the store registry is written atomically (temp file + rename).
+
 ## Stores that refuse writes
 
 `remember` (and any other mutation) can be refused: a store may be **frozen**

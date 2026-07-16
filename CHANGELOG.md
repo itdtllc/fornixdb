@@ -5,7 +5,37 @@ versioning. While the project is pre-1.0 the public API may still evolve between
 minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
 active development branch and can change through the day.
 
-## [Unreleased]
+## [0.8.11] - 2026-07-16
+
+### Added
+- One-machine concurrency safety across agents, processes, and threads:
+  - `MemoryStore` is thread-safe — share one handle across threads; it keeps
+    one SQLite connection per thread (per-thread stores in hosts are no
+    longer necessary).
+  - `MemoryStore.write_txn()` — BEGIN IMMEDIATE transaction for
+    read-then-act writes; adopted by supersede (name handoff), reminder
+    delivery/rearm, suppression stamping, tier and prune passes.
+  - `config busy_timeout_ms <ms>` (default 5000) — how long a connection
+    waits on a locked store; raise it on stores that coexist with long
+    admin passes (dream, shrink/VACUUM).
+
+### Fixed
+- Schema migration is race-free: concurrent opens across a version bump used
+  to both probe the stale shape and both ALTER (the loser died with
+  "duplicate column name"); migration now runs single-winner under
+  BEGIN IMMEDIATE, and an interrupted FTS rebuild is finished by the next
+  opener. Routine connects of an already-current store no longer take the
+  write lock at all.
+- `prospective.due()` claims reminders inside the delivery transaction, so
+  two hosts polling the same store can no longer both deliver the same
+  reminder.
+- The machine store registry is written atomically and recovers from a torn
+  file; floor/field/suppress side-logs append each record with a single
+  O_APPEND write so concurrent writers can never tear a line.
+- `remind()` writes its memory row and its prospective (delivery-state) row
+  in ONE transaction — a crash between the two used to leave a dud that read
+  as a memory of the intention but never fired. `store()`'s insert, its
+  topics, and any companion row now land or roll back together.
 
 ## [0.8.10] - 2026-07-16
 

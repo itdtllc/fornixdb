@@ -120,6 +120,7 @@ CONFIG_DEFAULTS: dict[str, str] = {
     "parallel_dissent": "off",
     "floor_log": "off",
     "dream_use_credit": "on",
+    "busy_timeout_ms": "5000 (how long a connection waits on a locked store)",
     "active_project": "(auto: prompt / cwd)",
     "vectors": "on",
     "disk_budget": "no cap (never-delete)",
@@ -160,6 +161,9 @@ def host_hook_status(paths=DEFAULT_HOST_SETTINGS) -> list[dict]:
 _INDIRECT_CONFIG_READERS = frozenset({
     "frozen", "mcp_tools_disabled",
     "machine_budget_mb", "machine_budget_policy", "machine_budget_defaulted",
+    # read by db.connect()/_setup() with raw SQL — the meta table is consulted
+    # before the higher-level config helpers are importable at open time
+    "busy_timeout_ms", "fts_rebuild_pending",
 })
 # Per-entity dynamic keys (prefix + session-id / kind), read via helper-built
 # names or a `LIKE` scan — recognized by prefix, never flagged.

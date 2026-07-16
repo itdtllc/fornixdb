@@ -475,8 +475,8 @@ def _log_field_beat(store: MemoryStore, thought: str, fr: FieldResult,
         "ms": round(ms, 1),
     }
     try:
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        from .db import append_log_line
+        append_log_line(path, json.dumps(rec, ensure_ascii=False))
     except Exception:
         pass
 

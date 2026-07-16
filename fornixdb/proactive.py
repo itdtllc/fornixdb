@@ -219,8 +219,8 @@ def _log_floor_decision(store: MemoryStore, channel: str | None, prompt: str,
         "query": (prompt or "")[:80],
     }
     try:
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        from .db import append_log_line
+        append_log_line(path, json.dumps(rec, ensure_ascii=False))
     except Exception:
         pass
 
