@@ -135,6 +135,14 @@ in the system prompt (wording from the local-agent reference prompt):
 - *Time questions go to the timeline* — "what did we do <when>" must call
   `recall_timeline` with the phrase as the user said it; say explicitly that
   `recall_memory` cannot answer time questions.
+- *Keep one anchor word when paraphrasing a recall query* — associative
+  recall bridges a paraphrase with zero keyword overlap as long as **one
+  content word still embeds close to the original** (the animal, the
+  artifact, the project name); a query that paraphrases *every* content word
+  at once falls below the vector floor and misses. Measured live 2026-07-16:
+  four paraphrases of the same stored fact scored 2 hits (rank 1–2) / 2
+  misses, split exactly on whether one strong anchor survived. Paraphrase
+  freely — but keep the one concrete noun you're most sure was in the memory.
 - *Run the sleep step when it's due* — when `brief`/`startup_context` flags
   consolidation DUE, or the user says "consolidate / go to sleep / dream", run
   the dream pass, apply the moves it proposes (supersede/merge/set-gist/distill/

@@ -11,6 +11,9 @@ active development branch and can change through the day.
 - README: new "Long-running agents and loops" section — what proactive recall,
   mid-loop checkpointing, and exactly-once reminder delivery add to a scheduled
   or self-pacing agent loop, plus the sub-agent and parallel-loops behavior.
+- INTEGRATION.md: new system-prompt tip — keep one anchor word when
+  paraphrasing a recall query (measured live: paraphrases missed exactly when
+  every content word drifted at once).
 
 ## [0.8.11] - 2026-07-16
 
