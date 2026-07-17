@@ -78,6 +78,7 @@ def config_overview(store) -> list[tuple[str, str]]:
     dissent = (get_config(store, "parallel_dissent", "off") or "off")
     floor_log = (get_config(store, "floor_log", "off") or "off")
     use_credit = (get_config(store, "dream_use_credit", "on") or "on")
+    tpath = (get_config(store, "transcripts_path", "") or "").strip()
     pinned_proj = (get_config(store, "active_project", "") or "").strip()
     session_cap = (get_config(store, "session_capture", "on") or "on")
     from .levels import current_rung, level
@@ -96,6 +97,8 @@ def config_overview(store) -> list[tuple[str, str]]:
         ("parallel_dissent", "off" if dissent in _OFF else "on"),
         ("floor_log", "off" if floor_log in _OFF else "on"),
         ("dream_use_credit", "off" if use_credit in _OFF else "on"),
+        ("transcripts_path", tpath or "(unset — dream's use-credit/suppression "
+                                      "refreshes stay manual)"),
         ("active_project", pinned_proj or "(auto: prompt / cwd)"),
         ("vectors", _vectors_setting(store)),
         ("disk_budget", budget),
@@ -120,6 +123,9 @@ CONFIG_DEFAULTS: dict[str, str] = {
     "parallel_dissent": "off",
     "floor_log": "off",
     "dream_use_credit": "on",
+    "transcripts_path": "(unset — set to the host's transcript dir, e.g. "
+                        "~/.claude/projects, on the ONE store that host's hooks "
+                        "inject from; ids collide across stores)",
     "busy_timeout_ms": "5000 (how long a connection waits on a locked store)",
     "active_project": "(auto: prompt / cwd)",
     "vectors": "on",
