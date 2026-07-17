@@ -45,17 +45,17 @@ class WizardCase(unittest.TestCase):
 
     # default fresh store sits at L5 with capture=suggest; the build prompts are
     # rung, dissent (asked at L5), capture-style, session, vectors, ingest,
-    # budget (no policy when off), floor-log, then the MCP-tools mode
-    # (keep/minimal/custom)
+    # budget (no policy when off), floor-log, transcripts-path, then the
+    # MCP-tools mode (keep/minimal/custom)
 
     def test_keep_everything_writes_nothing(self):
-        res, _ = self._run("", "", "", "", "", "", "", "", "")  # all kept, no confirm
+        res, _ = self._run("", "", "", "", "", "", "", "", "", "")  # all kept, no confirm
         self.assertEqual(res["applied"], [])
         self.assertFalse(res["aborted"])
         self.assertEqual(levels.current_rung(self.s)[0], "L5")
 
     def test_lower_rung_and_confirm(self):
-        res, _ = self._run("L3", "", "", "", "", "", "", "", "y")
+        res, _ = self._run("L3", "", "", "", "", "", "", "", "", "y")
         self.assertIn("operating_level", res["applied"])
         self.assertEqual(levels.current_rung(self.s)[0], "L3")
         self.assertFalse(levels.is_on(self.s, "L4"))
@@ -64,7 +64,7 @@ class WizardCase(unittest.TestCase):
         # at the L5 default rung the dissent question appears; turning it on:
         # rung, dissent, capture, session, vectors, ingest, budget, floor-log,
         # tools, confirm
-        res, sc = self._run("", "on", "", "", "", "", "", "", "", "y")
+        res, sc = self._run("", "on", "", "", "", "", "", "", "", "", "y")
         self.assertIn("parallel_dissent", res["applied"])
         self.assertEqual(levels.current_rung(self.s)[0], "L5")
         self.assertTrue(levels.is_on(self.s, "L5"))  # default-on since 0.5.0
@@ -74,32 +74,32 @@ class WizardCase(unittest.TestCase):
     def test_below_l5_never_asks_dissent(self):
         # stepping down to L4 drops the dissent ask: rung, capture, session,
         # vectors, ingest, budget, floor-log, tools, confirm
-        res, sc = self._run("L4", "", "", "", "", "", "", "", "y")
+        res, sc = self._run("L4", "", "", "", "", "", "", "", "", "y")
         self.assertIn("operating_level", res["applied"])
         self.assertNotIn("dissent", sc.text())
         self.assertEqual(levels.current_rung(self.s)[0], "L4")
         self.assertTrue(levels.is_on(self.s, "L3"))
 
     def test_decline_at_confirm_writes_nothing(self):
-        res, _ = self._run("", "", "auto", "", "", "", "", "", "", "n")
+        res, _ = self._run("", "", "auto", "", "", "", "", "", "", "", "n")
         self.assertTrue(res["aborted"])
         self.assertEqual(res["applied"], [])
         self.assertEqual(capture_mode(self.s), "suggest")  # unchanged
 
     def test_change_capture_flavor(self):
-        res, _ = self._run("", "", "auto", "", "", "", "", "", "", "y")
+        res, _ = self._run("", "", "auto", "", "", "", "", "", "", "", "y")
         self.assertEqual(capture_mode(self.s), "auto")
         self.assertEqual(levels.current_rung(self.s)[0], "L5")  # rung untouched
 
     def test_drop_to_l1_skips_capture_flavor(self):
         # rung, session, vectors, ingest, budget, floor-log, tools, confirm — NO capture ask
-        res, sc = self._run("L1", "", "", "", "", "", "", "y")
+        res, sc = self._run("L1", "", "", "", "", "", "", "", "y")
         self.assertEqual(levels.current_rung(self.s)[0], "L1")
         self.assertEqual(capture_mode(self.s), "explicit")  # L2 off
         self.assertNotIn("capture style", sc.text())
 
     def test_set_budget_then_policy(self):
-        res, _ = self._run("", "", "", "", "", "", "1000", "freeze", "", "", "y")
+        res, _ = self._run("", "", "", "", "", "", "1000", "freeze", "", "", "", "y")
         self.assertEqual(get_config(self.s, "disk_budget_mb"), "1000")
         self.assertEqual(get_config(self.s, "budget_policy"), "freeze")
 
@@ -107,13 +107,13 @@ class WizardCase(unittest.TestCase):
         # invalid rung 'L9' re-prompts, then 'L2' accepted; L2 still asks
         # capture-style: rung(x2), capture, session, vectors, ingest, budget,
         # floor-log, tools, confirm
-        res, sc = self._run("L9", "L2", "", "", "", "", "", "", "", "y")
+        res, sc = self._run("L9", "L2", "", "", "", "", "", "", "", "", "y")
         self.assertEqual(levels.current_rung(self.s)[0], "L2")
         self.assertIn("not one of", sc.text())
 
     def test_tools_minimal_disables_optionals(self):
         from fornixdb.adapters.mcp_server import tools_disabled
-        res, _ = self._run("", "", "", "", "", "", "", "", "minimal", "y")
+        res, _ = self._run("", "", "", "", "", "", "", "", "", "minimal", "y")
         self.assertTrue(res["applied"])              # tool:* entries applied
         disabled = set(tools_disabled(self.s))
         self.assertTrue(disabled)                    # some optional tools off
@@ -122,9 +122,27 @@ class WizardCase(unittest.TestCase):
     def test_enable_floor_log(self):
         # keep rung/dissent/capture/session/vectors/ingest/budget, turn floor-log
         # ON, keep tools, confirm
-        res, _ = self._run("", "", "", "", "", "", "", "on", "", "y")
+        res, _ = self._run("", "", "", "", "", "", "", "on", "", "", "y")
         self.assertIn("floor_log", res["applied"])
         self.assertEqual(get_config(self.s, "floor_log"), "on")
+
+    def test_set_transcripts_path_reprompts_on_bad_dir(self):
+        # keep rung/dissent/capture/session/vectors/ingest/budget/floor-log,
+        # then a nonexistent dir re-prompts, a real one is accepted; keep tools
+        with tempfile.TemporaryDirectory() as td:
+            res, sc = self._run("", "", "", "", "", "", "", "",
+                                "/no/such/dir/zzz", td, "", "y")
+            self.assertIn("transcripts_path", res["applied"])
+            self.assertEqual(get_config(self.s, "transcripts_path"), td)
+            self.assertIn("not an existing directory", sc.text())
+            self.assertIn("ids collide", sc.text())  # the cross-store caution
+
+    def test_transcripts_path_off_clears(self):
+        with tempfile.TemporaryDirectory() as td:
+            set_config(self.s, "transcripts_path", td)
+            res, _ = self._run("", "", "", "", "", "", "", "", "off", "", "y")
+            self.assertIn("transcripts_path", res["applied"])
+            self.assertEqual(get_config(self.s, "transcripts_path") or "", "")
 
     def test_frozen_decline_leaves_store_frozen(self):
         set_config(self.s, "frozen", "on")
@@ -134,7 +152,7 @@ class WizardCase(unittest.TestCase):
 
     def test_frozen_accept_unfreezes_then_runs(self):
         set_config(self.s, "frozen", "on")
-        res, _ = self._run("y", "", "", "", "", "", "", "", "", "")  # unfreeze, keep all
+        res, _ = self._run("y", "", "", "", "", "", "", "", "", "", "")  # unfreeze, keep all
         self.assertFalse(self.s.frozen())
         self.assertFalse(res["aborted"])
 

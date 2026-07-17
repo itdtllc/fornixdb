@@ -56,6 +56,20 @@ def _ask_budget(ask, out, current: str) -> str:
         out(f"    '{raw}' is not a positive number or 'off' — try again")
 
 
+def _ask_transcripts_path(ask, out, current: str) -> str:
+    from pathlib import Path
+    while True:
+        raw = ask(f"  transcripts path (a directory, or 'off') [{current}]: ").strip()
+        if raw == "":
+            return current
+        if raw.lower() in ("off", "none"):
+            return "off"
+        expanded = str(Path(raw).expanduser())
+        if Path(expanded).is_dir():
+            return expanded
+        out(f"    '{raw}' is not an existing directory — try again (or 'off')")
+
+
 def build_plan(store, ask, out) -> list[dict]:
     """Collect intended changes as {label, old, new, apply}. Pure prompting —
     no writes happen here."""
@@ -136,6 +150,25 @@ def build_plan(store, ask, out) -> list[dict]:
     if new != cur:
         plan.append({"label": "floor_log", "old": cur, "new": new,
                      "apply": lambda v=new: set_config(store, "floor_log", v)})
+
+    # 7b) transcripts_path — the host AI's session-transcript directory. Dream's
+    #     pass-open refreshes (use-credit + push-suppression) scan it to see which
+    #     pushed memories actually earned downstream references; unset, those
+    #     refreshes only run via an explicit `suppress --scan`. CAUTION printed to
+    #     the user: memory ids collide across stores, so this must be set ONLY on
+    #     the one store the host's hooks inject from — a foreign store scanning
+    #     the same transcripts credits the wrong rows (live-caught 2026-07-03).
+    cur = (get_config(store, "transcripts_path", "") or "").strip() or "off"
+    out("\nTranscripts path (host transcript dir, e.g. ~/.claude/projects):")
+    out("  lets dream's use-credit + push-suppression refreshes run automatically.")
+    out("  Set it ONLY on the store that host's hooks inject from — ids collide")
+    out("  across stores, so a second store scanning the same transcripts")
+    out("  credits the wrong rows.")
+    new = _ask_transcripts_path(ask, out, cur)
+    if new != cur:
+        val = "" if new == "off" else new
+        plan.append({"label": "transcripts_path", "old": cur, "new": new,
+                     "apply": lambda v=val: set_config(store, "transcripts_path", v)})
 
     # 8) MCP tools — which tools this store advertises to an AI. Core tools are
     #    always on; optional ones can be trimmed (smaller per-turn prompt).

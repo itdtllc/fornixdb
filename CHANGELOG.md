@@ -7,6 +7,15 @@ active development branch and can change through the day.
 
 ## [Unreleased]
 
+### Added
+- `transcripts_path` is now a first-class setting: shown by bare
+  `fornixdb config` (with the set-it-on-one-store-only caution — memory ids
+  collide across stores), and offered as a `configure` wizard step with
+  directory validation and an `off` clear. Previously it could only be set
+  blind (`config transcripts_path <dir>`) and never appeared in the listing,
+  so whether it was set was invisible. It gates dream's pass-open use-credit
+  and push-suppression refreshes.
+
 ### Documentation
 - README: new "Long-running agents and loops" section — what proactive recall,
   mid-loop checkpointing, and exactly-once reminder delivery add to a scheduled
