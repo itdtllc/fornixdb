@@ -484,6 +484,25 @@ def suppress_refresh(store: MemoryStore) -> dict | None:
         return None
 
 
+def _markdown_stale_scan(store: MemoryStore) -> list:
+    """The markdown↔store staleness correlation (markdown_stale.scan), gated
+    like the other dream hooks: `dream_markdown_stale off` disables, and the
+    scan needs the bridge's `native_dir` — no configured markdown directory,
+    no scan (an Elira-style consumer dreams exactly as before). Never raises:
+    a malformed markdown file must not kill the dream."""
+    if store._setting_off("dream_markdown_stale"):
+        return []
+    try:
+        from .adapters.native_memory import native_dir
+        d = native_dir(store)
+        if not d:
+            return []
+        from .markdown_stale import scan
+        return scan(store, d)
+    except Exception:
+        return []
+
+
 def _reproject_scan(store: MemoryStore) -> list:
     """Mis-scoped rows are the OTHER root of cross-project push noise (the floor
     penalty and project-scoped pulse only treat symptoms of a wrong/missing
@@ -651,7 +670,8 @@ def propose(store: MemoryStore) -> dict:
             "contradictions": contradictions, "associations": associations,
             "resolutions": resolutions, "reality": _reality_scan(store),
             "chronic": _chronic_scan(store),
-            "reproject": _reproject_scan(store)}
+            "reproject": _reproject_scan(store),
+            "markdown_stale": _markdown_stale_scan(store)}
 
 
 # ------------------------------------------------------------- sleep / dream
@@ -685,6 +705,12 @@ def _dream_narrative(st: dict, counts: dict, woven: int = 0) -> str:
         parts.append(plural(counts["reality"],
                             "pointer to a missing file to verify",
                             "pointers to missing files to verify"))
+    if counts.get("markdown_stale"):
+        # markdown vs timeline: a file's open PICKUP/NEXT block looks
+        # overtaken by a later session the store captured passively
+        parts.append(plural(counts["markdown_stale"],
+                            "markdown note that looks overtaken",
+                            "markdown notes that look overtaken"))
     if counts["associations"] and not woven:
         # the generative half: connections that didn't exist before the dream
         # (when woven, the woke-clause below reports them instead)
@@ -814,9 +840,18 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
     counts = {k: len(work[k]) for k in ("distill", "gists", "merges",
                                         "contradictions", "associations",
                                         "resolutions", "reality", "chronic",
-                                        "reproject")}
+                                        "reproject", "markdown_stale")}
     counts["total"] = sum(counts.values())
     counts["woven"] = woven
+
+    # the staleness flags become the standing set brief's one-liner reads —
+    # each dream refreshes it, an empty scan clears it (best-effort: the
+    # brief line is a convenience, never worth failing a pass over)
+    try:
+        from .markdown_stale import persist_flags
+        persist_flags(store, work["markdown_stale"])
+    except Exception:
+        pass
 
     applied = None
     if done:  # "wake": report what was reconciled DURING the pass, then close it

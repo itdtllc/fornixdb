@@ -8,6 +8,22 @@ active development branch and can change through the day.
 ## [Unreleased]
 
 ### Added
+- Markdown↔store staleness correlation (dream-time): each markdown memory file
+  in the bridge's `native_dir` whose body carries a forward-looking marker
+  (PICKUP / NEXT / TODO / pending / resume-here …) is checked against the
+  store's episodic timeline — an episodic row recorded AFTER the file's last
+  edit, carrying closure language and cosine-close to the file's imported row
+  (stored vectors only; model-free, zero billed tokens), flags the file as
+  possibly OVERTAKEN. Flags land in the dream worklist (`markdown_stale`) and
+  `brief` prints a one-line pointer while an unreviewed flag stands (~30–60
+  tokens on a hit, silence otherwise; flags are revalidated cheaply at read
+  time, so rewriting the file clears its flag immediately). Accept a reviewed
+  false positive forever with `link <file-row> <session-row> --relation
+  distinct`; `config dream_markdown_stale off` disables. Motivated by a live
+  miss (2026-07-17): a hand-maintained PICKUP block presented finished work as
+  pending for days while the store's passive capture had recorded the truth
+  the day it happened — the pushed markdown claim won by default because
+  nothing forced the cross-check. Now the dream is that cross-check.
 - `transcripts_path` is now a first-class setting: shown by bare
   `fornixdb config` (with the set-it-on-one-store-only caution — memory ids
   collide across stores), and offered as a `configure` wizard step with
