@@ -97,7 +97,15 @@ def _is_low_information(row: dict) -> bool:
     """True for an episodic session-opener whose gist carries almost no content —
     a greeting or a pure pickup/navigation request — once the auto-capture
     scaffold and that vocabulary are removed. Noise to push proactively; still
-    recallable explicitly. Curated (non-episodic) memories are never low-info."""
+    recallable explicitly. Curated (non-episodic) memories are never low-info.
+
+    Sense captures (`source` = senses:*) are exempt: a 1-3-word caption
+    ("acoustic guitar") is the modality's natural shape, not a content-free
+    opener — the word-count test miscategorized every one of them, so no
+    percept could EVER be pushed. Their modality-prefixed vectors give the
+    cosine floors a real signal; relevance gating is the floors' job."""
+    if str(row.get("source") or "").startswith("senses:"):
+        return False
     return (row.get("kind") == "episodic"
             and len(_content_words(row.get("gist", ""))) < MIN_EPISODIC_CONTENT_WORDS)
 

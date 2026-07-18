@@ -5,6 +5,43 @@ versioning. While the project is pre-1.0 the public API may still evolve between
 minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
 active development branch and can change through the day.
 
+## [0.8.14] - 2026-07-18
+
+### Fixed
+- `usefulness-scan` now unwraps the host's JSON-escaped `hookSpecificOutput`
+  stdout wrapper before testing the settled-block marker, so L5 settled
+  pushes are attributed to L5 instead of silently blending into L4 (the
+  `"\nsettled: "` test could never match an escaped newline — the L5 gate
+  readout had been a structural zero since the instrumentation shipped).
+  Push char/token costs are now measured on the unescaped block.
+- `field-stats` beat buckets are disjoint: a settled beat whose gists were
+  all session-deduped/trimmed now counts as `settled_quiet` (cost ~0) instead
+  of double-counting as an abstention and driving the derived `degraded`
+  count negative on real logs.
+
+### Added
+- `usefulness-scan --since-days N`: windows the scan to sessions that started
+  in the last N days (whole sessions only, so push→cite attribution never
+  splits a session) — reads a change's before/after instead of the
+  all-history average. `--apply` refuses a windowed scan (use-credits are an
+  absolute set; a window would erase credit earned outside it).
+- Sense captions can finally be pushed: percept rows embed with a modality
+  prefix ("heard: acoustic guitar" instead of the bare caption — a 1-3-word
+  caption structurally under-overlaps long queries, so every percept sat
+  below the proactive floors on queries it was dead-on for), and the
+  low-information push filter exempts `senses:*` rows (their brevity is the
+  modality's natural shape, not a content-free opener; the cosine floors are
+  their relevance gate). `fornixdb embed --refresh-senses` re-embeds a
+  store's existing percepts so pre-existing stores pick up the prefix.
+- L5 config hardening: `config parallel_domains` now validates domain ids at
+  write time (a typo'd trim used to store garbage that the read side silently
+  expanded to ALL domains) and accepts `off`/`all`/`none`/`default` to clear
+  the trim; `config parallel_limit` requires a positive integer or `off`.
+  Read side degrades to defaults on hand-edited garbage instead of dying on
+  the beat hot path. A bad `config <key> <value>` now prints `refused: …`
+  and exits 1 instead of a traceback. Both keys now appear in the bare
+  `config` listing (a standing trim was invisible before).
+
 ## [0.8.13] - 2026-07-18
 
 ### Fixed

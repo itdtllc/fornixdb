@@ -87,10 +87,13 @@ _BY_ID = {d.id: d for d in DOMAINS}
 
 
 def configured_domains(store: MemoryStore) -> list[Domain]:
-    raw = (get_config(store, "parallel_domains", "") or "").strip()
-    if not raw:
+    # set_config validates writes; sentinels and unknown ids can still reach
+    # here from a hand-edited meta table or an older store, and a beat must
+    # never die on config — degrade to the full default set.
+    raw = (get_config(store, "parallel_domains", "") or "").strip().lower()
+    if not raw or raw in ("off", "none", "all", "default"):
         return list(DOMAINS)
-    ids = [t.strip().lower() for t in raw.split(",") if t.strip()]
+    ids = [t.strip() for t in raw.split(",") if t.strip()]
     return [_BY_ID[i] for i in ids if i in _BY_ID] or list(DOMAINS)
 
 
@@ -319,7 +322,12 @@ def settle(store: MemoryStore, fr: FieldResult, *,
     if not fr.rows:
         return out
     if limit is None:
-        limit = int(get_config(store, "parallel_limit", str(DEFAULT_LIMIT)))
+        try:
+            limit = int(get_config(store, "parallel_limit", str(DEFAULT_LIMIT)))
+        except ValueError:   # hand-edited garbage must not kill the beat
+            limit = DEFAULT_LIMIT
+        if limit <= 0:
+            limit = DEFAULT_LIMIT
     if dissent is None:
         dissent = (get_config(store, "parallel_dissent", "off")
                    not in ("off", "0", "false"))

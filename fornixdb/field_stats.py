@@ -36,9 +36,17 @@ def load_beats(path: str | Path | None) -> list[dict]:
 
 
 def summarize(beats: list[dict]) -> dict:
+    """Four DISJOINT beat buckets (settled × emitted). A settled beat whose
+    gists were all session-deduped or trimmed away emits nothing — it is
+    `settled_quiet` (cost ≈ 0), NOT an abstention; conflating them once made
+    `degraded` go negative on the live log."""
     n = len(beats)
     settled = [b for b in beats if b.get("settled")]
-    abstained = [b for b in beats if not b.get("emitted")]
+    settled_emitted = [b for b in settled if b.get("emitted")]
+    degraded_emitted = [b for b in beats
+                        if not b.get("settled") and b.get("emitted")]
+    abstained = [b for b in beats
+                 if not b.get("settled") and not b.get("emitted")]
     domain_wins: dict[str, int] = {}
     for b in settled:
         for d in b.get("winner_domains") or ():
@@ -56,7 +64,9 @@ def summarize(beats: list[dict]) -> dict:
     return {
         "beats": n,
         "settled": len(settled),
-        "degraded": n - len(settled) - len(abstained),
+        "settled_emitted": len(settled_emitted),
+        "settled_quiet": len(settled) - len(settled_emitted),
+        "degraded": len(degraded_emitted),
         "abstained": len(abstained),
         "domain_wins": dict(sorted(domain_wins.items(),
                                    key=lambda kv: -kv[1])),
@@ -75,8 +85,10 @@ def format_report(s: dict, path: str | None) -> str:
         return (f"field log: {path or '(none)'}\nno beats recorded yet — the "
                 "log fills as L5 pulses fire with `floor_log on`.")
     lines = [f"field log: {path}",
-             f"beats: {s['beats']}  settled={s['settled']}  "
-             f"degraded={s['degraded']}  abstained={s['abstained']}"]
+             f"beats: {s['beats']}  settled={s['settled']} "
+             f"(emitted={s['settled_emitted']}, quiet={s['settled_quiet']} — "
+             "all gists already injected this session, cost ~0)  "
+             f"degraded-to-L4={s['degraded']}  abstained={s['abstained']}"]
     if s["domain_wins"]:
         lines.append("domains in winning clusters:")
         for d, c in s["domain_wins"].items():

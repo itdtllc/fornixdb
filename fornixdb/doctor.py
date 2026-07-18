@@ -60,6 +60,18 @@ def _vectors_setting(store) -> str:
     return "off" if val in _OFF else "on"
 
 
+def _parallel_domains_view(store) -> str:
+    """The L5 field's domain set as the listing shows it — a standing trim must
+    be VISIBLE (it was silently absent from the overview while a live trim
+    trial ran)."""
+    from .field import DOMAINS, configured_domains
+    doms = configured_domains(store)
+    if len(doms) == len(DOMAINS):
+        return "all 7"
+    return (",".join(d.id for d in doms)
+            + f"  (trimmed {len(doms)}/{len(DOMAINS)})")
+
+
 def config_overview(store) -> list[tuple[str, str]]:
     """Every store-level setting and its current value, in display order."""
     st = budget_status(store)
@@ -95,6 +107,9 @@ def config_overview(store) -> list[tuple[str, str]]:
         ("project_scoped_pulse", "off" if proj_scope in _OFF else "on"),
         ("cross_pulse_dedup", "off" if dedup in _OFF else "on"),
         ("parallel_dissent", "off" if dissent in _OFF else "on"),
+        ("parallel_domains", _parallel_domains_view(store)),
+        ("parallel_limit", (get_config(store, "parallel_limit", "") or "").strip()
+                           or "3 (default)"),
         ("floor_log", "off" if floor_log in _OFF else "on"),
         ("dream_use_credit", "off" if use_credit in _OFF else "on"),
         ("transcripts_path", tpath or "(unset — dream's use-credit/suppression "
@@ -121,6 +136,9 @@ CONFIG_DEFAULTS: dict[str, str] = {
     "project_scoped_pulse": "on",
     "cross_pulse_dedup": "on",
     "parallel_dissent": "off",
+    "parallel_domains": "all 7 (trim via a comma list of domain ids; "
+                        "'off' clears)",
+    "parallel_limit": "3 settled gists emitted per beat",
     "floor_log": "off",
     "dream_use_credit": "on",
     "transcripts_path": "(unset — set to the host's transcript dir, e.g. "

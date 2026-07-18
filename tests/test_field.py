@@ -301,6 +301,55 @@ class TestBeatLog(FieldBase):
         self.assertIn("settled=1", out)
         self.assertIn("winner glue", out)
 
+    def test_configured_domains_survives_hand_edited_meta(self):
+        # set_config validates writes, but a hand-edited meta table (or a
+        # legacy literal "off") can still reach the read side — a beat must
+        # degrade to the full default set, never die or silently mis-scope
+        from fornixdb.field import DOMAINS, configured_domains
+
+        def raw_set(value):
+            self.s.conn.execute(
+                "INSERT INTO meta(key, value) VALUES ('parallel_domains', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (value,))
+            self.s.conn.commit()
+
+        for stale in ("off", "ALL", "none", "knowlege,typo"):
+            raw_set(stale)
+            self.assertEqual(configured_domains(self.s), list(DOMAINS), stale)
+        raw_set("knowledge")
+        self.assertEqual([d.id for d in configured_domains(self.s)],
+                         ["knowledge"])
+
+    def test_settle_survives_hand_edited_parallel_limit(self):
+        from fornixdb.field import DEFAULT_LIMIT
+        self._seed_pattern()
+        for bad in ("banana", "0", "-3"):
+            self.s.conn.execute(
+                "INSERT INTO meta(key, value) VALUES ('parallel_limit', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (bad,))
+            self.s.conn.commit()
+            fr = run_field(self.s, "seam freeze fix")
+            st = settle(self.s, fr)          # must not raise on the hot path
+            self.assertLessEqual(len(st.rows), DEFAULT_LIMIT)
+
+    def test_field_stats_buckets_are_disjoint(self):
+        # a settled beat whose gists were all session-deduped emits nothing —
+        # it is settled_quiet, not an abstention; the old subtraction produced
+        # a NEGATIVE degraded count on the live log (settled ∩ not-emitted)
+        from fornixdb.field_stats import summarize
+        beats = [
+            {"settled": True, "emitted": [1, 2]},    # settled_emitted
+            {"settled": True, "emitted": []},        # settled_quiet
+            {"settled": False, "emitted": [3]},      # degraded (L4 fallback push)
+            {"settled": False, "emitted": []},       # abstained
+        ]
+        s = summarize(beats)
+        self.assertEqual((s["settled"], s["settled_emitted"], s["settled_quiet"],
+                          s["degraded"], s["abstained"]), (2, 1, 1, 1, 1))
+        self.assertEqual(s["settled_emitted"] + s["settled_quiet"]
+                         + s["degraded"] + s["abstained"], s["beats"])
+        self.assertGreaterEqual(s["degraded"], 0)
+
 
 class TestCadenceSeam(FieldBase):
     """L5 rides the L4 metronome: the dial changes the gather, not the beat."""

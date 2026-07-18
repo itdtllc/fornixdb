@@ -144,5 +144,90 @@ class TestReferencedCountsFromScan(unittest.TestCase):
         self.assertEqual(us.referenced_counts_from_scan({}), {})
 
 
+class TestHookStdoutUnwrap(unittest.TestCase):
+    """The host's REAL PostToolUse stdout is a JSON hookSpecificOutput wrapper —
+    the block inside is escaped, so `\\nsettled: ` never matches the raw field.
+    This escaped-format fixture is faithful to a live transcript line (the old
+    raw-string fixtures were not, which is how the L5 gate read zero for six
+    weeks with every test green)."""
+
+    @staticmethod
+    def _wrapped(block, event="PostToolUse"):
+        return "\n" + json.dumps({"hookSpecificOutput": {
+            "hookEventName": event, "additionalContext": block}})
+
+    def _line(self, block, with_hook_event=True):
+        att = {"stdout": self._wrapped(block)}
+        if with_hook_event:
+            att["hookEvent"] = "PostToolUse"
+        return {"type": "attachment", "attachment": att}
+
+    def test_escaped_settled_block_attributes_to_l5(self):
+        block = ("[FornixDB · possibly-relevant past — …]\n"
+                 "settled: pool · 2026-06-29 · knowledge+recent\n#12 mortar gist")
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "s.jsonl"
+            p.write_text(json.dumps(self._line(block)), encoding="utf-8")
+            evs = list(us.iter_events(p))
+            self.assertEqual(evs[0][:3], ("push", {12}, "L5"))
+            # char cost measured on the UNESCAPED block, not the wrapper
+            self.assertEqual(evs[0][3], len(block))
+
+    def test_wrapper_event_is_channel_fallback(self):
+        block = "[FornixDB · possibly-relevant past — …]\n#13 loner gist"
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "s.jsonl"
+            p.write_text(json.dumps(self._line(block, with_hook_event=False)),
+                         encoding="utf-8")
+            evs = list(us.iter_events(p))
+            self.assertEqual(evs[0][:3], ("push", {13}, "PostToolUse"))
+
+    def test_non_json_stdout_still_scans_raw(self):
+        block = ("[FornixDB · possibly-relevant past — …]\n"
+                 "settled: x · now · recent\n#7 gist")
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "s.jsonl"
+            p.write_text(json.dumps({"type": "attachment",
+                                     "attachment": {"hookEvent": "PostToolUse",
+                                                    "stdout": block}}),
+                         encoding="utf-8")
+            self.assertEqual(list(us.iter_events(p))[0][:3], ("push", {7}, "L5"))
+
+
+class TestSinceDaysWindow(unittest.TestCase):
+    def _session(self, d, name, ts):
+        lines = [{"type": "user", "timestamp": ts, "message": {"content": "hi"}},
+                 {"type": "attachment",
+                  "attachment": {"hookEvent": "UserPromptSubmit",
+                                 "content": "[FornixDB · possibly-relevant past — …]"
+                                            "\n#36 gist"}}]
+        (Path(d) / name).write_text(
+            "\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+
+    def test_window_keeps_recent_sessions_only(self):
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        old = (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        new = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        with tempfile.TemporaryDirectory() as d:
+            self._session(d, "old.jsonl", old)
+            self._session(d, "new.jsonl", new)
+            self.assertEqual(us.scan(d)["sessions"], 2)
+            windowed = us.scan(d, since_days=7)
+            self.assertEqual(windowed["sessions"], 1)
+            self.assertEqual(windowed["since_days"], 7)
+            self.assertIn("window: last 7 days", us.format_report(windowed))
+
+    def test_undatable_session_excluded_only_when_windowed(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "s.jsonl").write_text(json.dumps(
+                {"type": "attachment",
+                 "attachment": {"hookEvent": "UserPromptSubmit",
+                                "content": "[FornixDB · possibly-relevant past — …]"
+                                           "\n#36 gist"}}), encoding="utf-8")
+            self.assertEqual(us.scan(d)["sessions"], 1)
+            self.assertEqual(us.scan(d, since_days=7)["sessions"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

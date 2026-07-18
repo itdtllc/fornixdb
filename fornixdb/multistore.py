@@ -137,11 +137,39 @@ def set_config(store: MemoryStore, key: str, value: str) -> None:
     if key in ("disk_budget_mb", "machine_budget_mb") and value not in ("off", "none"):
         if float(value) <= 0:  # raises ValueError on non-numbers too
             raise ValueError(f"{key} must be a positive number (MB), or 'off'")
+    if key == "parallel_domains":
+        # "off"/"all"/… clear the trim (all domains). Anything else must be a
+        # list of REAL domain ids: the read side falls back to ALL domains when
+        # no id is valid, so a typo'd trim would silently un-trim — reject it
+        # here, where the user can still see the message.
+        value = value.strip().lower()
+        if value in ("all", "default"):
+            value = "off"
+        if value not in ("off", "none"):
+            from .field import DOMAINS   # lazy — field imports this module
+            valid = {d.id for d in DOMAINS}
+            ids = [t.strip() for t in value.split(",") if t.strip()]
+            unknown = [i for i in ids if i not in valid]
+            if not ids or unknown:
+                raise ValueError(
+                    f"unknown domain(s): {', '.join(unknown) or '(empty list)'} "
+                    f"— valid ids: {', '.join(d.id for d in DOMAINS)}; "
+                    "or 'off' to clear the trim (all domains)")
+            value = ",".join(dict.fromkeys(ids))   # normalized, deduped
+    if key == "parallel_limit" and value not in ("off", "none"):
+        try:
+            ok = int(value) > 0
+        except ValueError:
+            ok = False
+        if not ok:
+            raise ValueError("parallel_limit must be a positive integer, or "
+                             "'off' to clear (default 3)")
     if key == "frozen":
         value = "1" if value in ("1", "on", "true", "yes") else "0"
     if key == "machine_budget_mb":  # owner touched the cap = the review
         store.conn.execute("DELETE FROM meta WHERE key = 'machine_budget_defaulted'")
-    if key in ("disk_budget_mb", "machine_budget_mb") and value in ("off", "none"):
+    if key in ("disk_budget_mb", "machine_budget_mb", "parallel_domains",
+               "parallel_limit") and value in ("off", "none"):
         store.conn.execute("DELETE FROM meta WHERE key = ?", (key,))
     else:
         store.conn.execute(
