@@ -54,6 +54,16 @@ class TestLowInformationFilter(unittest.TestCase):
              "shake and eye drift in the render")
         self.assertFalse(_is_low_information(_ep(g)))
 
+    def test_sense_captures_exempt_despite_brevity(self):
+        # a 1-3-word caption is the modality's natural shape, not a greeting —
+        # the word-count test used to exclude every percept from every push
+        # path; the cosine floors are the relevance gate for these rows
+        for gist in ("acoustic guitar", "whistling"):
+            row = {"kind": "episodic", "gist": gist, "source": "senses:sound"}
+            self.assertFalse(_is_low_information(row), gist)
+        # same brevity WITHOUT the sense source stays filtered
+        self.assertTrue(_is_low_information(_ep("acoustic guitar")))
+
 
 def file_store(tmp):
     return MemoryStore(db_path=Path(tmp) / "t.db")

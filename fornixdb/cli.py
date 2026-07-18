@@ -292,6 +292,11 @@ def main(argv: list[str] | None = None) -> int:
     bp.add_argument("--days", type=int, default=7)
 
     ep = sub.add_parser("embed", help="backfill vector embeddings (needs optional deps)")
+    ep.add_argument("--refresh-senses", action="store_true",
+                    help="re-embed all sense-capture rows (sight/sound/feel) so "
+                         "stores created before the modality-prefix change pick "
+                         "it up — backfill alone skips rows that already have "
+                         "vectors")
     ep.add_argument("--batch", type=int, default=64)
 
     np = sub.add_parser("consolidate",
@@ -573,6 +578,11 @@ def main(argv: list[str] | None = None) -> int:
                           "count into the store as a use-credit, so effective_floor "
                           "stops scoring proven-useful pushes as ignored noise "
                           "(idempotent absolute set)")
+    usp.add_argument("--since-days", metavar="N", type=int,
+                     help="window the scan to sessions that STARTED in the last N "
+                          "days (whole sessions only, so attribution never splits "
+                          "one) — reads a change's before/after instead of the "
+                          "all-history average")
 
     spp = sub.add_parser("suppress",
                          help="per-memory push suppression: mute memories chronically "
@@ -1219,9 +1229,15 @@ def _dispatch(p, args, store, stores) -> int:
         elif args.value is None:
             print(get_config(target, args.key) or "(unset)")
         else:
-            set_config(target, args.key, args.value)
+            try:
+                set_config(target, args.key, args.value)
+            except ValueError as e:
+                print(f"refused: {e}", file=sys.stderr)
+                return 1
+            shown = get_config(target, args.key)   # post-normalization truth
             hint = CAPTURE_MODE_HELP.get(args.value, "")
-            print(f"{args.key} = {args.value}" + (f"  ({hint})" if hint else ""))
+            print(f"{args.key} = {shown if shown is not None else '(unset)'}"
+                  + (f"  ({hint})" if hint else ""))
 
     elif args.cmd == "doctor":
         from .doctor import (apply_suggested, diagnose, format_diagnose,
@@ -1274,8 +1290,13 @@ def _dispatch(p, args, store, stores) -> int:
             print("no embedder available — pip install model2vec (see README)",
                   file=sys.stderr)
             return 1
-        n = backfill(store, emb, batch=args.batch)
-        print(f"embedded {n} memories ({emb.name})")
+        if args.refresh_senses:
+            from .vectors import refresh_senses
+            n = refresh_senses(store, emb, batch=args.batch)
+            print(f"re-embedded {n} sense-capture memories ({emb.name})")
+        else:
+            n = backfill(store, emb, batch=args.batch)
+            print(f"embedded {n} memories ({emb.name})")
 
     elif args.cmd == "timeline":
         if args.since or args.until:
@@ -1646,7 +1667,12 @@ def _dispatch(p, args, store, stores) -> int:
     elif args.cmd == "usefulness-scan":
         from .usefulness_scan import format_report as us_report
         from .usefulness_scan import referenced_counts_from_scan, scan
-        result = scan(args.transcripts)
+        if args.apply and args.since_days is not None:
+            print("--apply writes use-credits as an ABSOLUTE set; applying a "
+                  "windowed scan would erase credit earned outside the window. "
+                  "Run --apply without --since-days.")
+            return 2
+        result = scan(args.transcripts, since_days=args.since_days)
         if args.apply:
             counts = referenced_counts_from_scan(result)
             credited = store.record_referenced(counts)

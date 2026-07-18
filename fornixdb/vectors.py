@@ -156,9 +156,30 @@ CHUNK_OVERLAP = 100
 MAX_CHUNKS = 8  # headline + up to 7 detail windows; bounds store growth
 
 
+# A sense capture's gist is a bare caption ("acoustic guitar", "whistling") —
+# 1-3 words whose vector structurally can't overlap a long query the way a
+# multi-sentence gist does, so captions sat below the proactive floors on
+# queries they were dead-on for (measured live on Elira's store, 2026-07-18:
+# "acoustic guitar" cos 0.466 vs the 0.50 field floor on a guitar-demo query;
+# "heard: acoustic guitar" 0.588). The row MEANS "I heard X" — embed that.
+_SENSE_PREFIX = {"sight": "saw:", "sound": "heard:", "feel": "felt:"}
+
+
+def _sense_prefix(row) -> str:
+    try:
+        source = row["source"] or ""
+    except (IndexError, KeyError):
+        return ""
+    if not source.startswith("senses:"):
+        return ""
+    return _SENSE_PREFIX.get(source.split(":", 1)[1], "sensed:")
+
+
 def _chunk_texts(row) -> list[str]:
     name = (row["name"] or "").replace("-", " ").replace("_", " ")
-    head = f"{name}\n{row['gist'] or ''}".strip()
+    prefix = _sense_prefix(row)
+    gist = f"{prefix} {row['gist'] or ''}".strip() if prefix else (row["gist"] or "")
+    head = f"{name}\n{gist}".strip()
     out = [head]
     detail = row["detail"] or ""
     step = CHUNK_CHARS - CHUNK_OVERLAP
@@ -191,7 +212,7 @@ def _write_chunks(store, embedder: Embedder, rows) -> None:
 
 def embed_memory(store, embedder: Embedder, memory_id: int) -> None:
     row = store.conn.execute(
-        "SELECT id, name, gist, detail FROM memory WHERE id = ?",
+        "SELECT id, name, gist, detail, source FROM memory WHERE id = ?",
         (memory_id,)).fetchone()
     if row is not None:
         _write_chunks(store, embedder, [row])
@@ -200,10 +221,25 @@ def embed_memory(store, embedder: Embedder, memory_id: int) -> None:
 def backfill(store, embedder: Embedder, batch: int = 64) -> int:
     """Embed every memory that lacks vectors for this model. Idempotent."""
     rows = store.conn.execute(
-        """SELECT m.id, m.name, m.gist, m.detail FROM memory m
+        """SELECT m.id, m.name, m.gist, m.detail, m.source FROM memory m
            LEFT JOIN embedding e ON e.memory_id = m.id AND e.model = ?
            WHERE e.memory_id IS NULL""",
         (embedder.name,),
+    ).fetchall()
+    done = 0
+    for i in range(0, len(rows), batch):
+        _write_chunks(store, embedder, rows[i:i + batch])
+        done += len(rows[i:i + batch])
+    return done
+
+
+def refresh_senses(store, embedder: Embedder, batch: int = 64) -> int:
+    """Re-embed every sense-capture row so stores that predate the modality
+    prefix pick it up (existing rows HAVE vectors, so `backfill` skips them).
+    Idempotent — re-running rewrites the same chunks."""
+    rows = store.conn.execute(
+        """SELECT id, name, gist, detail, source FROM memory
+           WHERE source LIKE 'senses:%' AND superseded_time IS NULL""",
     ).fetchall()
     done = 0
     for i in range(0, len(rows), batch):

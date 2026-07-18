@@ -95,6 +95,57 @@ class TestBackfillAndSimilar(unittest.TestCase):
         self.assertIn(newer, ids)
 
 
+class TestSenseModalityPrefix(unittest.TestCase):
+    """A sense capture's 1-3-word caption structurally under-overlaps long
+    queries; the embedded head must say what the row MEANS ("heard: X")."""
+
+    def setUp(self):
+        self.s = mem_store()
+        self.emb = FakeEmbedder()
+
+    def _row(self, mid):
+        return self.s.conn.execute(
+            "SELECT id, name, gist, detail, source FROM memory WHERE id = ?",
+            (mid,)).fetchone()
+
+    def test_sense_rows_embed_with_modality_prefix(self):
+        from fornixdb.vectors import _chunk_texts
+        cases = [("senses:sound", "heard: acoustic guitar"),
+                 ("senses:sight", "saw: acoustic guitar"),
+                 ("senses:feel", "felt: acoustic guitar"),
+                 ("senses:sonar", "sensed: acoustic guitar")]  # unknown sense
+        for source, want in cases:
+            mid = self.s.store("acoustic guitar", source=source)
+            self.assertEqual(_chunk_texts(self._row(mid))[0], want)
+
+    def test_non_sense_rows_unchanged(self):
+        from fornixdb.vectors import _chunk_texts
+        mid = self.s.store("acoustic guitar", source="chat")
+        self.assertEqual(_chunk_texts(self._row(mid))[0], "acoustic guitar")
+        plain = self.s.store("acoustic guitar")
+        self.assertEqual(_chunk_texts(self._row(plain))[0], "acoustic guitar")
+
+    def test_refresh_senses_reembeds_only_sense_rows(self):
+        from fornixdb.vectors import refresh_senses
+        cap = self.s.store("whistling in the demo room", source="senses:sound")
+        chat = self.s.store("Chat about the whistling demo")
+        backfill(self.s, self.emb)          # both embedded, caption pre-prefix?
+        # simulate a pre-prefix store: overwrite the caption's head chunk
+        # with the bare-gist embedding
+        self.s.conn.execute(
+            "UPDATE embedding SET vector = ? WHERE memory_id = ? AND chunk = 0",
+            (to_blob(self.emb.embed(["whistling in the demo room"])[0]), cap))
+        self.s.conn.commit()
+        n = refresh_senses(self.s, self.emb)
+        self.assertEqual(n, 1)              # only the sense row, not the chat
+        head = from_blob(self.s.conn.execute(
+            "SELECT vector FROM embedding WHERE memory_id = ? AND chunk = 0",
+            (cap,)).fetchone()[0])
+        want = self.emb.embed(["heard: whistling in the demo room"])[0]
+        self.assertGreater(cosine(head, want), 0.999)
+        self.assertEqual(refresh_senses(self.s, self.emb), 1)  # idempotent
+
+
 class TestHybridRecall(unittest.TestCase):
     def setUp(self):
         self.s = mem_store()

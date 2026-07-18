@@ -74,6 +74,37 @@ class TestMultiStore(unittest.TestCase):
         with self.assertRaises(ValueError):
             set_config(self.mine, "capture_mode", "yolo")
 
+    def test_parallel_domains_write_validation(self):
+        # a typo'd trim used to store garbage that the read side silently
+        # expanded to ALL domains — the write must refuse it, naming the ids
+        with self.assertRaises(ValueError) as cm:
+            set_config(self.mine, "parallel_domains", "knowlege,guidance")
+        self.assertIn("knowlege", str(cm.exception))
+        self.assertIn("knowledge", str(cm.exception))     # the valid list
+        self.assertIsNone(get_config(self.mine, "parallel_domains"))
+        # valid list normalizes: case/space/dupes collapse, order kept
+        set_config(self.mine, "parallel_domains",
+                   " Knowledge, GUIDANCE ,knowledge")
+        self.assertEqual(get_config(self.mine, "parallel_domains"),
+                         "knowledge,guidance")
+
+    def test_parallel_domains_sentinels_clear_the_key(self):
+        set_config(self.mine, "parallel_domains", "knowledge")
+        for sentinel in ("off", "none", "all", "default"):
+            set_config(self.mine, "parallel_domains", "knowledge")
+            set_config(self.mine, "parallel_domains", sentinel)
+            self.assertIsNone(get_config(self.mine, "parallel_domains"),
+                              f"'{sentinel}' should clear the trim")
+
+    def test_parallel_limit_write_validation(self):
+        for bad in ("two", "0", "-1", "3.5", ""):
+            with self.assertRaises(ValueError):
+                set_config(self.mine, "parallel_limit", bad)
+        set_config(self.mine, "parallel_limit", "2")
+        self.assertEqual(get_config(self.mine, "parallel_limit"), "2")
+        set_config(self.mine, "parallel_limit", "off")   # clears to default
+        self.assertIsNone(get_config(self.mine, "parallel_limit"))
+
 
 if __name__ == "__main__":
     unittest.main()

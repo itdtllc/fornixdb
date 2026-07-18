@@ -30,6 +30,28 @@ BLOCK_MARKER = "possibly-relevant past"   # stable substring of proactive.HEADER
 _ID = re.compile(r"#(\d{1,6})")
 
 
+def _unwrap_hook_stdout(s: str) -> tuple[str, str | None]:
+    """A tool-seam hook's stdout arrives as a JSON `hookSpecificOutput` wrapper
+    whose `additionalContext` string IS the injected block — but ESCAPED, so a
+    newline is the two characters `\\` + `n` and the `"\\nsettled: "` marker can
+    never match the raw field. Unescape before any marker/size test (this bug
+    silently credited every L5 settled push to L4 from v0.5.0 until 2026-07-18).
+    Returns (block text, hookEventName) or (raw text, None) when not a wrapper."""
+    t = s.strip()
+    start = t.find("{")
+    if start != -1:
+        try:
+            d = json.loads(t[start:])
+        except (ValueError, TypeError):
+            d = None
+        if isinstance(d, dict):
+            hso = d.get("hookSpecificOutput")
+            if isinstance(hso, dict) and isinstance(hso.get("additionalContext"), str):
+                ev = hso.get("hookEventName")
+                return hso["additionalContext"], ev if isinstance(ev, str) else None
+    return s, None
+
+
 def _text_of(content) -> str:
     if isinstance(content, str):
         return content
@@ -57,20 +79,27 @@ def iter_events(path: str | Path):
         t = d.get("type")
         if t == "attachment":
             # The injected block lands in different fields per channel: L3
-            # (UserPromptSubmit) puts it in `content`; L4 (PostToolUse) puts it in
-            # `stdout` as a hookSpecificOutput JSON string. Read both.
+            # (UserPromptSubmit) puts it in `content` as plain text; L4/L5
+            # (PostToolUse) put it in `stdout` as a hookSpecificOutput JSON
+            # wrapper that must be UNWRAPPED before marker tests.
             att = d.get("attachment") or {}
-            text = "\n".join(att.get(k) for k in ("content", "stdout")
-                             if isinstance(att.get(k), str))
+            parts, wrapper_event = [], None
+            if isinstance(att.get("content"), str):
+                parts.append(att["content"])
+            if isinstance(att.get("stdout"), str):
+                block, wrapper_event = _unwrap_hook_stdout(att["stdout"])
+                parts.append(block)
+            text = "\n".join(parts)
             if BLOCK_MARKER in text:
                 ids = {int(m) for m in _ID.findall(text)}
                 if ids:
                     # An L5 SETTLED block carries its direction line; a degraded
                     # field block is L4 behavior and is fairly counted as L4.
-                    ev = "L5" if "\nsettled: " in text else att.get("hookEvent")
+                    ev = ("L5" if "\nsettled: " in text
+                          else att.get("hookEvent") or wrapper_event)
                     # 4th field = the block's size in chars: the MEASURED context
                     # cost of this push (cite events stay 3-tuples — a citation
-                    # costs nothing).
+                    # costs nothing). Unescaped, so the cost is honest.
                     yield ("push", ids, ev, len(text))
         elif t == "assistant" and not d.get("isSidechain"):
             txt = _text_of((d.get("message") or {}).get("content"))
@@ -145,13 +174,47 @@ def transcript_paths(source: str | Path) -> list[Path]:
     return [p] if p.exists() else []
 
 
-def scan(source: str | Path) -> dict:
-    """Aggregate push-usefulness across all sessions under `source`."""
+def _session_start(path: Path):
+    """First parseable line timestamp (UTC datetime) — the session's start.
+    None when the file carries no timestamps (can't be dated)."""
+    from datetime import datetime
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines[:200]:
+        try:
+            d = json.loads(line.strip())
+        except (ValueError, TypeError):
+            continue
+        ts = d.get("timestamp") if isinstance(d, dict) else None
+        if isinstance(ts, str):
+            try:
+                return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+    return None
+
+
+def scan(source: str | Path, since_days: int | None = None) -> dict:
+    """Aggregate push-usefulness across all sessions under `source`.
+
+    `since_days` windows at SESSION granularity (a transcript counts iff its
+    first timestamped line is inside the window) so push→cite attribution never
+    splits a session; undatable files are excluded from a windowed scan."""
     per_memory: dict[int, dict[str, int]] = {}
     per_channel: dict[str, dict[str, int]] = {}
     chars_by_channel: dict[str, int] = {}
     sessions = 0
+    cutoff = None
+    if since_days is not None:
+        from datetime import datetime, timedelta, timezone
+        cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
     for path in transcript_paths(source):
+        if cutoff is not None:
+            start = _session_start(path)
+            if start is None or start < cutoff:
+                continue
         evs = list(iter_events(path))
         if not evs:
             continue
@@ -174,6 +237,7 @@ def scan(source: str | Path) -> dict:
     injected_chars = sum(chars_by_channel.values())
     return {
         "source": str(source),
+        "since_days": since_days,
         "sessions": sessions,
         "memories_pushed": len(per_memory),
         "impressions": impressions,
@@ -212,7 +276,9 @@ def referenced_counts_from_scan(scan_result: dict) -> dict[int, int]:
 
 
 def format_report(s: dict) -> str:
-    out = [f"usefulness scan: {s['source']}",
+    window = (f"  (window: last {s['since_days']} days, session-granularity)"
+              if s.get("since_days") is not None else "")
+    out = [f"usefulness scan: {s['source']}{window}",
            f"sessions: {s['sessions']}  memories pushed: {s['memories_pushed']}"]
     if not s["impressions"]:
         out.append("  (no injected blocks found — point --transcripts at the host's "
