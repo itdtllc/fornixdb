@@ -810,6 +810,13 @@ def _dispatch(p, args, store, stores) -> int:
             if st["due"]:
                 print(f"--- consolidation DUE: {st['reason']} "
                       f"(run a pass, then `consolidate done`) ---")
+            # markdown staleness: the dream's standing flags, revalidated
+            # cheaply (mtime + distinct-pair) — one line, only when something
+            # is actually still stale
+            from .markdown_stale import brief_line
+            stale_line = brief_line(store)
+            if stale_line:
+                print(stale_line)
 
     elif args.cmd == "consolidate":
         if args.action == "done":
@@ -848,6 +855,14 @@ def _dispatch(p, args, store, stores) -> int:
                 for m in work.get("reality", []):
                     print(f"#{m['id']:<5} MISSING {m['path']}")
                     print(f"        {(m['gist'] or '')[:90]}")
+                print(f"--- markdown staleness: open notes possibly overtaken "
+                      f"({len(work.get('markdown_stale', []))}) ---")
+                for m in work.get("markdown_stale", []):
+                    print(f"{m['file']} (#{m['file_id']}, edited {m['edited'][:10]}) "
+                          f"still says: {m['marker'][:70]}")
+                    print(f"        overtaken by #{m['overtaken_by']} "
+                          f"({m['epi_time']}) cos {m['cosine']:.2f}: "
+                          f"{(m['epi_gist'] or '')[:70]}")
                 print(f"--- chronic push-noise: judge disposition "
                       f"({len(work.get('chronic', []))}) ---")
                 for m in work.get("chronic", []):
@@ -909,6 +924,18 @@ def _dispatch(p, args, store, stores) -> int:
                 for m in work["reality"]:
                     print(f"#{m['id']:<5} MISSING {m['path']}")
                     print(f"        {(m['gist'] or '')[:90]}")
+            if work.get("markdown_stale") and not args.done:
+                print(f"\n--- markdown staleness ({len(work['markdown_stale'])}) "
+                      "— a file's open PICKUP/NEXT block looks overtaken by a "
+                      "later session (rewrite the file — a fresh save clears "
+                      "the flag; accept a reviewed pair with: link <file-row> "
+                      "<session-row> --relation distinct) ---")
+                for m in work["markdown_stale"]:
+                    print(f"{m['file']} (#{m['file_id']}, edited {m['edited'][:10]}) "
+                          f"still says: {m['marker'][:70]}")
+                    print(f"        overtaken by #{m['overtaken_by']} "
+                          f"({m['epi_time']}) cos {m['cosine']:.2f}: "
+                          f"{(m['epi_gist'] or '')[:70]}")
             if work.get("chronic") and not args.done:
                 print(f"\n--- chronic push-noise ({len(work['chronic'])}) — pushed "
                       "over and over, never used downstream (the floor already "

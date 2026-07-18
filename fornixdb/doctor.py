@@ -170,6 +170,9 @@ _INDIRECT_CONFIG_READERS = frozenset({
     # read by db.connect()/_setup() with raw SQL — the meta table is consulted
     # before the higher-level config helpers are importable at open time
     "busy_timeout_ms", "fts_rebuild_pending",
+    # read via the FLAGS_KEY constant (markdown_stale.standing_flags), which
+    # the literal scan cannot see
+    "markdown_stale_flags",
 })
 # Per-entity dynamic keys (prefix + session-id / kind), read via helper-built
 # names or a `LIKE` scan — recognized by prefix, never flagged.
