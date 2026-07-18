@@ -58,6 +58,28 @@ class TestRecallHasAnswer(unittest.TestCase):
     def test_weak_vector_match_abstains(self):
         self.assertFalse(recall_has_answer([{"vec_cos": 0.1, "relevance": 2.0}]))
 
+    def test_floor_band_cosine_without_keyword_support_abstains(self):
+        # regression for the 2026-07-17 live abstain leak: best-chunk scoring
+        # over a long ingested document (8 chunks, 9.5KB) let one deep chunk
+        # brush cosine 0.335 against a nonsense query with almost no literal
+        # overlap (kw_rel 1.73) — inside the floor band, cosine alone is a
+        # lottery ticket, not an answer
+        self.assertFalse(recall_has_answer(
+            [{"vec_cos": 0.335, "kw_rel": 1.73, "relevance": 2.0}]))
+
+    def test_floor_band_cosine_with_keyword_support_is_answer(self):
+        # the real near-floor positives all share some query vocabulary
+        # (golden-set minimum kw_rel 3.54) — a pinch of the other signal
+        # keeps them answered
+        self.assertTrue(recall_has_answer(
+            [{"vec_cos": 0.335, "kw_rel": 3.54, "relevance": 3.6}]))
+
+    def test_strong_cosine_needs_no_keyword_support(self):
+        # at/above COS_STRONG the vector match stands alone (the zero-shared-
+        # keywords recall class must keep working)
+        self.assertTrue(recall_has_answer(
+            [{"vec_cos": 0.40, "kw_rel": 0.0, "relevance": 1.0}]))
+
     def test_only_top_hit_decides(self):
         # a weak best hit abstains even if weaker rows follow
         self.assertFalse(recall_has_answer(

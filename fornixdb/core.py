@@ -129,6 +129,17 @@ RECALL_ANSWER_COS = 0.30  # a real vector match (== the include floor)
 # provisional like the other constants — tune against the eval fence.
 RECALL_ANSWER_KW_REL = 7.1   # literal-token anchor: calibrated positive band
 RECALL_ANSWER_KW_COS = 0.15  # raw-cosine corroboration for that anchor
+# The cosine leg's own corroboration band (2026-07-17, after the reverse leak):
+# best-chunk scoring over long DOCUMENT rows (the markdown bridge ingests whole
+# files; an 8-chunk 9.5KB file was the first) hands each chunk a lottery ticket
+# on the 0.30 floor — one deep chunk brushed 0.335 against a nonsense query
+# with almost no literal-token support (kw_rel 1.73). Measured on the golden
+# set: every real near-floor positive shares SOME query vocabulary (minimum
+# kw_rel 3.54); the noise mode doesn't. So the cosine leg mirrors the keyword
+# leg: unconditional only when genuinely strong, and inside the floor band
+# [COS, COS_STRONG) it needs a pinch of the other signal.
+RECALL_ANSWER_COS_STRONG = 0.40  # cosine alone suffices above this
+RECALL_ANSWER_COS_KW = 3.0       # minimal keyword corroboration in the band
 # Unsolicited PUSH needs a higher bar than an explicit PULL. When the user asks
 # (recall_memory), surfacing a weak 0.30 match is acceptable — they invited it.
 # When memory injects itself every turn (proactive recall), that same 0.30 floor
@@ -171,8 +182,13 @@ def recall_has_answer(rows: list[dict]) -> bool:
     top = rows[0]
     if top.get("vec_cos") is None:        # keyword-only recall: trust the FTS anchor
         return True
-    if float(top["vec_cos"]) >= RECALL_ANSWER_COS:
+    vc = float(top["vec_cos"])
+    if vc >= RECALL_ANSWER_COS_STRONG:
         return True
+    if vc >= RECALL_ANSWER_COS:
+        # floor band: a real match here shares at least a little literal
+        # vocabulary with the query; a deep-chunk cosine brush does not
+        return float(top.get("kw_rel") or 0.0) >= RECALL_ANSWER_COS_KW
     # hybrid keyword anchor: a strong literal-token match whose raw (unfloored)
     # cosine corroborates it — semantically-unrelated common-token overlap
     # (raw cosine ~0) stays abstained no matter how big its bm25 sum

@@ -5,6 +5,20 @@ versioning. While the project is pre-1.0 the public API may still evolve between
 minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
 active development branch and can change through the day.
 
+## [0.8.13] - 2026-07-18
+
+### Fixed
+- Abstention gate: a cosine hit inside the floor band `[0.30, 0.40)` now needs
+  minimal literal-keyword corroboration (`kw_rel >= 3.0`) to count as an
+  answer; at `>= 0.40` (`RECALL_ANSWER_COS_STRONG`) the vector match still
+  stands alone. Closes a live abstain leak introduced by long-document
+  best-chunk scoring: every chunk of a multi-chunk ingested file got its own
+  shot at the 0.30 floor, and one deep chunk of a 9.5KB file brushed 0.335
+  against an out-of-store query with almost no shared vocabulary (kw_rel
+  1.73). Measured on the golden set, every real near-floor positive shares
+  some query vocabulary (minimum kw_rel 3.54); the noise mode doesn't. The
+  cosine leg now mirrors the keyword leg's corroboration rule.
+
 ## [0.8.12] - 2026-07-17
 
 ### Added
