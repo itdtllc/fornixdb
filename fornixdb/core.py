@@ -1198,8 +1198,15 @@ class MemoryStore:
         if project:
             where.append("m.project = ?")
             params.append(project)
-        sql = f"""SELECT m.* FROM memory m WHERE {' AND '.join(where)}
-                  ORDER BY m.event_time ASC LIMIT ?"""
+        # When a window holds more than `limit` rows, keep the MOST RECENT ones
+        # (a busy day must never drop what just happened — the freshly-recorded
+        # diary entry is exactly what "what happened today" wants), but present
+        # them oldest-first for natural reading. Windows within `limit` are
+        # unaffected.
+        sql = f"""SELECT * FROM (
+                      SELECT m.* FROM memory m WHERE {' AND '.join(where)}
+                      ORDER BY m.event_time DESC LIMIT ?
+                  ) ORDER BY event_time ASC"""
         params.append(limit)
         rows = [dict(r) for r in self.conn.execute(sql, params)]
         # a timeline sweep LISTS rows, it doesn't engage with them — an

@@ -142,6 +142,20 @@ class TestStoreRecall(unittest.TestCase):
         rows = self.s.timeline(start, end)
         self.assertEqual(len(rows), 1)
 
+    def test_timeline_keeps_most_recent_on_overflow(self):
+        # a window with more rows than the limit must keep the NEWEST, not the
+        # oldest (a busy day dropping what just happened is the failure mode),
+        # and still present them oldest-first.
+        base = datetime.now().replace(microsecond=0)
+        for i in range(5):  # event 0 = oldest … event 4 = newest
+            self.s.store(f"event {i}", kind="episodic",
+                         event_time=(base - timedelta(minutes=5 - i)).isoformat())
+        start = (base - timedelta(hours=1)).isoformat()
+        end = (base + timedelta(hours=1)).isoformat()
+        rows = self.s.timeline(start, end, limit=3)
+        self.assertEqual([r["gist"] for r in rows],
+                         ["event 2", "event 3", "event 4"])
+
     def test_supersede_keeps_history(self):
         a = self.s.store("We use approach X for caching")
         b = self.s.store("We switched to approach Y for caching")
