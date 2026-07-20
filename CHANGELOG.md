@@ -5,6 +5,17 @@ versioning. While the project is pre-1.0 the public API may still evolve between
 minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
 active development branch and can change through the day.
 
+## [0.8.15] - 2026-07-20
+
+### Fixed
+- Time-window recall (`timeline` / `multi_timeline`) now keeps the **most
+  recent** rows when a window holds more than `limit`, instead of the oldest.
+  Previously `ORDER BY event_time ASC LIMIT n` (and the multistore merge's
+  `[:limit]`) returned the earliest events and silently dropped what happened
+  most recently — so on a busy day "what happened today" could omit the entry
+  just recorded. Results are still presented oldest-first; windows within
+  `limit` are unaffected.
+
 ## [0.8.14] - 2026-07-18
 
 ### Fixed

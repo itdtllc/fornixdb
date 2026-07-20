@@ -84,7 +84,7 @@ def multi_timeline(stores, start: str, end: str, *, limit: int = 50, **kw) -> li
     for alias, store in stores:
         merged += _tag(store.timeline(start, end, limit=limit, **kw), alias)
     merged.sort(key=lambda r: r["event_time"])
-    return merged[:limit]
+    return merged[-limit:]  # keep the most recent `limit` across stores, oldest-first
 
 
 def multi_brief(stores, **kw) -> dict:
