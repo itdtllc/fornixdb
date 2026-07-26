@@ -39,7 +39,8 @@ from datetime import datetime, timedelta
 from .core import MemoryStore
 from .timeparse import parse_due
 
-__all__ = ["remind", "due", "upcoming", "ack", "unacknowledged",
+__all__ = ["remind", "due", "upcoming", "ack", "unacknowledged", "audit",
+           "delivered_unresolved",
            "URGENT_SALIENCE", "DEFAULT_NAG_INTERVAL_MIN", "DEFAULT_NAG_MAX"]
 
 URGENT_SALIENCE = 0.9          # an urgent intention stays sharp in recall
@@ -193,6 +194,75 @@ def unacknowledged(store: MemoryStore, now: datetime | None = None, *,
                 "UPDATE prospective SET deliveries = 0, last_delivery = NULL "
                 "WHERE memory_id = ?", [(r["id"],) for r in rows])
     return rows
+
+
+def audit(store: MemoryStore, now: datetime | None = None) -> list[dict]:
+    """Every intention ever stored, oldest due first, each with a truthful
+    derived status — the answer to "did any reminder silently miss?".
+
+    A raw look at the prospective table conflates three honest meanings of
+    delivered_at IS NULL (2026-07-25 audit finding: two correctly-suppressed
+    reminders read as a week overdue): still scheduled, suppressed
+    (superseded before it fired — correct silence), or genuinely missed.
+    This derives the distinction from state the store already has; it changes
+    nothing and adds no columns."""
+    now_iso = (now or datetime.now()).isoformat(timespec="seconds")
+    rows = store.conn.execute(
+        "SELECT m.id, m.gist, p.due, p.urgent, p.deliveries, p.delivered_at, "
+        "m.superseded_by, m.superseded_time "
+        "FROM prospective p JOIN memory m ON m.id = p.memory_id "
+        "ORDER BY p.due").fetchall()
+    out = []
+    for r in rows:
+        closed_by = None
+        if r["superseded_time"]:
+            closed_by = (f"superseded by #{r['superseded_by']}"
+                         if r["superseded_by"] else "retired, no successor")
+        if r["delivered_at"]:
+            verb = "acknowledged" if r["urgent"] else "delivered"
+            status = f"{verb} {r['delivered_at']}"
+            status += (f"; closed ({closed_by})" if closed_by
+                       else "; still open — no follow-up recorded")
+        elif closed_by:
+            when = ("before due — correctly never fired"
+                    if r["superseded_time"] <= r["due"] else "after due")
+            status = f"suppressed ({closed_by}, {when})"
+        elif r["due"] > now_iso:
+            status = "scheduled"
+        else:
+            status = "DUE — undelivered"
+        out.append({"id": r["id"], "gist": r["gist"], "due": r["due"],
+                    "urgent": bool(r["urgent"]), "status": status,
+                    "delivered_at": r["delivered_at"]})
+    return out
+
+
+def delivered_unresolved(store: MemoryStore, now: datetime | None = None, *,
+                         min_age_hours: float = 24.0,
+                         max_age_days: float = 7.0) -> list[dict]:
+    """Reminders that fired but whose intention was never closed — delivered
+    (or acknowledged), yet no later row supersedes the reminder. This is the
+    delivery-loss mode: a reminder lands mid-session about something else and
+    evaporates (live case: #611, delivered 2026-07-23 into an unrelated
+    session and lost for three days). Meant for the session-start brief.
+
+    The age band keeps it honest without nagging forever: nothing younger
+    than `min_age_hours` (the owner may be acting on it right now), nothing
+    older than `max_age_days` (casual reminders never get closing rows — an
+    unbounded list would be chronic noise). Clears naturally when a follow-up
+    row supersedes the reminder (the store() close-hint flow) or the owner
+    forgets it."""
+    now = now or datetime.now()
+    newest = (now - timedelta(hours=min_age_hours)).isoformat(timespec="seconds")
+    oldest = (now - timedelta(days=max_age_days)).isoformat(timespec="seconds")
+    cur = store.conn.execute(
+        "SELECT m.id, m.gist, p.due, p.urgent, p.delivered_at "
+        "FROM prospective p JOIN memory m ON m.id = p.memory_id "
+        "WHERE p.delivered_at IS NOT NULL AND m.superseded_time IS NULL "
+        "AND p.delivered_at <= ? AND p.delivered_at >= ? "
+        "ORDER BY p.delivered_at", (newest, oldest))
+    return [{"id": r[0], "gist": r[1], "due": r[2], "urgent": bool(r[3]),
+             "delivered_at": r[4]} for r in cur.fetchall()]
 
 
 def upcoming(store: MemoryStore, now: datetime | None = None, *,

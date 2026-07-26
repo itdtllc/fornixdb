@@ -262,6 +262,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="don't mark delivered — just look")
     dp.add_argument("--upcoming", type=float, metavar="HOURS", default=None,
                     help="also list undelivered reminders due within HOURS")
+    dp.add_argument("--audit", action="store_true",
+                    help="every reminder ever stored with its truthful status "
+                         "(scheduled / suppressed-by-supersede / delivered / "
+                         "missed) — read-only, delivers nothing")
 
     sub.add_parser("ack", help="acknowledge nagging urgent reminders (stops the "
                                "repeats; hosts call this on any owner turn)")
@@ -760,7 +764,15 @@ def _dispatch(p, args, store, stores) -> int:
         print(f"reminder #{r['id']} due {r['due']}{tag}: {r['gist']}")
 
     elif args.cmd == "due":
-        from .prospective import due as due_now, upcoming
+        from .prospective import audit, due as due_now, upcoming
+        if args.audit:
+            arows = audit(store)
+            if not arows:
+                print("no reminders ever stored.")
+            for r in arows:
+                urg = " URGENT" if r["urgent"] else ""
+                print(f"#{r['id']} due {r['due']}{urg}  [{r['status']}]  {r['gist']}")
+            return 0
         rows = due_now(store, deliver=not args.peek)
         if not rows:
             print("nothing due.")
@@ -827,6 +839,14 @@ def _dispatch(p, args, store, stores) -> int:
             stale_line = brief_line(store)
             if stale_line:
                 print(stale_line)
+            # a reminder that fired into a session but was never followed up
+            # (no closing supersede) resurfaces here instead of evaporating —
+            # the #611 loss mode: delivered mid-unrelated-session, lost 3 days
+            from .prospective import delivered_unresolved
+            for r in delivered_unresolved(store):
+                print(f"--- reminder delivered {r['delivered_at']} but never "
+                      f"followed up: #{r['id']} {r['gist'][:90]} "
+                      f"(close with a supersede, or forget it) ---")
 
     elif args.cmd == "consolidate":
         if args.action == "done":

@@ -319,5 +319,84 @@ class TestDueReminderBlock(unittest.TestCase):
         self.assertIsNone(due_reminder_block(self.s))    # consumed
 
 
+class TestAuditAndUnresolved(unittest.TestCase):
+    """2026-07-25 audit finding: a raw prospective-table read conflates three
+    honest meanings of delivered_at IS NULL. audit() derives the truth;
+    delivered_unresolved() resurfaces the #611 loss mode (delivered into an
+    unrelated session, never followed up)."""
+
+    def setUp(self):
+        self.s = MemoryStore(conn=connect(":memory:"))
+        # real clock base: supersede() stamps real now_iso(), so pinning a
+        # fake NOW here would misorder superseded_time against due
+        self.base = datetime.now().replace(microsecond=0)
+
+    def tearDown(self):
+        self.s.close()
+
+    def status_of(self, mid, now):
+        return {r["id"]: r["status"]
+                for r in prospective.audit(self.s, now=now)}[mid]
+
+    def test_audit_statuses(self):
+        at = self.base + timedelta(minutes=90)
+        sched = prospective.remind(self.s, "future thing", "in 2 hours",
+                                   now=self.base)
+        supp = prospective.remind(self.s, "suppressed thing", "in 3 hours",
+                                  now=self.base)
+        closer = self.s.store("suppressed thing finished early",
+                              kind="episodic", embedder=False)
+        self.s.supersede(supp["id"], closer)
+        missed = prospective.remind(self.s, "missed thing", "in 1 hour",
+                                    now=self.base)
+        deliv = prospective.remind(self.s, "delivered thing", "in 30 minutes",
+                                   now=self.base)
+        rows = prospective.due(self.s, now=self.base + timedelta(minutes=45))
+        self.assertEqual([r["id"] for r in rows], [deliv["id"]])
+
+        self.assertEqual(self.status_of(sched["id"], at), "scheduled")
+        self.assertIn("suppressed (superseded by #%d" % closer,
+                      self.status_of(supp["id"], at))
+        self.assertIn("before due", self.status_of(supp["id"], at))
+        self.assertEqual(self.status_of(missed["id"], at), "DUE — undelivered")
+        self.assertIn("still open", self.status_of(deliv["id"], at))
+
+        # closing the delivered one flips its status
+        done = self.s.store("delivered thing handled", kind="episodic",
+                            embedder=False)
+        self.s.supersede(deliv["id"], done)
+        self.assertIn("closed (superseded by #%d)" % done,
+                      self.status_of(deliv["id"], at))
+
+        # a bare forget on the missed one reads as retired, no successor
+        self.s.tombstone(missed["id"])
+        self.assertIn("retired, no successor", self.status_of(missed["id"], at))
+
+    def test_delivered_unresolved_band(self):
+        def delivered_ago(what, days):
+            born = self.base - timedelta(days=days)
+            r = prospective.remind(self.s, what, "in 1 hour", now=born)
+            got = prospective.due(self.s, now=born + timedelta(hours=2))
+            assert any(g["id"] == r["id"] for g in got)
+            return r
+
+        lost = delivered_ago("lost thing", 3)         # in the band
+        fresh = delivered_ago("fresh thing", 0)       # < 24h: owner may be on it
+        ancient = delivered_ago("ancient thing", 10)  # > 7d: aged out
+
+        ids = [r["id"] for r in
+               prospective.delivered_unresolved(self.s, now=self.base)]
+        self.assertEqual(ids, [lost["id"]])
+        self.assertNotIn(fresh["id"], ids)
+        self.assertNotIn(ancient["id"], ids)
+
+        # the natural closure: a follow-up supersedes the reminder
+        done = self.s.store("lost thing handled", kind="episodic",
+                            embedder=False)
+        self.s.supersede(lost["id"], done)
+        self.assertEqual(
+            prospective.delivered_unresolved(self.s, now=self.base), [])
+
+
 if __name__ == "__main__":
     unittest.main()

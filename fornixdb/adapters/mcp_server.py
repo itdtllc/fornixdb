@@ -145,7 +145,10 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "forget_memory",
      "description": "Retire a memory by title or id — gone from recall but "
-                    "recoverable (never deleted).",
+                    "recoverable (never deleted). Replacing rather than "
+                    "removing? Prefer remember-then-supersede: it records "
+                    "what replaced this; a bare forget records only that it "
+                    "was retired.",
      "inputSchema": {"type": "object", "properties": {
          "ref": {"type": "string"}}, "required": ["ref"]}},
     {"name": "mark_irrelevant",
@@ -571,7 +574,11 @@ class FornixMCP:
         if mem is None:
             return f"no memory: {ref}"
         self.store.tombstone(mem["id"])
-        return f"#{mem['id']} retired (tombstoned, recoverable)"
+        return (f"#{mem['id']} retired (tombstoned, recoverable). If this is "
+                "a replace-with-rewrite, store the rewrite now — a "
+                "near-identical row stored within the hour adopts this "
+                "tombstone into its lineage; otherwise prefer "
+                "remember-then-supersede so provenance survives.")
 
     def mark_irrelevant(self, ref: str, query: str) -> str:
         target, inner = self._target(ref)

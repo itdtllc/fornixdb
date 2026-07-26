@@ -44,7 +44,7 @@ Published (MIT) and in daily use. Shipped: the hot spine (SQLite + FTS5, time + 
 
 **Accountable in numbers.** The store can tell you what it is worth. `fornixdb value` leads with an estimated net token verdict — *"Estimated tokens SAVED: ~N/session"* (or EXTRA, when that's the truth) — built from a **measured** cost side (tool schemas, startup context, and the actual size of every proactively injected memory, summed from your own session transcripts) against an **explicitly assumed** savings side (a printed low/mid/high band for what each downstream-used memory replaced; no session-without-memory exists to compare against, so it is a range, never one confident number). Behind the verdict sits the honest usage signal: the referenced-push rate, scanned from transcripts — how many proactive recalls your AI actually used, not how many it was shown. Proactive recall itself is **self-maintaining**: opt-in logging (`config floor_log on` → `floor-stats` / `field-stats`) records every push decision, and the periodic dream pass turns accrued evidence into reviewable worklists (credit memories proven useful, flag chronic noise, propose dial changes) — propose-not-dispose, the owner reviews. The verdict is context-space (each token counted once); host usage panels count token-turns — the same content re-read on every API request, 30–150× larger for both sides of the ledger equally — and `fornixdb tokens --billed` measures that billed view directly from your transcripts' per-request usage records so the two numbers finally match in kind. See [BENEFITS.md](BENEFITS.md) for the full token-economics case.
 
-**Where this is heading** — FornixDB's direction is a climb along one axis: how tightly, how often, and how much in parallel memory is fused into the act of thinking, from "the program must ask" up toward memory that activates itself across many domains at once and steers the next thought. Today the ladder is lived-in **through its full built height: L5 parallel multi-domain activation — the field — is default-on since 0.5.0**, after L4 passed its scan-verified usefulness gate and live L5 dogfooding showed the field surfaces useful context without measurable harm (~96% of surfaced pushes scored useful in the floor-log join, ~0.3 s per beat); the L5-vs-L4 reference-rate readout keeps accruing as the revert signal, and `config parallel_recall off` steps a store back to L4 at any time. With the ladder's built height default-on, the active workstream is **multimodal senses memory** — sight, sound, and sensor streams entering the same store ([SENSES.md](SENSES.md)). The full ladder — and why parallel, in-thought recall is the human-like target — is in [ROADMAP.md](ROADMAP.md).
+**Where this is heading** — FornixDB's direction is a climb along one axis: how tightly, how often, and how much in parallel memory is fused into the act of thinking, from "the program must ask" up toward memory that activates itself across many domains at once and steers the next thought. Today the ladder is lived-in **through its full built height: L5 parallel multi-domain activation — the field — is default-on since 0.5.0**, after L4 passed its scan-verified usefulness gate. L5 is measured, not assumed: the honing rounds trimmed the field to its proven domains, and the 2026-07-26 re-measure has 17% of its pushes referenced downstream (4× the pre-trim rate) — a useful ambient association channel with published numbers, not a claim of human-like association (the honest ceiling and the road past it are in ROADMAP.md “The association gap”); `config parallel_recall off` steps a store back to L4 at any time. With the ladder's built height default-on, the active workstream is **multimodal senses memory** — sight, sound, and sensor streams entering the same store ([SENSES.md](SENSES.md)). The full ladder — and why parallel, in-thought recall is the human-like target — is in [ROADMAP.md](ROADMAP.md).
 
 ## Requirements
 
@@ -64,7 +64,7 @@ active development branch and can change through the day; for a stable checkout,
 install a tagged release instead:
 
 ```bash
-pip install "git+https://github.com/itdtllc/fornixdb@v0.8.14"
+pip install "git+https://github.com/itdtllc/fornixdb@v1.0.0"
 ```
 
 Releases are listed at <https://github.com/itdtllc/fornixdb/releases>; see
@@ -93,6 +93,9 @@ python3 -m fornixdb init
 # store a memory
 python3 -m fornixdb store --gist "Decided to use SQLite FTS5 for subject recall" \
     --detail "Considered a dedicated vector DB but ..." --topic architecture
+# (shell note: prefer single quotes for --gist/--detail text — inside double
+# quotes the shell executes `backticked` spans and silently strips them from
+# what gets stored)
 
 # recall by subject (gist-first, ranked)
 python3 -m fornixdb recall "subject recall ranking"

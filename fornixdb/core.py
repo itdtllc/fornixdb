@@ -434,6 +434,12 @@ class MemoryStore:
         # used to drop them). Unresolved targets are left alone on purpose — a
         # [[name]] to a not-yet-written memory marks intent, not an error.
         self.link_wikilinks(mem_id, " ".join(t for t in (gist, detail) if t))
+        # Lineage heal (enrichment, never blocks the write): a near-identical
+        # row tombstoned successor-less moments ago is this row's predecessor.
+        try:
+            self._adopt_orphan_tombstones(mem_id, kind)
+        except Exception:
+            pass
         return mem_id
 
     _WIKILINK = re.compile(r"\[\[([^\[\]\n]+?)\]\]")
@@ -571,6 +577,52 @@ class MemoryStore:
             (now_iso(), memory_id),
         )
         self.conn.commit()
+
+    # A rewrite stored within this window of a successor-less tombstone is
+    # treated as its replacement (same near-duplicate bar as consolidation's
+    # MERGE_COSINE). The forget-then-rewrite flow orders the tombstone BEFORE
+    # its successor exists, so supersede() can never record the lineage — the
+    # 2026-07-25 audit found #534 orphaned exactly this way, six seconds ahead
+    # of its rewrite. The store repairs the link at the rewrite instead.
+    ORPHAN_ADOPT_COSINE = 0.88
+    ORPHAN_ADOPT_WINDOW_MIN = 60.0
+
+    def _adopt_orphan_tombstones(self, mem_id: int, kind: str) -> list[int]:
+        """Write superseded_by (+ the supersedes link) on any same-kind row
+        tombstoned successor-less within the adoption window that the new row
+        near-duplicates. Returns the ids adopted. Vector stores only — without
+        an embedding for the new row there is no similarity bar to clear."""
+        new = self.conn.execute(
+            "SELECT model, vector FROM embedding WHERE memory_id = ? AND chunk = 0",
+            (mem_id,)).fetchone()
+        if new is None:
+            return []
+        cutoff = (datetime.now() - timedelta(minutes=self.ORPHAN_ADOPT_WINDOW_MIN)
+                  ).isoformat(timespec="seconds")
+        orphans = self.conn.execute(
+            """SELECT m.id, e.vector FROM memory m
+               JOIN embedding e ON e.memory_id = m.id AND e.model = ? AND e.chunk = 0
+               WHERE m.superseded_by IS NULL AND m.superseded_time >= ?
+                 AND m.kind = ? AND m.id != ?""",
+            (new["model"], cutoff, kind, mem_id)).fetchall()
+        if not orphans:
+            return []
+        from .vectors import cosine, from_blob
+        nv = from_blob(new["vector"])
+        adopted: list[int] = []
+        for r in orphans:
+            if cosine(nv, from_blob(r["vector"])) < self.ORPHAN_ADOPT_COSINE:
+                continue
+            with self.write_txn() as conn:
+                cur = conn.execute(
+                    "UPDATE memory SET superseded_by = ? "
+                    "WHERE id = ? AND superseded_by IS NULL", (mem_id, r["id"]))
+                if cur.rowcount:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO memory_link(memory_id, related_id, relation) "
+                        "VALUES (?,?, 'supersedes')", (mem_id, r["id"]))
+                    adopted.append(r["id"])
+        return adopted
 
     def set_name(self, memory_id: int, name: str | None) -> None:
         """Reassign a memory's unique name handle (e.g. when a named memory is

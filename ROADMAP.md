@@ -24,7 +24,7 @@ parallelism** in the memory↔cognition loop.
 | **L2** | **Automatic capture** *(write-side autonomy)* | The **write** side becomes autonomous: experience is captured and consolidated after each prompt or session with no explicit "store." The read side is still pull-based. This is *storing memories after each prompt* — the foothold for everything above it. | A coding-agent or local-model session whose transcript is auto-captured and consolidated. | **Shipped.** |
 | **L3** | **Proactive recall injection** *(read-side autonomy, one pulse per turn)* | Memory **pushes** relevant context into the thinking *without being asked* — once per turn, relevance-gated, additive (never replacing the host's own memory). The first heartbeat of memory "eventing back" to the thinker. | A prompt-submit hook that surfaces a provenance-tagged "possibly-relevant past" block each turn. | **Shipped — lived-in; recall quality tuned via usefulness feedback.** Wired into the daily loop and surfacing each turn; the relevance floor is now per-memory, tightened by the usefulness signal below (impressions vs uses) so the block fires on the right memories, not merely plausible ones. |
 | **L4** | **Rhythmic in-thought recall** *(the "metronome")* | Memory is re-activated **many times within a single reasoning episode** — pulsed as the thought evolves, each pulse re-querying on the *current* state and steering the next step. **Event-driven cadence, not a constant beat.** The loop tightens from once-per-turn to many-per-thought. | A debounced local recall loop / inner agent that re-queries at reasoning checkpoints. | **Shipped, default-on — proven by the usefulness gate**: scan-verified downstream reference rate for L4 pushes beat the per-turn L3 channel (20% vs 13%) on lived-in usage. Portable cadence controller (`fornixdb.cadence`) wired into both a local model's inner tool-loop (a local model) and the Claude Code tool seam. |
-| **L5** | **Parallel multi-domain activation** *(the analog, human-like target)* | Many lightweight agents fire **simultaneously across different information domains** (episodic, semantic, feedback, by-project, by-person, by-salience…), **all local**, and their returns are **integrated and settle into a single pattern** that directs the next thought. Not one recall, but a *field* of simultaneous local recalls resolving into a direction. | A local orchestrator spawning N domain-scoped recall agents per reasoning step, with a settling/attractor integrator. | **Shipped, default-on** — the field (`fornixdb.field`): seven domain-scoped recalls on one shared query embedding, settled by corroboration clustering (cross-domain agreement + link/topic edges; no corroboration degrades to L4, nothing fabricated), riding the L4 metronome via `config parallel_recall` — **default-on since 0.5.0**. Flipped after live dogfooding showed no harm (~96% of surfaced pushes scored useful in the floor-log join; ~307 ms median per beat; degrade-to-L4 honesty held); the L5-vs-L4 reference-rate readout — the same gate L4 passed — keeps accruing as the **revert signal** via the dream dial report, and `config parallel_recall off` steps back to L4. **◀ we are here — the default operating rung since 0.5.0.** |
+| **L5** | **Parallel multi-domain activation** *(the analog, human-like target)* | Many lightweight agents fire **simultaneously across different information domains** (episodic, semantic, feedback, by-project, by-person, by-salience…), **all local**, and their returns are **integrated and settle into a single pattern** that directs the next thought. Not one recall, but a *field* of simultaneous local recalls resolving into a direction. | A local orchestrator spawning N domain-scoped recall agents per reasoning step, with a settling/attractor integrator. | **Shipped, default-on** — the field (`fornixdb.field`): seven domain-scoped recalls on one shared query embedding, settled by corroboration clustering (cross-domain agreement + link/topic edges; no corroboration degrades to L4, nothing fabricated), riding the L4 metronome via `config parallel_recall` — **default-on since 0.5.0**. Measured honestly against the gate L4 passed: the first true scan readout (2026-07-18, after fixing a marker bug that had credited every settled push to L4) put L5 at 4–6% referenced vs L4's 12–17% while it was the largest injected-token channel, so the field was **trimmed to its proven domains** (`parallel_limit 2`; knowledge, guidance, reference, context, neighborhood; deep + recent dropped). The 2026-07-26 re-measure: **17% of L5 pushes referenced downstream** (4× the pre-trim rate; L4 ran 32% in the same window) — owner decision: keep the trim. L5 is an ambient cross-domain association channel that earns its keep at that measured rate; it is not human-grade association (see "The association gap" below). `config parallel_recall off` steps back to L4 at any time. **◀ we are here — the default operating rung since 0.5.0, trimmed to proven domains in the 0.8.14 honing round.** |
 | **L6** | **Federated / distributed memory** *(an extension beyond human-like)* | The parallel model extended **across endpoints** — machines, agents, eventually a household — federating many FornixDB stores behind one recall. Reached only **after L5**: a single mind is not federated, so this sits *above* the human-likeness climb as a super-human extension, not a step toward it. | A cross-machine aggregator tier; a fleet or household memory. | Far out; encryption-gated. |
 
 ## Why this is the shape of the climb
@@ -53,6 +53,55 @@ So the rungs are cumulative heartbeats of the same idea:
 Endpoint-local memory storage is the correct foundation, and these are the
 stages that grow it from a store the AI queries into something that
 approximates the analog, parallel character of remembering.
+
+## The association gap — what L5 is, and what it is not
+
+*(added at 1.0.0, after the honing rounds put numbers on the field)*
+
+Human cross-domain association — the "common sense" by which a mind knows the
+real world through its interconnections — is the capability L5 aims at, and
+it is where current AI is weakest relative to people. Honesty about the gap:
+
+**What L5 actually is.** Retrieval-side spreading activation over stored
+gists: static embeddings, links, and topics, settled by corroboration.
+Trimmed to its proven domains it earns a measured **17% referenced-downstream
+rate** — a genuinely useful ambient channel that surfaces cross-domain
+candidates a serial lookup would miss. That is a prosthetic, not cognition.
+
+**Why its ceiling is structural, not a tuning problem.** Two binds, neither
+of which more FLOPs at recall time fixes:
+
+1. *Where association happens.* In a mind, spreading activation runs inside
+   the model; the LLM analog is attention over context — the forward pass IS
+   the association engine. The field imitates association *outside* the model
+   precisely because context is scarce; injecting winners is the affordable
+   substitute for letting attention see the whole store. Bigger contexts and
+   better resident models raise this ceiling; a cleverer field does not.
+2. *The data.* A human associates over a lifetime of continuous, multimodal,
+   causally-structured experience, re-woven nightly. A store holds hundreds
+   of text gists. The interconnection density is not there to be found.
+
+**The next achievable rung — model-mediated consolidation ("reasoned
+dreaming").** In people the interconnections are precomputed during sleep;
+recall is fast because consolidation already wove the graph. FornixDB has
+exactly this architecture — dream — but dream today weaves by cosine, the
+same shallow signal the field searches by. The one abundant local resource is
+an idle resident LLM at consolidation time (batch, latency-irrelevant, zero
+marginal cost): pointed at the store during dream, it can propose *reasoned*
+links — "X causes Y", "these contradict", "same principle underneath" —
+instead of similarity pairs. The runtime field then inherits richer glue for
+free, at the only point in the loop where heavyweight intelligence is
+affordable. This stays propose-only (§6.5): the reviewing AI applies.
+
+**The long view — grounded association.** Human-grade common sense requires
+embodied, causally-structured experience streams (robotics is the data path)
+plus model-side world-model research (the training path). Neither is a memory
+library's to build, and this roadmap does not pretend the field will grow
+into it. FornixDB's claim in that future is the **episodic substrate**: the
+senses (SENSES.md) already capture the embryonic version of exactly such a
+stream, and a local, time-indexed, consolidating store is what an embodied
+system would sleep on. The memory-side seat is ours to hold; the model-side
+advances are awaited, not promised.
 
 ## Cross-cutting work that strengthens every rung
 

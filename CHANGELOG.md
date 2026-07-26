@@ -1,9 +1,54 @@
 # Changelog
 
 All notable changes to FornixDB are recorded here. Versions follow semantic
-versioning. While the project is pre-1.0 the public API may still evolve between
-minor versions; pin a tag (`@vX.Y.Z`) for a stable checkout — `main` is the
-active development branch and can change through the day.
+versioning. From 1.0.0 the CLI, MCP tool surface, and on-disk store format are
+stable interfaces: breaking changes to any of them mean a major version, and
+the store schema only migrates forward, in place, automatically. Pin a tag
+(`@vX.Y.Z`) for a stable checkout — `main` is the active development branch
+and can change through the day.
+
+## [1.0.0] - 2026-07-26
+
+The stability release. The feature surface — recall by subject, time, and
+meaning; supersede-with-history; prospective memory that nags; the dream
+consolidation pass; the measured usefulness loop (scan, use-credits,
+suppression, eval fence); the L5 field trimmed to its measured proven
+domains; senses; one-machine concurrency safety; multi-agent stores + shared
+tier — is complete and has been hardening under daily multi-agent use for
+seven weeks and 200+ commits. 1.0.0 freezes its contracts.
+
+### Added
+- **Truthful reminder audits** (`due --audit`): every reminder ever stored,
+  each with a derived status — scheduled / suppressed (superseded before due
+  — correct silence, with the successor named) / delivered-still-open /
+  delivered-closed / DUE-undelivered / retired. A raw prospective-table read
+  conflated three meanings of `delivered_at IS NULL`; the audit derives the
+  distinction from state the store already has (no new columns).
+- **brief resurfaces lost reminders**: a reminder delivered 1–7 days ago with
+  no closing supersede prints one line at session start ("delivered … but
+  never followed up") instead of evaporating into whatever session it
+  happened to land in. Clears naturally when a follow-up row supersedes the
+  reminder, or on forget.
+- **Orphan-tombstone lineage heal**: the forget-then-rewrite flow retires a
+  memory *before* its replacement exists, an order in which
+  `supersede()` can never record lineage. `store()` now adopts a same-kind
+  near-duplicate (cosine ≥ 0.88) tombstoned successor-less within the last
+  hour: writes `superseded_by` + the `supersedes` link, so provenance
+  survives the natural agent workflow.
+- **ROADMAP "The association gap"**: an honest statement of what the L5
+  field is (a measured ambient association channel) and is not (human-grade
+  association), why its ceiling is structural, and the road past it —
+  model-mediated consolidation ("reasoned dreaming") next, grounded
+  association as the long view.
+
+### Changed
+- `forget_memory` (MCP) steers replace-with-rewrite toward
+  remember-then-supersede and says so in its response (schema budget
+  deliberately raised 2300 → 2360 per the never-trim principle).
+- README/ROADMAP L5 claims replaced with the measured story: trimmed to
+  proven domains in the 0.8.14 honing round; 2026-07-26 re-measure 17%
+  referenced-downstream (4× pre-trim), kept by pre-registered gate review.
+- README notes the backtick/double-quote shell trap for stored text.
 
 ## [0.8.15] - 2026-07-20
 
