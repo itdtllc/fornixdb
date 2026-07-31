@@ -24,6 +24,28 @@ from .multistore import (CAPTURE_MODE_HELP, get_config, multi_brief, multi_recal
 from .timeparse import parse_when
 
 
+def _transcripts_source(store, arg):
+    """The transcript pool a push-usefulness command reads: the explicit
+    --transcripts flag, else env FORNIXDB_TRANSCRIPTS, else this STORE's
+    configured transcripts_path, else the Claude host default (matching the
+    env>config precedence dream's refreshes already use). Config-before-default
+    matters on a second-consumer store with its own transcript pool: the old
+    hardcoded default silently scanned another host's sessions against it —
+    the cross-store id-collision mode of the 2026-07-03 phantom-credit bug
+    (hit live on a local model's store, 2026-07-26). An explicit empty string means
+    "no transcripts" (value's skip) and is passed through as None."""
+    if arg is not None:
+        return arg or None
+    for cand in ((os.environ.get("FORNIXDB_TRANSCRIPTS") or "").strip(),
+                 (get_config(store, "transcripts_path") or "").strip()):
+        if cand:
+            # same off-sentinels dream honors (consolidate.py) — an operator
+            # who disabled transcript scanning disabled it here too
+            return (None if cand.lower() in ("off", "none", "no", "false", "0")
+                    else cand)
+    return "~/.claude/projects"
+
+
 def fit_chars(lines: list[str], max_chars: int | None) -> tuple[list[str], int]:
     """Trim a list of output blocks to a character budget — recall costs the
     consuming AI context, so the consumer can say how much it can afford.
@@ -574,9 +596,9 @@ def main(argv: list[str] | None = None) -> int:
                               "often a proactively-pushed memory was actually "
                               "referenced downstream (cited by #id)")
     usp.add_argument("--transcripts", metavar="PATH",
-                     default="~/.claude/projects",
                      help="a .jsonl transcript or a directory of them "
-                          "(default: ~/.claude/projects)")
+                          "(default: this store's transcripts_path config, "
+                          "else ~/.claude/projects)")
     usp.add_argument("--apply", action="store_true",
                      help="close the loop: write each memory's downstream-reference "
                           "count into the store as a use-credit, so effective_floor "
@@ -603,17 +625,19 @@ def main(argv: list[str] | None = None) -> int:
     spp.add_argument("--apply", action="store_true",
                      help="with --scan: write the suppressions (and un-suppress any "
                           "row that has since earned a downstream reference)")
-    spp.add_argument("--transcripts", metavar="PATH", default="~/.claude/projects",
+    spp.add_argument("--transcripts", metavar="PATH",
                      help="a .jsonl transcript or a directory of them "
-                          "(default: ~/.claude/projects)")
+                          "(default: this store's transcripts_path config, "
+                          "else ~/.claude/projects)")
 
     vp = sub.add_parser("value",
                         help="one-shot 'how useful has FornixDB been?': cost (token "
                              "footprint) + reach (vs flat memory) + used (referenced-"
                              "push rate from transcripts)")
-    vp.add_argument("--transcripts", metavar="PATH", default="~/.claude/projects",
+    vp.add_argument("--transcripts", metavar="PATH",
                     help="transcript file/dir for the used-signal "
-                         "(default: ~/.claude/projects; empty string to skip)")
+                         "(default: this store's transcripts_path config, "
+                         "else ~/.claude/projects; empty string to skip)")
     vp.add_argument("--memory-md", metavar="PATH",
                     help="flat MEMORY.md, to also measure REACH vs the flat memory")
     vp.add_argument("--memory-dir", metavar="PATH",
@@ -1579,7 +1603,8 @@ def _dispatch(p, args, store, stores) -> int:
 
     elif args.cmd == "value":
         from . import value
-        r = value.report(store, transcripts=(args.transcripts or None),
+        r = value.report(store,
+                         transcripts=_transcripts_source(store, args.transcripts),
                          memory_md=args.memory_md, memory_dir=args.memory_dir)
         print(json.dumps(r, indent=2, default=str) if args.json
               else value.format_report(r))
@@ -1692,7 +1717,12 @@ def _dispatch(p, args, store, stores) -> int:
                   "windowed scan would erase credit earned outside the window. "
                   "Run --apply without --since-days.")
             return 2
-        result = scan(args.transcripts, since_days=args.since_days)
+        us_src = _transcripts_source(store, args.transcripts)
+        if us_src is None:
+            print("transcript scanning is off (env FORNIXDB_TRANSCRIPTS or "
+                  "transcripts_path) — pass --transcripts PATH to scan anyway.")
+            return 0
+        result = scan(us_src, since_days=args.since_days)
         if args.apply:
             counts = referenced_counts_from_scan(result)
             credited = store.record_referenced(counts)
@@ -1733,7 +1763,13 @@ def _dispatch(p, args, store, stores) -> int:
                               f"since {(r['proactive_suppressed_at'] or '')[:10]}  "
                               f"{(r['gist'] or '')[:60]}")
         else:   # --scan (default)
-            report = sup.scan_and_apply(store, args.transcripts, apply=args.apply)
+            sup_src = _transcripts_source(store, args.transcripts)
+            if sup_src is None:
+                print("transcript scanning is off (env FORNIXDB_TRANSCRIPTS or "
+                      "transcripts_path) — pass --transcripts PATH to scan "
+                      "anyway.")
+                return 0
+            report = sup.scan_and_apply(store, sup_src, apply=args.apply)
             if args.json:
                 print(json.dumps(report, indent=2, default=str))
             else:

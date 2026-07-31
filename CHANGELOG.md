@@ -7,6 +7,19 @@ the store schema only migrates forward, in place, automatically. Pin a tag
 (`@vX.Y.Z`) for a stable checkout — `main` is the active development branch
 and can change through the day.
 
+## [Unreleased]
+
+### Fixed
+- The push-usefulness CLI commands (`usefulness-scan`, `suppress`, `value`)
+  no longer hardcode `~/.claude/projects` as their default transcript pool:
+  the default is now the same resolution dream's refreshes use — env
+  `FORNIXDB_TRANSCRIPTS`, else the store's `transcripts_path` config (with
+  the same off-sentinels), else the Claude host default. On a
+  second-consumer store with its own transcript pool (a local model's), the old
+  default silently scanned another host's sessions against it — the
+  cross-store id-collision mode of the 2026-07-03 phantom-credit bug.
+  An explicit `--transcripts` flag always wins.
+
 ## [1.0.0] - 2026-07-26
 
 The stability release. The feature surface — recall by subject, time, and
