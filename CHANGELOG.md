@@ -9,7 +9,41 @@ and can change through the day.
 
 ## [Unreleased]
 
+### Added
+- The proactive block now tells an agent, once per session, that the store is
+  WRITABLE and how to write to it (the CLI invocation for this store). Without
+  it the injected block is the only evidence of FornixDB a host without a
+  registered MCP server offers, and an agent that searched its tools for
+  memory verbs found none and concluded — confidently, and wrongly — that the
+  store was read-only and it could not record anything. Sent on the first
+  block of a session only, so it costs about 25 tokens per session rather than
+  per turn; `config writeback_hint off` disables it.
+
 ### Fixed
+- Task/closure supersede proposals no longer offer to close a STANDING
+  DIRECTIVE. A `feedback` memory is a rule with no completion state, and only
+  another `feedback` memory can revoke it — previously an unrelated session
+  note saying "implemented" was proposed as the closure of "do NOT write
+  Python procedural geometry generators", which had itself tripped the task
+  gate on words inside the owner's quoted speech. Accepting such a suggestion
+  tombstones a live rule out of the corpus in one command, so this is a
+  destructive false positive rather than a merely noisy one.
+- Auto-captured session records (`source` `claude-code-transcript`) are barred
+  from both sides of a task/closure pair. Their headline is the user's opening
+  request, not a status the memory asserts: "tell me the next steps" read as
+  an open task forever and "we just completed the paths" read as its closure,
+  so every pick-up-the-project session appeared to close every other one.
+- Below a strong cosine (0.65), a task/closure pair must now also share at
+  least four subject words, lifecycle vocabulary excluded. In a store whose
+  rows all come from a few long-running projects, cosine just above the 0.50
+  gate means little more than "same project vocabulary": measured on a live
+  store, every false proposal in a 13-pair batch sat at 0.51–0.54 and shared
+  at most three subject words, while genuinely-related pairs shared 6–18.
+  Above 0.65 the embedding stands on its own, which keeps terse real closures
+  working. Live effect on that store: 15 proposals, all false, went to 0.
+- The write-time and MCP "this closes an open task" notes are phrased as the
+  guesses they are, and say to read the other memory before superseding.
+
 - The push-usefulness CLI commands (`usefulness-scan`, `suppress`, `value`)
   no longer hardcode `~/.claude/projects` as their default transcript pool:
   the default is now the same resolution dream's refreshes use — env

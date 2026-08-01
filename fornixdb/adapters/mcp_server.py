@@ -480,9 +480,11 @@ class FornixMCP:
         sug = supersede_suggestion(self.store, new_id, content, kind)
         if sug and sug.get("reason") == "resolves":
             out.append(
-                f"this looks like it CLOSES open task memory #{sug['id']} "
-                f"\"{sug['gist'][:50]}\" — if so, `supersede {sug['id']} {new_id}` "
-                f"to close it (old kept as history).")
+                f"this MIGHT close open task memory #{sug['id']} "
+                f"\"{sug['gist'][:50]}\" — a guess from wording, so read that "
+                f"memory before acting. If it really is closed by this one, "
+                f"`supersede {sug['id']} {new_id}` (old kept as history); "
+                f"otherwise leave it alone.")
         elif sug:
             out.append(
                 f"near-duplicate of #{sug['id']} \"{sug['gist'][:50]}\" "

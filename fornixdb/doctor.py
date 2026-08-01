@@ -87,6 +87,7 @@ def config_overview(store) -> list[tuple[str, str]]:
     floor_adapt = (get_config(store, "usefulness_floor_adapt", "on") or "on")
     proj_scope = (get_config(store, "project_scoped_pulse", "on") or "on")
     dedup = (get_config(store, "cross_pulse_dedup", "on") or "on")
+    writeback = (get_config(store, "writeback_hint", "on") or "on")
     dissent = (get_config(store, "parallel_dissent", "off") or "off")
     floor_log = (get_config(store, "floor_log", "off") or "off")
     use_credit = (get_config(store, "dream_use_credit", "on") or "on")
@@ -106,6 +107,7 @@ def config_overview(store) -> list[tuple[str, str]]:
         ("usefulness_floor_adapt", "off" if floor_adapt in _OFF else "on"),
         ("project_scoped_pulse", "off" if proj_scope in _OFF else "on"),
         ("cross_pulse_dedup", "off" if dedup in _OFF else "on"),
+        ("writeback_hint", "off" if writeback in _OFF else "on"),
         ("parallel_dissent", "off" if dissent in _OFF else "on"),
         ("parallel_domains", _parallel_domains_view(store)),
         ("parallel_limit", (get_config(store, "parallel_limit", "") or "").strip()
@@ -135,6 +137,9 @@ CONFIG_DEFAULTS: dict[str, str] = {
     "usefulness_floor_adapt": "on",
     "project_scoped_pulse": "on",
     "cross_pulse_dedup": "on",
+    "writeback_hint": "on (one line per session telling the agent how to WRITE "
+                      "to the store — without it, a host with no MCP server "
+                      "registered leaves the agent concluding it is read-only)",
     "parallel_dissent": "off",
     "parallel_domains": "all 7 (trim via a comma list of domain ids; "
                         "'off' clears)",

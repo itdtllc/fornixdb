@@ -64,6 +64,48 @@ _TASK_RE = re.compile(
     r"should build|needs? to|planned|plan to|open items?|wip|in progress|"
     r"pending|investigate)\b", re.I)
 
+# Subject-overlap corroboration for WEAK pairs (2026-08-01). In a store whose
+# rows all come from a handful of long-running projects, cosine just above
+# RESOLUTION_COSINE means little more than "same project vocabulary": measured
+# live, every false proposal in a 13-pair batch sat at 0.51–0.54, where a
+# promiscuous status memory ("v0.8.15 published…", "P3 DONE…") reads as the
+# closure of any older row that happens to contain a task word. Those pairs
+# shared at most 3 subject words; genuinely-related pairs shared 6–18.
+#
+# So: below RESOLUTION_STRONG_COSINE the pair must also SAY the same nouns.
+# Above it the embedding is evidence enough on its own — which is what keeps a
+# terse real closure ("dark mode shipped" over "to add: dark mode") working,
+# since such a pair scores high precisely because it is short and on-subject.
+RESOLUTION_STRONG_COSINE = 0.65
+RESOLUTION_MIN_SUBJECT_OVERLAP = 4
+# Lifecycle vocabulary is excluded from the overlap count: two memories both
+# saying "shipped" share a status word, not a subject.
+_SUBJECT_STOPWORDS = frozenset("""
+the a an and or of to in on for with is are was were be been it its this that
+at by from as we i you they not no do does did have has had will would can
+could should new old more most all any each other than then so if but out up
+down over under again once here there when where why how now see session live
+task tasks done shipped resolved closed complete completed finished fixed
+implemented merged landed backlog remaining pending planned wip progress
+""".split())
+_SUBJECT_WORD_RE = re.compile(r"[a-z][a-z0-9_.-]{2,}")
+
+
+def _subject_words(text: str) -> set:
+    """Content words a memory's headline actually names — the nouns a real
+    task/closure pair has in common, minus lifecycle status vocabulary."""
+    return {w for w in _SUBJECT_WORD_RE.findall((text or "").lower())
+            if w not in _SUBJECT_STOPWORDS}
+
+
+def _subject_corroborated(cosine_value: float, head_older: str,
+                          head_newer: str) -> bool:
+    """A weak-cosine lifecycle pair must ALSO share subject words (see above)."""
+    if cosine_value >= RESOLUTION_STRONG_COSINE:
+        return True
+    shared = _subject_words(head_older) & _subject_words(head_newer)
+    return len(shared) >= RESOLUTION_MIN_SUBJECT_OVERLAP
+
 
 def _headline(gist: str | None, detail: str | None, lede_chars: int = 160) -> str:
     """The text the lifecycle gates should read: a memory's GIST plus the first
@@ -81,6 +123,40 @@ def _headline(gist: str | None, detail: str | None, lede_chars: int = 160) -> st
     g = (gist or "").strip()
     lede = (detail or "").strip().split("\n", 1)[0][:lede_chars]
     return f"{g}\n{lede}"
+
+
+# Auto-captured session records: the host writes one per Claude Code session,
+# and its headline is the USER'S OPENING REQUEST quoted verbatim — not a status
+# the memory itself asserts.
+_TRANSCRIPT_SOURCE = "claude-code-transcript"
+
+
+def _lifecycle_pair_ok(older_kind, older_source, newer_kind, newer_source) -> bool:
+    """May this (older -> newer) pair be proposed as task -> closure?
+
+    The lifecycle gates read language, and language lies about two row shapes.
+    Both were found live (store #721, 2026-07-29) and both are guarded here so
+    the dream pass and the write-time nudge cannot disagree:
+
+    1. A FEEDBACK row is a STANDING RULE, not a task. An owner directive has no
+       completion state — it holds until the owner revokes it, and only another
+       directive can revoke it. This is the destructive case rather than a merely
+       noisy one: accepting the suggestion tombstones a rule out of the corpus in
+       a single command. Live case: "do NOT write Python procedural geometry
+       generators" tripped _TASK_RE on "to add" inside the owner's QUOTED words,
+       and an unrelated session pickup saying "implemented" was offered as its
+       closure. So a feedback row may only be closed by another feedback row —
+       which still allows the real case of a directive restated or broadened.
+
+    2. An AUTO-CAPTURED SESSION row asserts nothing. "tell me the next steps"
+       reads as an open task forever, and "we just completed the paths" reads as
+       a closure of it, so every pick-up-the-project session appears to close
+       every other one. Barred from BOTH sides: neither a task nor a closure."""
+    if _TRANSCRIPT_SOURCE in ((older_source or ""), (newer_source or "")):
+        return False
+    if (older_kind or "") == "feedback" and (newer_kind or "") != "feedback":
+        return False
+    return True
 
 
 _UNSET = object()
@@ -235,7 +311,7 @@ def _resolution_scan(store: MemoryStore, exclude_ids: set[int]) -> list:
     if model_row is None:
         return []
     rows = store.conn.execute(
-        """SELECT m.id, m.kind, m.gist, m.detail, m.recorded_time, e.vector
+        """SELECT m.id, m.kind, m.source, m.gist, m.detail, m.recorded_time, e.vector
            FROM memory m
            JOIN embedding e ON e.memory_id = m.id AND e.model = ? AND e.chunk = 0
            WHERE m.superseded_time IS NULL""",
@@ -264,6 +340,12 @@ def _resolution_scan(store: MemoryStore, exclude_ids: set[int]) -> list:
                 else (b, a)
             if not (_TASK_RE.search(head[older["id"]])
                     and _CLOSURE_RE.search(head[newer["id"]])):
+                continue
+            if not _lifecycle_pair_ok(older["kind"], older["source"],
+                                      newer["kind"], newer["source"]):
+                continue
+            if not _subject_corroborated(cos, head[older["id"]],
+                                         head[newer["id"]]):
                 continue
             if (older["id"], newer["id"]) in supersede_linked \
                     or (newer["id"], older["id"]) in supersede_linked:
@@ -979,7 +1061,8 @@ def supersede_suggestion(store: MemoryStore, new_id: int, text: str,
         #    task, and an older memory that merely mentions "backlog" no longer
         #    reads as the open task being closed.
         new_row = store.conn.execute(
-            "SELECT gist, detail FROM memory WHERE id = ?", (new_id,)).fetchone()
+            "SELECT gist, detail, kind, source FROM memory WHERE id = ?",
+            (new_id,)).fetchone()
         new_head = _headline(new_row["gist"], new_row["detail"]) if new_row else text
         if _CLOSURE_RE.search(new_head):
             for mid, cos in matches:
@@ -988,7 +1071,16 @@ def supersede_suggestion(store: MemoryStore, new_id: int, text: str,
                 if mid == new_id:
                     continue
                 row = store.conn.execute(
-                    "SELECT id, gist, detail FROM memory WHERE id = ?", (mid,)).fetchone()
+                    "SELECT id, gist, detail, kind, source FROM memory WHERE id = ?",
+                    (mid,)).fetchone()
+                if row and not _lifecycle_pair_ok(
+                        row["kind"], row["source"],
+                        new_row["kind"] if new_row else kind,
+                        new_row["source"] if new_row else None):
+                    continue
+                if row and not _subject_corroborated(
+                        cos, _headline(row["gist"], row["detail"]), new_head):
+                    continue
                 if row and _TASK_RE.search(_headline(row["gist"], row["detail"])):
                     return {"id": row["id"], "gist": row["gist"],
                             "cosine": round(cos, 3), "reason": "resolves"}

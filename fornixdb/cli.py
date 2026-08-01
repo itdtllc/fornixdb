@@ -767,9 +767,10 @@ def _dispatch(p, args, store, stores) -> int:
         sug = supersede_suggestion(target, mem_id, args.gist + " " + (args.detail or ""),
                                    args.kind)
         if sug and sug.get("reason") == "resolves":
-            print(f"  note: looks like it CLOSES open task memory #{sug['id']} "
-                  f"\"{sug['gist'][:60]}\" — if so, `supersede {sug['id']} {mem_id}` "
-                  f"to close it", file=sys.stderr)
+            print(f"  note: this MIGHT close open task memory #{sug['id']} "
+                  f"\"{sug['gist'][:60]}\" — a guess from wording; read that "
+                  f"memory first, then `supersede {sug['id']} {mem_id}` only if "
+                  f"it really is closed", file=sys.stderr)
         elif sug:
             print(f"  note: closely matches #{sug['id']} \"{sug['gist'][:60]}\" "
                   f"(cos {sug['cosine']}) — if this updates it, "

@@ -10,7 +10,8 @@ os.environ["FORNIXDB_TRANSCRIPTS"] = "off"  # dream must not scan this machine's
 
 from fornixdb.consolidate import (CHRONIC_MIN_PUSHES, DIAL_MIN_IMPRESSIONS,
                                   DIAL_MIN_SHADOW, RESOLUTION_COSINE,
-                                  _dream_narrative, _gist_problem, dial_report,
+                                  RESOLUTION_STRONG_COSINE, _dream_narrative,
+                                  _gist_problem, _subject_words, dial_report,
                                   dream, propose, status, supersede_suggestion)
 from fornixdb.core import FrozenStoreError, MemoryStore
 from fornixdb.multistore import set_config
@@ -505,6 +506,105 @@ class TestResolutionHeal(unittest.TestCase):
         sug = supersede_suggestion(self.s, newer, content, "semantic",
                                    embedder=self.emb)
         self.assertIsNone(sug)
+
+    # ------------------- what may take part in a lifecycle pair (store #721)
+    # Live false positive, 2026-07-29: storing an unrelated session pickup
+    # printed "looks like it CLOSES open task memory #661" — where #661 was a
+    # STANDING OWNER DIRECTIVE ("do NOT write Python procedural geometry
+    # generators"), which had tripped the task gate on "to add" inside the
+    # owner's quoted words. Accepting that suggestion would have tombstoned a
+    # live rule out of the corpus in one command.
+
+    def test_standing_directive_is_not_a_closable_task(self):
+        # feedback = a standing rule with no completion state; an episodic
+        # closure on the same subject must NOT be offered as closing it
+        task, close = self._task_then_close(task_kind="feedback",
+                                            close_kind="episodic")
+        self.assertEqual(propose(self.s)["resolutions"], [])
+
+    def test_directive_may_still_be_closed_by_another_directive(self):
+        # the real case the guard must preserve: a directive restated/broadened
+        # by a LATER directive genuinely supersedes it
+        task, close = self._task_then_close(task_kind="feedback",
+                                            close_kind="feedback")
+        res = propose(self.s)["resolutions"]
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["ids"], [task, close])
+
+    def test_write_time_nudge_never_offers_to_close_a_directive(self):
+        task = self.s.store(self.TASK, kind="feedback")
+        _age(self.s, task, 4)
+        embed_memory(self.s, self.emb, task)
+        close = self.s.store(self.CLOSE, kind="episodic")
+        self.assertIsNone(supersede_suggestion(self.s, close, self.CLOSE,
+                                               "episodic", embedder=self.emb))
+
+    # An auto-captured session row's headline is the USER'S OPENING REQUEST, not
+    # a status the memory asserts: "tell me the next steps" reads as an open task
+    # forever and "we just completed the paths" reads as its closure, so every
+    # pick-up-the-project session appears to close every other one.
+
+    def _transcript_row(self, text, kind="episodic"):
+        return self.s.store(text, kind=kind, source="claude-code-transcript")
+
+    def test_auto_captured_session_row_is_never_an_open_task(self):
+        task = self._transcript_row(self.TASK)
+        _age(self.s, task, 4)
+        close = self.s.store(self.CLOSE, kind="episodic")
+        embed_memory(self.s, self.emb, task)
+        embed_memory(self.s, self.emb, close)
+        self.assertEqual(propose(self.s)["resolutions"], [])
+
+    def test_auto_captured_session_row_never_closes_anything(self):
+        task = self.s.store(self.TASK, kind="semantic")
+        _age(self.s, task, 4)
+        close = self._transcript_row(self.CLOSE)
+        embed_memory(self.s, self.emb, task)
+        embed_memory(self.s, self.emb, close)
+        self.assertEqual(propose(self.s)["resolutions"], [])
+
+    def test_write_time_nudge_ignores_auto_captured_session_rows(self):
+        task = self._transcript_row(self.TASK)
+        _age(self.s, task, 4)
+        embed_memory(self.s, self.emb, task)
+        close = self.s.store(self.CLOSE, kind="episodic")
+        self.assertIsNone(supersede_suggestion(self.s, close, self.CLOSE,
+                                               "episodic", embedder=self.emb))
+
+    # -------- weak-cosine pairs must also share subject words (2026-08-01)
+    # Measured on the live store: false proposals sat at cosine 0.51-0.54 and
+    # shared <=3 subject words, while genuinely-related pairs shared 6-18. A
+    # promiscuous status memory otherwise reads as the closure of any older row
+    # in the same project that happens to contain a task word.
+
+    def test_weak_pair_without_shared_subject_is_not_proposed(self):
+        older = self.s.store("TASKS to do: raise the install-default disk cap "
+                             "for the machine budget ceiling", kind="semantic")
+        _age(self.s, older, 4)
+        newer = self.s.store("timeline recall window overflow bug FIXED and "
+                             "shipped in the release", kind="episodic")
+        embed_memory(self.s, self.emb, older)
+        embed_memory(self.s, self.emb, newer)
+        for pair in propose(self.s)["resolutions"]:
+            self.assertNotEqual(pair["ids"], [older, newer])
+
+    def test_strong_cosine_pair_needs_no_subject_overlap(self):
+        # the guard applies only BELOW RESOLUTION_STRONG_COSINE: a terse, clearly
+        # on-subject closure still resolves its task
+        task, close = self._task_then_close()
+        pair = propose(self.s)["resolutions"]
+        self.assertEqual(len(pair), 1)
+        self.assertEqual(pair[0]["ids"], [task, close])
+        self.assertGreaterEqual(pair[0]["cosine"], RESOLUTION_STRONG_COSINE)
+
+    def test_subject_words_ignore_lifecycle_vocabulary(self):
+        # two memories both saying "shipped/done" share a status word, not a
+        # subject — the overlap count must not be fooled by that
+        self.assertEqual(
+            _subject_words("shipped done completed the session task now"), set())
+        self.assertEqual(
+            _subject_words("the waterwheel axle clearance"),
+            {"waterwheel", "axle", "clearance"})
 
 
 # Reality check (2026-07-01): the dream verifies file-path claims against the

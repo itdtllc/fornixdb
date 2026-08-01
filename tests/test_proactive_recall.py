@@ -186,8 +186,10 @@ class TestProactiveRecall(unittest.TestCase):
         for i in range(5):
             self._seed(f"the deploy script reads configuration variant {i}")
         block = proactive_recall(self.s, self.PROMPT, session_id="s1", limit=3)
-        # header + at most 3 memory lines
-        self.assertLessEqual(len(block.splitlines()), 4)
+        # at most 3 MEMORY lines (the header and the once-per-session write-back
+        # hint are not memories and are not what `limit` caps)
+        rows = [l for l in block.splitlines() if l.startswith("#")]
+        self.assertLessEqual(len(rows), 3)
 
     def test_provenance_flag_on_auto_captured(self):
         self._seed("the deploy script configuration session notes",
@@ -228,6 +230,43 @@ class TestProactiveRecall(unittest.TestCase):
         self.assertIsNone(second)
         # a DIFFERENT session starts fresh
         self.assertIsNotNone(proactive_recall(self.s, self.PROMPT, session_id="s2"))
+
+    # ------------------------------------------- write-back hint (store #675)
+    # Without it, a host with no MCP server registered gives the agent nothing
+    # but the injected block — and a capable agent concluded, confidently and
+    # wrongly, that the store was read-only and it could not record anything.
+
+    def test_first_block_of_a_session_says_how_to_write_back(self):
+        self._seed()
+        block = proactive_recall(self.s, self.PROMPT, session_id="s1")
+        self.assertIn("WRITABLE", block)
+        self.assertIn("-m fornixdb", block)
+        self.assertIn("store --gist", block)
+
+    def test_write_back_hint_is_sent_only_once_per_session(self):
+        self._seed()
+        self._seed("the backup rotation keeps seven daily archives")
+        # limit=1 so the second memory is left for the next turn (both would
+        # otherwise be injected at once and cross-turn dedup would silence it)
+        first = proactive_recall(self.s, self.PROMPT, session_id="s1", limit=1)
+        self.assertIn("WRITABLE", first)
+        # a later turn in the SAME session, surfacing a DIFFERENT memory, must
+        # not pay for the hint again — the agent already has it in context
+        second = proactive_recall(
+            self.s, "how many daily archives does the backup rotation keep",
+            session_id="s1")
+        self.assertIsNotNone(second)
+        self.assertNotIn("WRITABLE", second)
+        # a NEW session is a new agent with no context — it gets told again
+        self.assertIn("WRITABLE",
+                      proactive_recall(self.s, self.PROMPT, session_id="s2"))
+
+    def test_write_back_hint_can_be_switched_off(self):
+        self._seed()
+        set_config(self.s, "writeback_hint", "off")
+        block = proactive_recall(self.s, self.PROMPT, session_id="s1")
+        self.assertIsNotNone(block)
+        self.assertNotIn("WRITABLE", block)
 
     # ------------------------------------------------------------------ main
 
