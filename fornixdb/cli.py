@@ -301,6 +301,14 @@ def main(argv: list[str] | None = None) -> int:
     lgp.add_argument("ref", help="memory id or name (any edition — old or current)")
     lgp.add_argument("--depth", type=int, default=25, help="max editions to walk")
 
+    pjp = sub.add_parser("projects", help="project labels in the store, and which "
+                                          "of them are spellings of one project")
+    pjp.add_argument("--normalize", action="store_true",
+                     help="rewrite each label to its canonical spelling "
+                          "(DRY RUN — shows the rewrites and changes nothing)")
+    pjp.add_argument("--apply", action="store_true",
+                     help="with --normalize, actually write the rewrites")
+
     up = sub.add_parser("supersede", help="newer memory replaces older (older kept, tombstoned)")
     up.add_argument("old_id", type=int)
     up.add_argument("new_id", type=int)
@@ -1398,6 +1406,41 @@ def _dispatch(p, args, store, stores) -> int:
             if mem.get("detail"):
                 print("-" * 60)
                 print(mem["detail"])
+
+    elif args.cmd == "projects":
+        if args.normalize:
+            res = store.normalize_projects(apply=args.apply)
+            if args.json:
+                print(json.dumps(res, indent=2, default=str))
+            elif not res["changes"]:
+                print("--- every project label is already canonical; nothing to do ---")
+            else:
+                verb = "REWROTE" if res["applied"] else "would rewrite"
+                print(f"--- {verb} {len(res['changes'])} label(s): "
+                      f"{res['memories']} memories, {res['sessions']} sessions ---")
+                for c in res["changes"]:
+                    print(f"  {c['from']!r} -> {c['to']!r}"
+                          f"   ({c['memories']} mem, {c['sessions']} ses)")
+                if not res["applied"]:
+                    print("--- DRY RUN. re-run with --apply to write. back up first: "
+                          "the old label is not kept ---")
+        else:
+            rows = store.project_labels()
+            if args.json:
+                print(json.dumps(rows, indent=2, default=str))
+            elif not rows:
+                print("--- no project labels in this store ---")
+            else:
+                variants = sum(1 for r in rows if r["canonical"] != r["label"])
+                print(f"--- {len(rows)} project label(s)"
+                      + (f", {variants} of them a variant spelling" if variants else "")
+                      + " ---")
+                for r in rows:
+                    mark = "" if r["canonical"] == r["label"] else f"  -> {r['canonical']}"
+                    print(f"  {r['label']:<32} {r['memories']:>5}{mark}")
+                if variants:
+                    print("--- `projects --normalize` to preview the fold; "
+                          "`config project_aliases` declares non-obvious merges ---")
 
     elif args.cmd == "lineage":
         target, ref = resolve_ref(stores, args.ref)

@@ -81,17 +81,45 @@ of which more FLOPs at recall time fixes:
    causally-structured experience, re-woven nightly. A store holds hundreds
    of text gists. The interconnection density is not there to be found.
 
-**The next achievable rung — model-mediated consolidation ("reasoned
-dreaming").** In people the interconnections are precomputed during sleep;
-recall is fast because consolidation already wove the graph. FornixDB has
-exactly this architecture — dream — but dream today weaves by cosine, the
-same shallow signal the field searches by. The one abundant local resource is
-an idle resident LLM at consolidation time (batch, latency-irrelevant, zero
-marginal cost): pointed at the store during dream, it can propose *reasoned*
-links — "X causes Y", "these contradict", "same principle underneath" —
-instead of similarity pairs. The runtime field then inherits richer glue for
-free, at the only point in the loop where heavyweight intelligence is
-affordable. This stays propose-only (§6.5): the reviewing AI applies.
+**The rung we tried and did not get — model-mediated consolidation ("reasoned
+dreaming"). PROBED 2026-08-01, CLOSED NEGATIVE, not built.** The idea: in
+people the interconnections are precomputed during sleep, so recall is fast
+because consolidation already wove the graph. FornixDB has exactly that
+architecture — dream — but dream weaves by cosine, the same shallow signal the
+field searches by. The one abundant local resource is an idle resident LLM at
+consolidation time (batch, latency-irrelevant, zero marginal cost): pointed at
+the store during dream, it could propose *reasoned* links — "X causes Y",
+"these contradict", "same principle underneath" — and the runtime field would
+inherit richer glue for free, at the only point in the loop where heavyweight
+intelligence is affordable.
+
+A kill rule was written before any run: build iff the best resident model
+reaches ≥50% true-and-useful on causal+principle proposals **and** ≥80%
+correct contradiction triage. The probe is public —
+`examples/reasoned_pairs_probe.py` — and was run over 180 questions against
+two lived-in stores with three resident models (qwen2.5:72b, qwen3.5:122b,
+gpt-oss:120b).
+
+**All three failed both bars.** Best triage was 76% against a ~82%
+always-say-`refines` majority baseline, and causal yield was *zero* — not one
+`causes` proposal across 120 exploratory pair-readings. The two binds above
+are not rhetorical: bind 1 showed up as every model reading surface
+similarity as relatedness (0/18 on hard negatives — bias, not
+discrimination), and bind 2 as the store simply not carrying mineable causal
+structure at this density. Worth keeping for any re-trial: no model ever
+produced a destructive false alarm, and the proportional A:B::C:D form was
+the one real capability signal (79–84% against a 63% baseline). The kill rule
+was honored and the feature was not built.
+
+**So what is the next rung?** Not another pass at the same idea. Reasoned
+dreaming becomes worth re-probing only when one of its two inputs materially
+changes — a resident model that beats the embedder on look-alike pairs, or a
+store dense enough in causal text to have something to mine — and neither is
+this library's to produce on a schedule. Meanwhile the honest answer is that
+**L5 is the operating rung and the work that pays is cross-cutting** (below):
+making every recall land better, measured by referenced-push rate, rather than
+climbing. That is a less exciting roadmap than the one this section used to
+promise, and it is the one the evidence supports.
 
 **The long view — grounded association.** Human-grade common sense requires
 embodied, causally-structured experience streams (robotics is the data path)

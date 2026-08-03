@@ -364,8 +364,22 @@ to the model's context.
 
   **Aliases** stitch a project's historical names together so one declaration
   catches them all:
-  `config project_aliases "fornixdb=engramdb,aimemory; videos=archive"`. Aliases
-  also become declarable names, so "working on engramdb" resolves the group.
+  `config project_aliases "fornixdb=engramdb,aimemory; videos=archive"`. Groups
+  separate on `;` or a newline, labels within a group on `=` or `,` — never on
+  whitespace, so a project name can have spaces in it. Aliases also become
+  declarable names, so "working on engramdb" resolves the group, and the
+  **first label in a group is that project's canonical spelling**.
+
+  **One project, one spelling.** Because rule 3 above takes the label from a
+  directory name, the same project fragments the moment a session runs from a
+  differently-cased or renamed directory — and a fragmented label splits one
+  thread into several in `brief` and hides rows from a `project`-filtered
+  recall. Labels are canonicalized as they are stored: case variants fold to
+  the project's dominant spelling, and an alias group folds to its first label.
+  Two genuinely different names never merge on their own — that judgement is
+  yours to declare. Run `projects` to see the labels a store holds and
+  `projects --normalize` to preview folding an existing store (it writes
+  nothing until `--apply`).
 - **Lean by budget.** Top-K (`proactive_recall_limit`, default 3) + a char cap
   (`proactive_recall_max_chars`, default 600). The measured cost of memory is the
   *prefill* of what it adds to the prompt, not the recall — so the block is a

@@ -89,6 +89,20 @@ STRUCTURAL_TOPICS = frozenset({
     "publication", "documentation", "roadmap", "naming",
 })
 SALIENCE_CAP = 1.0
+
+
+def _canonical_project(store, project):
+    """`context.canonical_project`, but never fatal to a write. A store that
+    cannot answer (peer, mid-migration, missing config table) keeps the caller's
+    label trimmed — a fragmented label is a bad day, a failed store() is a lost
+    memory, and this module's whole contract is that the write lands."""
+    try:
+        from .context import canonical_project   # lazy: import cycle via multistore
+        return canonical_project(store, project)
+    except Exception:
+        return project.strip() if isinstance(project, str) else project
+
+
 VECTOR_WEIGHT = 15.0      # scales cosine into the -bm25 range. Tuned 2026-06-11
                           # via the eval fence: at 6.0, OR-mode keyword noise
                           # (bm25 ≈ 7-9 from common tokens) buried the clearly
@@ -385,6 +399,14 @@ class MemoryStore:
                 f"kind must be one of {KINDS} (got {kind!r}); "
                 f"or a known alias {tuple(KIND_ALIASES)}")
         self._check_writable()
+        # One project, one spelling. Capture takes its label from the cwd
+        # basename, so the same project fragments the moment a session runs from
+        # a differently-cased or differently-named directory (2026-08-03: the
+        # per-project directory split put 47 rows under `AIMemory` alongside 219
+        # `fornixdb` + 19 `FornixDB`, splitting one thread three ways in brief).
+        # Folding here rather than at every call site means no writer — CLI, MCP,
+        # hooks, importers — can reintroduce a variant.
+        project = _canonical_project(self, project)
         # Resolve the embedder BEFORE inserting: first resolution runs the
         # missing-vector backfill, and with the new row already committed the
         # backfill would count it as a gap — embedding it a first time and
@@ -871,6 +893,24 @@ class MemoryStore:
         val = (row["value"] if row else default) or default
         return str(val).strip().lower() in ("off", "0", "false", "no")
 
+    def _project_clause(self, project, col="m.project"):
+        """(sql, params) matching EVERY spelling of `project` this store holds —
+        `("m.project = ?", ["fornixdb"])` in the normal one-spelling case, an IN
+        over the variants otherwise. Both forms use idx_memory_project; folding in
+        SQL (LOWER(project) = ?) would not. Returns ("", []) for no filter.
+
+        Filters go through here rather than comparing the raw label because an
+        exact match silently under-reports: a store written before labels were
+        canonicalized, or a read-only peer that will never be rewritten, still
+        holds `FornixDB` and `AIMemory` rows that `--project fornixdb` must find."""
+        if not project:
+            return "", []
+        from .context import project_equivalents  # lazy: import cycle via multistore
+        labels = project_equivalents(self, project)
+        if len(labels) <= 1:
+            return f"{col} = ?", list(labels) or [project]
+        return f"{col} IN ({','.join('?' * len(labels))})", labels
+
     def _recall_exact_name(self, query, limit, kind, project,
                            include_superseded, since, until) -> list[dict]:
         """Keyed get: rows whose name matches `query` exactly (case-folded).
@@ -881,8 +921,9 @@ class MemoryStore:
             where.append("m.kind = ?")
             params.append(kind)
         if project:
-            where.append("m.project = ?")
-            params.append(project)
+            pc, pcp = self._project_clause(project)
+            where.append(pc)
+            params += pcp
         if not include_superseded:
             where.append("m.superseded_time IS NULL")
         if since:
@@ -992,8 +1033,9 @@ class MemoryStore:
                 where.append("m.kind = ?")
                 params.append(kind)
             if project:
-                where.append("m.project = ?")
-                params.append(project)
+                pc, pcp = self._project_clause(project)
+                where.append(pc)
+                params += pcp
             if not include_superseded:
                 where.append("m.superseded_time IS NULL")
             if since:  # vector neighbors honor the time window too
@@ -1046,8 +1088,9 @@ class MemoryStore:
             where.append("m.kind = ?")
             params.append(kind)
         if project:
-            where.append("m.project = ?")
-            params.append(project)
+            pc, pcp = self._project_clause(project)
+            where.append(pc)
+            params += pcp
         if not include_superseded:
             where.append("m.superseded_time IS NULL")
         if since:  # a spanned event (event_time_end) overlaps the window too
@@ -1249,8 +1292,9 @@ class MemoryStore:
             where.append("m.kind = ?")
             params.append(kind)
         if project:
-            where.append("m.project = ?")
-            params.append(project)
+            pc, pcp = self._project_clause(project)
+            where.append(pc)
+            params += pcp
         # When a window holds more than `limit` rows, keep the MOST RECENT ones
         # (a busy day must never drop what just happened — the freshly-recorded
         # diary entry is exactly what "what happened today" wants), but present
@@ -1371,7 +1415,8 @@ class MemoryStore:
         moved, because a pickup cares about what is warm, and carrying the
         chain depth so the reader knows an arc is there to walk.
         """
-        pw, pp = ("AND m.project = ?", [project]) if project else ("", [])
+        _pc, pp = self._project_clause(project)
+        pw = f"AND {_pc}" if _pc else ""
         rows = [dict(r) for r in self.conn.execute(
             f"""WITH tip AS (
                     SELECT m.* FROM memory m
@@ -1382,7 +1427,10 @@ class MemoryStore:
                 SELECT * FROM tip t
                 WHERE t.event_time = (
                     SELECT max(t2.event_time) FROM tip t2
-                    WHERE t2.project IS t.project)
+                    -- Case-folded so one project spelled two ways is ONE thread.
+                    -- `IS` (not `=`) keeps the unlabelled rows grouping together.
+                    WHERE t2.project IS t.project
+                       OR LOWER(TRIM(t2.project)) = LOWER(TRIM(t.project)))
                 ORDER BY t.event_time DESC LIMIT ?""",
             [*pp, limit])]
         for r in rows:
@@ -1588,6 +1636,7 @@ class MemoryStore:
     def record_session(self, session_id: str, *, project=None, started=None,
                        ended=None, source=None, source_ref=None) -> None:
         self._check_writable()
+        project = _canonical_project(self, project)   # same fold as memory rows
         self.conn.execute(
             """INSERT INTO session(id, project, started, ended, source, source_ref)
                VALUES (?,?,?,?,?,?)
@@ -1599,6 +1648,63 @@ class MemoryStore:
         )
         self.conn.commit()
 
+    def project_labels(self) -> list[dict]:
+        """Every project spelling in the store with its row count and the label it
+        canonicalizes to — the `projects` view. `canonical` == `label` means the
+        row is already the settled spelling for that project."""
+        from .context import project_canon_map
+        cmap = project_canon_map(self)
+        rows = []
+        for label, n in self._all_project_labels():
+            rows.append({"label": label, "memories": n,
+                         "canonical": cmap.get(label.strip().lower(), label.strip())})
+        return rows
+
+    def _all_project_labels(self) -> list[tuple[str, int]]:
+        """Distinct project spellings across BOTH memory and session, with memory
+        row counts (0 for a label only sessions use). Ordered most-used first."""
+        counts: dict[str, int] = {}
+        for p, n in self.conn.execute(
+                "SELECT project, COUNT(*) FROM memory "
+                "WHERE project IS NOT NULL AND project <> '' GROUP BY project"):
+            counts[p] = n
+        for (p,) in self.conn.execute(
+                "SELECT DISTINCT project FROM session "
+                "WHERE project IS NOT NULL AND project <> ''"):
+            counts.setdefault(p, 0)
+        return sorted(counts.items(), key=lambda r: (-r[1], r[0]))
+
+    def normalize_projects(self, *, apply: bool = False) -> dict:
+        """Rewrite every project label to its canonical spelling, in memory AND
+        session. Propose-not-dispose: DRY RUN unless `apply` — the caller sees the
+        exact rewrites first, because merging two labels is a judgement about what
+        is one project, and only case-folding is safe to assume.
+
+        Idempotent (a second run proposes nothing) and reversible in principle,
+        but it overwrites the only copy of the old label — take a backup first."""
+        from .context import project_canon_map
+        cmap = project_canon_map(self)
+        changes = []
+        for label, n_mem in self._all_project_labels():
+            canon = cmap.get(label.strip().lower(), label.strip())
+            if canon == label:
+                continue
+            n_ses = self.conn.execute(
+                "SELECT COUNT(*) FROM session WHERE project = ?", (label,)).fetchone()[0]
+            changes.append({"from": label, "to": canon,
+                            "memories": n_mem, "sessions": n_ses})
+        if apply and changes:
+            self._check_writable()
+            with self.write_txn() as conn:
+                for c in changes:
+                    conn.execute("UPDATE memory SET project = ? WHERE project = ?",
+                                 (c["to"], c["from"]))
+                    conn.execute("UPDATE session SET project = ? WHERE project = ?",
+                                 (c["to"], c["from"]))
+        return {"changes": changes, "applied": bool(apply and changes),
+                "memories": sum(c["memories"] for c in changes),
+                "sessions": sum(c["sessions"] for c in changes)}
+
     def brief(self, *, project: str | None = None, days: int = 7,
               recent_limit: int = 8, salient_limit: int = 10,
               useful_limit: int = 5) -> dict:
@@ -1606,7 +1712,8 @@ class MemoryStore:
         standing knowledge. Gist-only and capped — this is the cheap recall
         that opens every session; detail is always a `show` away."""
         since = (datetime.now() - timedelta(days=days)).isoformat()
-        pw, pp = ("AND m.project = ?", [project]) if project else ("", [])
+        _pc, pp = self._project_clause(project)
+        pw = f"AND {_pc}" if _pc else ""
         recent = [dict(r) for r in self.conn.execute(
             f"""SELECT m.* FROM memory m
                 WHERE m.kind = 'episodic' AND m.event_time >= ? {pw}

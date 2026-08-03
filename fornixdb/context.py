@@ -7,7 +7,13 @@ label or one of the label's aliases — the belongs test itself is set logic in
 or the store's vocabulary, and is host-neutral (pure Python + the store):
 
   - **Aliases** (`config project_aliases`): so fornixdb == engramdb == aimemory,
-    bridging a project's messy historical names.
+    bridging a project's messy historical names. The FIRST label in a group is
+    that project's canonical spelling.
+  - **Canonical labels** (`canonical_project`): one project, one stored spelling.
+    Labels equal under case-folding are the same project — the store's own
+    dominant spelling wins — and an alias group overrides that. Applied on the
+    way IN (so capture can't fragment a project by cwd casing) and to the label
+    a caller filters by (so a query still finds rows written before the fold).
   - **Declarable labels**: the project values + alias labels a user could *name*
     when they say what they're working on. (Topics aren't declarable — many are
     structural like "reference"/"milestone" — but they DO count in the belongs
@@ -43,18 +49,37 @@ def _norm(s: str | None) -> str:
     return (s or "").strip().lower()
 
 
-def alias_groups(store) -> list[set[str]]:
-    """Parse `config project_aliases` into equivalence groups. Lenient format:
-    groups separated by ';' or newlines; labels within a group by '=', ',', or
-    whitespace. e.g. "fornixdb=engramdb,aimemory; videos=archive"."""
+def ordered_alias_groups(store) -> list[list[str]]:
+    """`config project_aliases` as ordered groups, ORIGINAL casing kept. Format:
+    groups separated by ';' or newlines; labels within a group by '=' or ','.
+    e.g. "fornixdb=engramdb,aimemory; videos=archive".
+
+    Whitespace separates nothing — it is part of the label, because project names
+    have spaces in them ("Site Notes"). Splitting on it silently tore that
+    group's third member into two junk labels, so the real one never aliased.
+
+    Order carries meaning: the first label is the group's canonical spelling, and
+    it is the one `canonical_project` rewrites the others to. Duplicates within a
+    group are dropped, first occurrence winning."""
     raw = get_config(store, "project_aliases", "") or ""
-    groups: list[set[str]] = []
+    groups: list[list[str]] = []
     for chunk in re.split(r"[;\n]+", raw):
-        labels = {_norm(x) for x in re.split(r"[=,\s]+", chunk) if x.strip()}
-        labels.discard("")
+        labels: list[str] = []
+        seen: set[str] = set()
+        for x in re.split(r"[=,]+", chunk):
+            lab = x.strip()
+            if lab and _norm(lab) not in seen:
+                seen.add(_norm(lab))
+                labels.append(lab)
         if len(labels) > 1:
             groups.append(labels)
     return groups
+
+
+def alias_groups(store) -> list[set[str]]:
+    """`ordered_alias_groups` as case-folded sets — the membership view used by
+    the belongs test, where order and casing are irrelevant."""
+    return [{_norm(x) for x in g} for g in ordered_alias_groups(store)]
 
 
 def aliases_for(store, label: str) -> set[str]:
@@ -66,6 +91,73 @@ def aliases_for(store, label: str) -> set[str]:
         if l in g:
             out |= g
     out.discard(l)
+    return out
+
+
+def _stored_label_counts(store) -> list[tuple[str, int]]:
+    """Every distinct non-empty project spelling in the store with its row count,
+    ordered most-used first (ties broken alphabetically so the result is stable)."""
+    try:
+        rows = store.conn.execute(
+            "SELECT project, COUNT(*) FROM memory "
+            "WHERE project IS NOT NULL AND project <> '' "
+            "GROUP BY project").fetchall()
+    except Exception:
+        return []
+    return sorted(((p, n) for p, n in rows), key=lambda r: (-r[1], r[0]))
+
+
+def project_canon_map(store) -> dict[str, str]:
+    """Folded label -> the canonical spelling that label should be written as.
+
+    Two sources, config winning: an alias group's FIRST label canonicalizes every
+    other member of the group, and otherwise a project's dominant spelling in the
+    store canonicalizes its own case variants. Only case-folding and owner-declared
+    aliases merge anything — two genuinely different names never collapse on their
+    own, because deciding they mean one project is the owner's call, not ours."""
+    out: dict[str, str] = {}
+    # Dominant stored spelling first, so config can overwrite it below.
+    for label, _n in reversed(_stored_label_counts(store)):
+        out[_norm(label)] = label.strip()
+    for group in ordered_alias_groups(store):
+        canon = group[0].strip()
+        for member in group:
+            out[_norm(member)] = canon
+    return out
+
+
+def canonical_project(store, label: str | None) -> str | None:
+    """The spelling `label` should be stored and queried under. Unknown labels
+    (a project's first memory) canonicalize to themselves, merely trimmed — a new
+    project must not need config to be storable."""
+    if label is None:
+        return None
+    lab = label.strip()
+    if not lab:
+        return lab
+    return project_canon_map(store).get(_norm(lab), lab)
+
+
+def project_equivalents(store, label: str | None) -> list[str]:
+    """Every spelling PRESENT IN THIS STORE that means the same project as
+    `label`, canonical first. This is what a project filter must match on: a store
+    written before the fold — or a read-only peer that will never be rewritten —
+    still holds the old spellings, and a query for one of them must find them all.
+    Returns [label] when nothing else matches, so callers can filter unconditionally."""
+    if label is None:
+        return []
+    lab = label.strip()
+    if not lab:
+        return [lab]
+    canon = canonical_project(store, lab)
+    cmap = project_canon_map(store)
+    out = [canon]
+    for stored, _n in _stored_label_counts(store):
+        s = stored.strip()
+        if cmap.get(_norm(s), s) == canon and s not in out:
+            out.append(s)
+    if lab not in out:          # the caller's own spelling, even if unstored
+        out.append(lab)
     return out
 
 

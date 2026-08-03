@@ -9,6 +9,43 @@ and can change through the day.
 
 ## [Unreleased]
 
+### Added
+- `projects` — the project labels in a store, their row counts, and which of
+  them are spellings of one project. `projects --normalize` proposes the fold
+  and changes nothing; `--apply` writes it. Propose-not-dispose, because
+  deciding two labels mean one project is the owner's call.
+
+### Fixed
+- **One project, one spelling.** Capture takes a memory's project from the
+  host's cwd basename, so the same project fragmented the moment a session ran
+  from a differently-cased or renamed directory. Measured on this machine's
+  store after the 2026-08-03 per-project directory split: 47 rows under
+  `AIMemory` beside 219 `fornixdb` and 19 `FornixDB`, which split one thread
+  three ways in `brief` and hid 66 rows from `--project fornixdb`, since every
+  project filter was an exact, case-sensitive match. Labels are now
+  canonicalized on the way in — at `store()` and `record_session()`, so no
+  writer can reintroduce a variant — and a project filter matches every
+  spelling the store actually holds, so a query still finds rows written
+  before the fold and rows in a read-only peer that will never be rewritten.
+  `brief`'s thread list groups case-insensitively for the same reason. Only
+  case-folding and owner-declared aliases ever merge two labels.
+- **ROADMAP no longer sells a rung that was measured and killed.** The
+  association-gap section still presented model-mediated consolidation
+  ("reasoned dreaming") as "the next achievable rung", with no trace of the
+  2026-08-01 Phase 0 probe that closed it negative — three resident models,
+  180 questions, both bars failed, kill rule honored, feature not built. The
+  section now records the negative and says plainly what follows from it: the
+  work that pays is cross-cutting, measured by referenced-push rate, not
+  climbing. The design doc had been marked CLOSED at the time; the roadmap had
+  not, so a reader was being pointed at building the thing. The probe itself
+  (`examples/reasoned_pairs_probe.py`) is in the tree — the negative is
+  reproducible, not just asserted.
+- `config project_aliases` no longer splits labels on whitespace, which had
+  been silently tearing a multi-word project name ("site notes") into
+  two junk labels so the real one never aliased. Groups separate on `;` or
+  newline, labels on `=` or `,`; the first label in a group is now that
+  project's canonical spelling.
+
 ## [1.1.0] - 2026-08-02
 
 *The thread you can pick back up.* A long-running project already records its

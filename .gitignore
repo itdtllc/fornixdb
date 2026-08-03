@@ -23,5 +23,9 @@ Design/
 # Owner-personal verification guide — keep local, do not publish
 VERIFICATION.md
 
+# Claude Code project guidance — machine paths, store locations, Design/ refs.
+# Keep local, do not publish.
+CLAUDE.md
+
 # Stray logo experiments — the published logo lives in assets/
 Logo/
