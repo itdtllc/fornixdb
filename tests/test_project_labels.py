@@ -51,13 +51,13 @@ class TestAliasParsing(unittest.TestCase):
 
     def test_alias_groups_still_folded_sets(self):
         # The belongs test reads membership only; order and case are irrelevant there.
-        set_config(self.s, "project_aliases", "FornixDB=EngramDB; videos=archive")
+        set_config(self.s, "project_aliases", "FornixDB=EngramDB; studio=archive")
         self.assertIn({"fornixdb", "engramdb"}, context.alias_groups(self.s))
-        self.assertIn({"videos", "archive"}, context.alias_groups(self.s))
+        self.assertIn({"studio", "archive"}, context.alias_groups(self.s))
 
     def test_single_label_group_is_not_a_group(self):
-        set_config(self.s, "project_aliases", "fornixdb; videos=archive")
-        self.assertEqual(context.ordered_alias_groups(self.s), [["videos", "archive"]])
+        set_config(self.s, "project_aliases", "fornixdb; studio=archive")
+        self.assertEqual(context.ordered_alias_groups(self.s), [["studio", "archive"]])
 
     def test_no_config_no_groups(self):
         self.assertEqual(context.ordered_alias_groups(self.s), [])

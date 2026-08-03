@@ -15,8 +15,8 @@ once-per-turn block, so it gates harder.
 PORTABLE BY DESIGN (#276/#332): this module knows nothing about any AI host. It
 takes the evolving-thought text plus an in-memory `Episode` and returns a block
 to inject, or None. Each host wires it to its own inner loop:
-  - a local model you own (a local model): the tool-call loop ticks `pulse()` between
-    reasoning steps — see `Videos/a local model/archive_engram.rhythmic_pulse`;
+  - a local model you own: the tool-call loop ticks `pulse()` between
+    reasoning steps — see that model's own pulse entry point;
   - any other agent: call `pulse()` at its reasoning checkpoints.
 Nothing here is OS-specific; the only host-specific code is the thin caller.
 

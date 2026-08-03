@@ -506,7 +506,7 @@ def use_credit_refresh(store: MemoryStore) -> dict | None:
     ids collide across stores — crediting any OTHER store on the machine writes
     phantom counts onto whatever rows share those numbers (measured live on the
     second store's rows, 2026-07-03, first cross-store dream). No config, no
-    scan: an a local model-style consumer dreams exactly as before. Wire the one store
+    scan: a local-model consumer dreams exactly as before. Wire the one store
     the host injects from with e.g.
     `fornixdb config transcripts_path ~/.claude/projects`.
     `dream_use_credit off` hard-disables regardless. Returns None whenever
@@ -544,7 +544,7 @@ def suppress_refresh(store: MemoryStore) -> dict | None:
     Gated EXACTLY like use_credit_refresh — the id-collision hazard is identical: a
     transcript's `#id`s belong to the one store the host injects from, so the scan
     runs only against this store's `transcripts_path` (env FORNIXDB_TRANSCRIPTS
-    overrides; `off` skips). An a local model-style consumer with no configured path never
+    overrides; `off` skips). A local-model consumer with no configured path never
     suppresses from a foreign transcript. Skipped (returns None) when the feature is
     off (`proactive_suppression off`), the dream hook is off (`dream_suppress off`),
     or there is no existing transcripts path. Never raises: a scan failure must not
@@ -570,7 +570,7 @@ def _markdown_stale_scan(store: MemoryStore) -> list:
     """The markdown↔store staleness correlation (markdown_stale.scan), gated
     like the other dream hooks: `dream_markdown_stale off` disables, and the
     scan needs the bridge's `native_dir` — no configured markdown directory,
-    no scan (an a local model-style consumer dreams exactly as before). Never raises:
+    no scan (a local-model consumer dreams exactly as before). Never raises:
     a malformed markdown file must not kill the dream."""
     if store._setting_off("dream_markdown_stale"):
         return []

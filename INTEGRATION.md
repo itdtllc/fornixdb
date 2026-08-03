@@ -364,7 +364,7 @@ to the model's context.
 
   **Aliases** stitch a project's historical names together so one declaration
   catches them all:
-  `config project_aliases "fornixdb=engramdb,aimemory; videos=archive"`. Groups
+  `config project_aliases "fornixdb=engramdb,aimemory; studio=archive"`. Groups
   separate on `;` or a newline, labels within a group on `=` or `,` — never on
   whitespace, so a project name can have spaces in it. Aliases also become
   declarable names, so "working on engramdb" resolves the group, and the
@@ -428,7 +428,7 @@ a floor a notch above L3, the memory hasn't already surfaced this episode, and
 the per-episode pulse budget isn't spent. Switches: `ingest_mode=explicit` off
 entirely; `config rhythmic_recall off` disables just this. Floor / limit /
 max-chars / max-pulses are per-store config (`rhythmic_recall_*`). Reference
-caller: a local model's tool-loop via `archive_engram.rhythmic_pulse`.
+caller: a local model's tool-loop via its own pulse entry point.
 
 ### Parallel multi-domain activation (L5) — the field (default on since 0.5.0)
 

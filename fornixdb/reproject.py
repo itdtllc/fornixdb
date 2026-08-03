@@ -44,7 +44,7 @@ lets resume continue work working next where left off about into over run ran ne
 def _alias_head(store, label_lc: str) -> str | None:
     """The HEAD of `label_lc`'s alias group as DECLARED in config — the label
     before '=' in "head=alias1,alias2" — so a project keeps its real name
-    (videos, not the alphabetically-first 'archive'). None if it has no group."""
+    (studio, not the alphabetically-first 'archive'). None if it has no group."""
     raw = get_config(store, "project_aliases", "") or ""
     import re
     for chunk in re.split(r"[;\n]+", raw):

@@ -121,7 +121,7 @@ about eight hundred.
   the default is now the same resolution dream's refreshes use — env
   `FORNIXDB_TRANSCRIPTS`, else the store's `transcripts_path` config (with
   the same off-sentinels), else the Claude host default. On a
-  second-consumer store with its own transcript pool (a local model's), the old
+  second-consumer store with its own transcript pool (a second consumer's), the old
   default silently scanned another host's sessions against it — the
   cross-store id-collision mode of the 2026-07-03 phantom-credit bug.
   An explicit `--transcripts` flag always wins.
@@ -1040,7 +1040,7 @@ sessions. All new behavior defaults on and is reversible.
     project name, then sticky for the rest of the session) > the host's working
     directory. Declaration is what makes scoping work when every session runs
     from one directory.
-  - **Aliases** (`config project_aliases "fornixdb=engramdb,aimemory; videos=archive"`)
+  - **Aliases** (`config project_aliases "fornixdb=engramdb,aimemory; studio=archive"`)
     bridge a project's messy historical names so one declaration catches them all.
 - **Usefulness-feedback loop (closes the PUSH side).** A proactively pushed
   memory now accrues a `surfaced_count` (an *impression*) kept strictly separate
@@ -1062,7 +1062,7 @@ sessions. All new behavior defaults on and is reversible.
   portable "metronome" controller that fires many recall pulses within one
   reasoning episode (event-driven debounce, per-episode dedup, a relevance floor
   a notch above the L3 push). Host-neutral; wired into a local model's inner
-  tool-loop (a local model) as the reference caller. Shared the L3 relevance gate +
+  tool-loop of a local model you own as the reference caller. Shared the L3 relevance gate +
   formatter by extracting them into a vendor-neutral `fornixdb.proactive`
   module. Switches: `ingest_mode=explicit` / `config rhythmic_recall off`. Also
   wired as a Claude Code `PostToolUse` hook

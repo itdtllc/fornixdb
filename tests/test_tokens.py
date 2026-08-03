@@ -41,7 +41,7 @@ class TestTokens(unittest.TestCase):
         # limit — it is just a speed bump so tool schemas do not grow SILENTLY;
         # raising it is a conscious act (a new tool must earn its tokens). There
         # is no universal token ceiling: Claude Code has a ~200K context and is
-        # unaffected; local models (a local model 72B, a 14B) care about prefill *cost*,
+        # unaffected; local models (a local 72B, a 14B) care about prefill *cost*,
         # a soft gradient, not a wall; the only true ~4096 cap belongs to a
         # DIFFERENT deployment (Apple on-device Foundation Models in the iOS AI
         # Assistant), and per-deployment caps are handled by `fornixdb tools`

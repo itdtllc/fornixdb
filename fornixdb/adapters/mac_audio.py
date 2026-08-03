@@ -64,7 +64,7 @@ def capture_clip(seconds: float = 8.0, *, device: str = "0",
     proc = runner(
         # -nostdin: with the terminal as its stdin ffmpeg flips it to raw mode
         # for interactive keys and eats keystrokes meant for the caller (froze
-        # a local model's voice loop live 2026-07-10) — recording needs no keyboard.
+        # a local voice loop live 2026-07-10) — recording needs no keyboard.
         ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
          "-f", "avfoundation", "-i", f":{device}",
          "-ac", "1", "-ar", str(sample_rate), "-t", str(seconds), out_path],

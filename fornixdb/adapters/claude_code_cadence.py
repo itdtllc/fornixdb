@@ -7,11 +7,11 @@ memory re-queries on the *current* state and pushes anything newly relevant back
 in to steer the next step.
 
 WHY THIS IS A DELIBERATELY-COARSER L4 (#332/#343): on a host whose reasoning loop
-you own (a local model) the metronome can tick between every reasoning step. Claude Code
+you own, the metronome can tick between every reasoning step. Claude Code
 does NOT expose per-step ticks — the only mid-reasoning seam is the tool-call
 hooks (PreToolUse / PostToolUse). So Claude Code's L4 granularity is per-tool-call,
 not per-thought. It is the honest realization the host's seams allow, sharing the
-SAME portable cadence core as a local model; only this thin edge differs.
+SAME portable cadence core as a local-model edge; only this thin edge differs.
 
 SEAM CHOICE — PostToolUse is primary. The cue that makes a memory relevant usually
 lives in a tool's RESULT (a grep hit, a test failure, a returned value), so we
@@ -21,12 +21,12 @@ PreToolUse is also supported (pulse on the intended call, before it runs) for th
 "recall before you do X" case; wire whichever (or both) you want.
 
 EPISODE STATE ACROSS PROCESSES. Each hook firing is a SEPARATE short-lived
-process, so the in-memory cadence.Episode that a local model keeps for a whole turn does
+process, so the in-memory cadence.Episode that a local-model edge keeps for a whole turn does
 not survive here. We persist it in the store config keyed by session_id and
 reconstruct it each firing. It is reset at the start of each user turn — the L3
 UserPromptSubmit hook bumps a per-session turn counter (see claude_code_recall),
 and a turn change (or, as a standalone fallback when L3 isn't wired, a long idle
-gap) starts a fresh episode so pulse_count/dedup are per-turn, matching a local model.
+gap) starts a fresh episode so pulse_count/dedup are per-turn, matching the local-model edge.
 
 ADDITIVE and gated exactly like L3 (#2/#276): ingest_mode=explicit turns it off;
 `config rhythmic_recall off` turns it off on its own; it only ADDS context.

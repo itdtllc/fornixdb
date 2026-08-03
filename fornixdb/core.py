@@ -82,7 +82,7 @@ REFERENCED_USE_WEIGHT = 1.0    # the unit of floor "uses": one PUSH that was
 PROJECT_MISMATCH_PENALTY = 0.15  # floor bump for an off-context memory on a pulse
 # Topics that tag a memory's SHAPE, not its project — they must not make a memory
 # look "off-context" (a cross-cutting reference tagged only "reference" belongs
-# everywhere). Excluded from the belongs test; domain topics (fornixdb, archive,
+# everywhere). Excluded from the belongs test; domain topics (fornixdb, studio,
 # security, …) still count.
 STRUCTURAL_TOPICS = frozenset({
     "reference", "feedback", "project", "milestone", "distilled", "pickup",
@@ -411,7 +411,7 @@ class MemoryStore:
         # missing-vector backfill, and with the new row already committed the
         # backfill would count it as a gap — embedding it a first time and
         # announcing a heal on every write from a fresh store handle (seen
-        # live 2026-07-10: every a local model sense call printed "embedded 1").
+        # live 2026-07-10: every local-model sense call printed "embedded 1").
         emb = self._resolve_embedder(embedder)
         from .budget import make_room  # lazy: avoids import cycle, free when no budget set
         make_room(self)

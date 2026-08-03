@@ -122,7 +122,7 @@ STORES = {
     "engram": Path.home() / "dev/ITDT/AI/memories/engram.db",
 }
 
-# The three residents, base models — NOT the archive-* persona variants, which
+# The three residents, base models — NOT the persona variants, which
 # carry a personality system prompt that would bias a classification task.
 MODELS = ["qwen2.5:72b-instruct-q4_K_M", "qwen3.5:122b-a10b-q4_K_M", "gpt-oss:120b"]
 

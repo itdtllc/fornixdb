@@ -32,7 +32,7 @@ def _transcripts_source(store, arg):
     matters on a second-consumer store with its own transcript pool: the old
     hardcoded default silently scanned another host's sessions against it —
     the cross-store id-collision mode of the 2026-07-03 phantom-credit bug
-    (hit live on a local model's store, 2026-07-26). An explicit empty string means
+    (hit live on a second-consumer store, 2026-07-26). An explicit empty string means
     "no transcripts" (value's skip) and is passed through as None."""
     if arg is not None:
         return arg or None

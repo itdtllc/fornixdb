@@ -911,7 +911,7 @@ class TestUseCreditRefresh(unittest.TestCase):
     def test_no_pairing_means_no_scan(self):
         # ids collide across stores: a machine's transcripts carry the ids of
         # the store its hooks inject from, so crediting an UNPAIRED store would
-        # write phantom counts (the a local model cross-store pollution, 2026-07-03).
+        # write phantom counts (the cross-store pollution, 2026-07-03).
         # No env, no transcripts_path config -> the refresh must not run.
         mid = self.s.store("an innocent bystander", kind="semantic")
         self._transcript(mid)

@@ -159,7 +159,7 @@ MAX_CHUNKS = 8  # headline + up to 7 detail windows; bounds store growth
 # A sense capture's gist is a bare caption ("acoustic guitar", "whistling") —
 # 1-3 words whose vector structurally can't overlap a long query the way a
 # multi-sentence gist does, so captions sat below the proactive floors on
-# queries they were dead-on for (measured live on a local model's store, 2026-07-18:
+# queries they were dead-on for (measured live on a second-consumer store, 2026-07-18:
 # "acoustic guitar" cos 0.466 vs the 0.50 field floor on a guitar-demo query;
 # "heard: acoustic guitar" 0.588). The row MEANS "I heard X" — embed that.
 _SENSE_PREFIX = {"sight": "saw:", "sound": "heard:", "feel": "felt:"}

@@ -1,6 +1,6 @@
 """_transcripts_source: which transcript pool a push-usefulness CLI command
 reads. The old hardcoded ~/.claude/projects default silently scanned another
-host's sessions against a second-consumer store (a local model's, live 2026-07-26) —
+host's sessions against a second-consumer store (a second consumer's, live 2026-07-26) —
 the cross-store id-collision mode of the 2026-07-03 phantom-credit bug. The
 resolver's precedence is flag > env FORNIXDB_TRANSCRIPTS > the STORE's
 transcripts_path config > the Claude host default, matching dream's refreshes."""
@@ -54,7 +54,7 @@ class TestTranscriptsSource(unittest.TestCase):
             del os.environ["FORNIXDB_TRANSCRIPTS"]
 
     def test_store_config_beats_host_default(self):
-        # the a local model mode: a second-consumer store with its own pool must NEVER
+        # the second-consumer mode: a second-consumer store with its own pool must NEVER
         # default to another host's sessions
         set_config(self.store, "transcripts_path", "/her/own/transcripts")
         self.assertEqual(_transcripts_source(self.store, None),

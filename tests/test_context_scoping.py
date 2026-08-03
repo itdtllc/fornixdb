@@ -23,7 +23,7 @@ class TestAliases(unittest.TestCase):
     def setUp(self):
         self.s = mem_store()
         set_config(self.s, "project_aliases",
-                   "fornixdb=engramdb,aimemory; videos=archive")
+                   "fornixdb=engramdb,aimemory; studio=archive")
 
     def tearDown(self):
         self.s.close()
@@ -31,7 +31,7 @@ class TestAliases(unittest.TestCase):
     def test_groups_parsed(self):
         groups = context.alias_groups(self.s)
         self.assertIn({"fornixdb", "engramdb", "aimemory"}, groups)
-        self.assertIn({"videos", "archive"}, groups)
+        self.assertIn({"studio", "archive"}, groups)
 
     def test_aliases_for_excludes_self_and_is_case_insensitive(self):
         self.assertEqual(context.aliases_for(self.s, "FornixDB"),
@@ -100,7 +100,7 @@ class TestSessionStickiness(unittest.TestCase):
         self.s = mem_store()
         self.s.store("x", name="x", project="fornixdb")
         self.s.store("y", name="y", project="videos")
-        set_config(self.s, "project_aliases", "videos=archive")
+        set_config(self.s, "project_aliases", "studio=archive")
 
     def tearDown(self):
         self.s.close()

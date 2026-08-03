@@ -52,7 +52,7 @@ def _norm(s: str | None) -> str:
 def ordered_alias_groups(store) -> list[list[str]]:
     """`config project_aliases` as ordered groups, ORIGINAL casing kept. Format:
     groups separated by ';' or newlines; labels within a group by '=' or ','.
-    e.g. "fornixdb=engramdb,aimemory; videos=archive".
+    e.g. "fornixdb=engramdb,aimemory; studio=archive".
 
     Whitespace separates nothing — it is part of the label, because project names
     have spaces in them ("Site Notes"). Splitting on it silently tore that
