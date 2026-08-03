@@ -15,6 +15,16 @@ and can change through the day.
   and changes nothing; `--apply` writes it. Propose-not-dispose, because
   deciding two labels mean one project is the owner's call.
 
+### Changed
+- Declaring a project in a prompt now reports its **canonical** name rather
+  than the words typed, so a project has one name however you reach for it —
+  "working on engramdb" resolves to `fornixdb`. Where two labels match at the
+  same position the longest one wins, so a multi-word alias beats a prefix of
+  itself instead of the answer depending on set iteration order. This is what
+  lets an alias carry a spelling a directory name cannot hold: `RAndDLab`
+  is R&D Lab, and `config project_aliases "RAndDLab=R&D,R&D Lab"`
+  makes "pick up the R&D world" resolve it.
+
 ### Fixed
 - **One project, one spelling.** Capture takes a memory's project from the
   host's cwd basename, so the same project fragmented the moment a session ran

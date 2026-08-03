@@ -66,14 +66,18 @@ class TestPromptDetection(unittest.TestCase):
         self.assertEqual(
             context.detect_active_project(self.s, "let's continue the fornixdb project"),
             "fornixdb")
+        # Reported in the project's CANONICAL spelling — the stored one — not
+        # folded and not however the user happened to type it.
         self.assertEqual(
-            context.detect_active_project(self.s, "switch to InventoryApp now"),
-            "inventoryapp")
+            context.detect_active_project(self.s, "switch to inventoryapp now"),
+            "InventoryApp")
 
     def test_alias_name_is_declarable(self):
+        # An alias still declares the project; it resolves to the group's
+        # canonical name rather than reporting the historical one back.
         self.assertEqual(
             context.detect_active_project(self.s, "working on engramdb today"),
-            "engramdb")
+            "fornixdb")
 
     def test_no_cue_means_no_detection(self):
         # a bare mention mid-task must not flip context

@@ -112,6 +112,44 @@ class TestCanonicalProject(unittest.TestCase):
         self.assertEqual(context.canonical_project(self.s, "archive"), "archive")
 
 
+class TestDeclarationResolvesToCanonical(unittest.TestCase):
+    """A project has one name however the user reaches for it."""
+
+    def setUp(self):
+        self.s = mem_store()
+        self.s.store("a note", project="RAndDLab")
+        set_config(self.s, "project_aliases",
+                   "RAndDLab=randlab,R&D,R&D Lab,RnD")
+
+    def tearDown(self):
+        self.s.close()
+
+    def test_ampersand_spelling_resolves(self):
+        # "&" is not usable in a directory name, so the project is stored
+        # RAndDLab — but the owner says "R&D".
+        for prompt in ("pick up the R&D world", "let's work on R&D",
+                       "continue RnD", "back to randlab"):
+            self.assertEqual(context.detect_active_project(self.s, prompt),
+                             "RAndDLab", prompt)
+
+    def test_longest_label_wins_at_the_same_position(self):
+        # "R&D" and "R&D Lab" both match at the same offset; the more
+        # specific one must win rather than set iteration order deciding.
+        self.assertEqual(
+            context.detect_active_project(self.s, "switch to R&D Lab"),
+            "RAndDLab")
+
+    def test_still_needs_a_cue(self):
+        self.assertIsNone(
+            context.detect_active_project(self.s, "the R&D rules mention dragons"))
+
+    def test_earliest_label_still_wins_across_positions(self):
+        self.s.store("b note", project="fornixdb")
+        self.assertEqual(
+            context.detect_active_project(self.s, "switch to fornixdb, not R&D"),
+            "fornixdb")
+
+
 class TestWriteSideFold(unittest.TestCase):
     def setUp(self):
         self.s = mem_store()

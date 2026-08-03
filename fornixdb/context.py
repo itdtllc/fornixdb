@@ -181,19 +181,27 @@ def detect_active_project(store, prompt: str) -> str | None:
     """The project a prompt declares, or None. Requires BOTH a declaration cue
     and a known declarable label so an incidental mention doesn't change context.
     When several labels appear, the earliest in the prompt wins ("switch to
-    videos" → videos)."""
+    videos" → videos); at the same position the LONGEST label wins, so a
+    multi-word alias beats a prefix of itself ("R&D Lab" over "R&D") instead
+    of the answer depending on set iteration order.
+
+    Returns the CANONICAL spelling, not the words typed: a project has one name
+    however the user reaches for it, so declaring "R&D" reports RAndDLab."""
     if not prompt or not _CUE.search(prompt):
         return None
     labels = declarable_labels(store)
     if not labels:
         return None
     low = prompt.lower()
-    best, best_pos = None, None
+    best, best_key = None, None
     for lab in labels:
         m = re.search(r"\b" + re.escape(lab) + r"\b", low)
-        if m and (best_pos is None or m.start() < best_pos):
-            best, best_pos = lab, m.start()
-    return best
+        if not m:
+            continue
+        key = (m.start(), -len(lab))
+        if best_key is None or key < best_key:
+            best, best_key = lab, key
+    return canonical_project(store, best) if best else None
 
 
 def session_active_project(store, session_id: str | None) -> str | None:
