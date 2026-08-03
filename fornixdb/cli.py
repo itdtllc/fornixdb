@@ -296,6 +296,11 @@ def main(argv: list[str] | None = None) -> int:
     hp.add_argument("ref", help="memory id or name")
     hp.add_argument("--no-reinforce", action="store_true")
 
+    lgp = sub.add_parser("lineage", help="how a status memory got here — its "
+                                         "supersede chain, newest first")
+    lgp.add_argument("ref", help="memory id or name (any edition — old or current)")
+    lgp.add_argument("--depth", type=int, default=25, help="max editions to walk")
+
     up = sub.add_parser("supersede", help="newer memory replaces older (older kept, tombstoned)")
     up.add_argument("old_id", type=int)
     up.add_argument("new_id", type=int)
@@ -843,6 +848,15 @@ def _dispatch(p, args, store, stores) -> int:
             b["consolidation"] = consolidate_status(store)
             print(json.dumps(b, indent=2, default=str))
         else:
+            if b.get("threads"):
+                print("--- where threads stand (current status per project; "
+                      "`lineage <id>` walks the arc) ---")
+                for m in b["threads"]:
+                    sid = f"{m['_store']}:{m['id']}" if m.get("_store") else m["id"]
+                    eds = f"{m.get('editions') or 1}{'+' if m.get('editions_capped') else ''}"
+                    print(f"#{sid:<7} {(m['event_time'] or '')[:10]}  "
+                          f"{str(m.get('project') or '-')[:14]:<15} "
+                          f"{(m.get('gist') or '')[:76]}  [{eds} ed.]")
             print(f"--- recent sessions (since {b['since']}) ---")
             _print_rows(b["recent"], False)
             print("--- most salient standing knowledge ---")
@@ -1384,6 +1398,31 @@ def _dispatch(p, args, store, stores) -> int:
             if mem.get("detail"):
                 print("-" * 60)
                 print(mem["detail"])
+
+    elif args.cmd == "lineage":
+        target, ref = resolve_ref(stores, args.ref)
+        chain = target.lineage(ref, depth=args.depth)
+        if not chain:
+            print(f"no memory: {args.ref}", file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps(chain, indent=2, default=str))
+        else:
+            tip = chain[0]
+            print(f"--- lineage of #{tip['id']}"
+                  + (f" ({tip['name']})" if tip.get("name") else "")
+                  + f" — {len(chain)} edition{'s' if len(chain) != 1 else ''}, "
+                    "newest first ---")
+            for m in chain:
+                mark = "*" if m["superseded_time"] is None else " "
+                sib = (f"  (+{m['merged_siblings']} merged)"
+                       if m.get("merged_siblings") else "")
+                print(f" {mark}#{m['id']:<5} {(m['event_time'] or '')[:10]}  "
+                      f"{(m.get('gist') or '')[:96]}{sib}")
+            if len(chain) == args.depth:
+                print(f"--- stopped at --depth {args.depth}; "
+                      "raise it to walk further back ---")
+            print("--- '*' = current edition; `show <id>` for the detail of any of them ---")
 
     elif args.cmd == "supersede":
         try:

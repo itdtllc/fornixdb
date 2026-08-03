@@ -26,6 +26,7 @@ SALIENCE_WEIGHT = 1.0     # how much a salient memory outranks an equally-releva
 RECENCY_WEIGHT = 2.0      # max score bonus for a memory from "right now"
 RECENCY_HALFLIFE_DAYS = 90.0
 REINFORCE_BUMP = 0.05     # salience bump each time detail is recalled
+STATUS_TIP_MAX_EDITIONS = 200  # how far the brief counts back before saying "+"
 HELPFUL_BUMP = 0.15       # salience bump when a memory is explicitly marked
                           # helpful — larger than passive reinforce because an
                           # endorsement is stronger evidence than a mere read
@@ -1269,10 +1270,7 @@ class MemoryStore:
     def show(self, ref: int | str, reinforce: bool = True) -> dict | None:
         """Fetch a single memory (by id or name) with full detail, topics, and
         links. Detail recall reinforces salience — like human memory."""
-        if isinstance(ref, str) and not ref.isdigit():
-            row = self.conn.execute("SELECT * FROM memory WHERE name = ?", (ref,)).fetchone()
-        else:
-            row = self.conn.execute("SELECT * FROM memory WHERE id = ?", (int(ref),)).fetchone()
+        row = self._resolve_row(ref)
         if row is None:
             return None
         mem = dict(row)
@@ -1299,6 +1297,108 @@ class MemoryStore:
         if reinforce:
             self._mark_recalled([mem["id"]], reinforce=True)
         return mem
+
+    def lineage(self, ref: int | str, depth: int = 25) -> list[dict]:
+        """The supersede chain a memory belongs to, newest edition first.
+
+        Hand it ANY edition — the live tip or a tombstoned ancestor — and it
+        walks forward to the current row first, so an old id and a new one
+        return the same chain. Gist-only and capped by design: a project's
+        arc is already recorded as a run of superseded status rows, and
+        reading it as a listing costs a fraction of reconstructing it from
+        detail. Detail stays one `show` away, and cold-tier detail is
+        deliberately not restored here.
+        """
+        row = self._resolve_row(ref)
+        if row is None:
+            return []
+        # forward to the live tip FIRST, and deliberately not bounded by
+        # `depth` — depth caps how many editions are returned, and letting it
+        # stop this leg would report a tombstoned ancestor as the current row.
+        # The `seen` set is the termination guard (a cycle revisits an id).
+        cur, seen = dict(row), set()
+        while cur.get("superseded_by") and cur["id"] not in seen:
+            seen.add(cur["id"])
+            nxt = self.conn.execute(
+                "SELECT * FROM memory WHERE id = ?", (cur["superseded_by"],)).fetchone()
+            if nxt is None:
+                break
+            cur = dict(nxt)
+        chain = []
+        for mid, siblings in self._mainline(cur["id"], depth):
+            row = self.conn.execute(
+                "SELECT * FROM memory WHERE id = ?", (mid,)).fetchone()
+            if row is None:
+                break
+            m = dict(row)
+            m["merged_siblings"] = siblings
+            chain.append(m)
+        # a lineage walk LISTS editions the way `timeline` does — an
+        # impression, not engagement with any one of them
+        self.record_surfaced([m["id"] for m in chain])
+        return chain
+
+    def _mainline(self, tip_id: int, depth: int) -> list[tuple[int, int]]:
+        """Walk one supersede chain back from a tip: [(id, merged_siblings)].
+
+        Shared by `lineage` and `status_tips` on purpose — a chain length
+        quoted in the brief has to be the same number the walk will show, or
+        the brief is advertising an arc that does not exist. More than one row
+        can point at the same successor (a merge); the most recent is the
+        mainline and the rest are counted, never silently dropped.
+        """
+        out, seen = [], {tip_id}
+        cur = tip_id
+        while len(out) < depth:
+            prevs = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM memory WHERE superseded_by = ? "
+                "ORDER BY event_time DESC", (cur,)) if r["id"] not in seen]
+            out.append((cur, max(0, len(prevs) - 1)))
+            if not prevs:
+                break
+            cur = prevs[0]
+            seen.add(cur)
+        return out
+
+    def status_tips(self, *, project: str | None = None,
+                    limit: int = 5) -> list[dict]:
+        """Where each live thread currently stands — one row per project.
+
+        A memory that supersedes another IS a status update, so the live tip
+        of a supersede chain is that thread's current state by construction.
+        This needs no naming convention and no new column; it just reads a
+        structure the store already has. Ranked by how recently the thread
+        moved, because a pickup cares about what is warm, and carrying the
+        chain depth so the reader knows an arc is there to walk.
+        """
+        pw, pp = ("AND m.project = ?", [project]) if project else ("", [])
+        rows = [dict(r) for r in self.conn.execute(
+            f"""WITH tip AS (
+                    SELECT m.* FROM memory m
+                    WHERE m.superseded_time IS NULL AND m.kind != 'episodic'
+                      AND EXISTS (SELECT 1 FROM memory p WHERE p.superseded_by = m.id)
+                      {pw}
+                )
+                SELECT * FROM tip t
+                WHERE t.event_time = (
+                    SELECT max(t2.event_time) FROM tip t2
+                    WHERE t2.project IS t.project)
+                ORDER BY t.event_time DESC LIMIT ?""",
+            [*pp, limit])]
+        for r in rows:
+            chain = self._mainline(r["id"], STATUS_TIP_MAX_EDITIONS)
+            r["editions"] = len(chain)
+            r["editions_capped"] = len(chain) == STATUS_TIP_MAX_EDITIONS
+        self.record_surfaced([r["id"] for r in rows])
+        return rows
+
+    def _resolve_row(self, ref: int | str):
+        """A memory row by id or by name — the lookup `show` and `lineage` share."""
+        if isinstance(ref, str) and not ref.isdigit():
+            return self.conn.execute(
+                "SELECT * FROM memory WHERE name = ?", (ref,)).fetchone()
+        return self.conn.execute(
+            "SELECT * FROM memory WHERE id = ?", (int(ref),)).fetchone()
 
     def _mark_recalled(self, ids: list[int], reinforce: bool) -> None:
         if not ids or self.frozen():  # frozen stores recall without writing
@@ -1533,8 +1633,15 @@ class MemoryStore:
         # it is NOT itself a content recall, so it counts nothing at all (even
         # an impression would let the rollup feed its own noise signal)
         useful = self.top_useful(useful_limit) if useful_limit else []
+        # where live threads stand. This is a RECENCY-of-thread axis, not the
+        # importance axis `salient` ranks on, which is why a resume row at
+        # default salience never reached that list: measured 2026-08-02, the
+        # pointer to the current state of the active project did not make the
+        # top-40 salience pool, so a pickup fell back to re-reading a 42k-token
+        # narrative file that the chain already summarises for ~800.
         return {"since": since[:10], "recent": recent, "salient": salient,
-                "useful": useful}
+                "useful": useful,
+                "threads": self.status_tips(project=project)}
 
     def stats(self) -> dict:
         q = self.conn.execute

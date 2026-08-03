@@ -7,6 +7,10 @@ store/
 # Generated markdown exports are a dump of the personal store — keep local.
 exports/
 
+# Probe/harness outputs quote memory gists VERBATIM out of the live stores —
+# same personal data as the store itself, in a different shape. Keep local.
+examples/_probe/
+
 __pycache__/
 *.pyc
 .DS_Store

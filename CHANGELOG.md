@@ -9,7 +9,32 @@ and can change through the day.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-02
+
+*The thread you can pick back up.* A long-running project already records its
+own history — one status row per session, each superseding the last — and
+nothing had ever walked it, so picking a project back up meant re-reading a
+long prose narrative instead. Measured on a lived-in store: an eighty-five
+edition arc that had cost over forty thousand tokens to read now reads for
+about eight hundred.
+
 ### Added
+- `lineage` — read how a long-running thread got where it is by walking its
+  supersede chain, newest edition first, instead of reconstructing the story
+  from a narrative file. A project that records its state as a run of status
+  rows already carries its own history; nothing had ever walked it. Hand the
+  command any edition, current or tombstoned, and it walks forward to the live
+  tip first, so an old id and a new one return the same chain. Gists only and
+  capped by `--depth`: on a real store an 85-edition arc reads for roughly 800
+  tokens where the equivalent prose ran to over forty thousand.
+- `brief` now opens with **where threads stand** — the current status row of
+  each project, ranked by how recently that thread moved, with the number of
+  editions behind it. A memory that supersedes another *is* a status update, so
+  this reads a structure the store already has rather than needing a naming
+  convention or a new column. It exists because the salience ranking could not
+  do this job: a resume pointer sits at default salience and loses to any
+  long-lived reference row, so the single most useful row for picking a project
+  back up was the one the brief reliably failed to mention.
 - The proactive block now tells an agent, once per session, that the store is
   WRITABLE and how to write to it (the CLI invocation for this store). Without
   it the injected block is the only evidence of FornixDB a host without a
