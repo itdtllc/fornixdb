@@ -9,6 +9,10 @@ and can change through the day.
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-08-04
+
+*Documentation updates.* Wording only — no functional change.
+
 ## [1.2.1] - 2026-08-04
 
 *Runs on your machine, not on ours.* Documentation and example updates.

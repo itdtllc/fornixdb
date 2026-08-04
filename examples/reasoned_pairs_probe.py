@@ -557,12 +557,13 @@ def sample_analogy(store_name: str, rng: random.Random, n: int = 24) -> list[dic
 
 # ------------------------------------------------------------------ model
 
-# Two of the three residents are REASONING models: left to themselves they emit
-# a long hidden chain-of-thought before the JSON, into a `thinking` field this
-# probe never reads. Measured 2026-08-01, that plus Ollama's default 262144-token
-# context put qwen3.5 at ~150s/pair against the 72B's 8.4s/pair — 18x slower, and
-# a projected ~10 hours of saturated GPU for the full three-model run. Both are
-# pinned here so every model answers under the SAME one-shot contract:
+# REASONING models need both of these pinned. Left to themselves they emit a
+# long hidden chain-of-thought before the JSON, into a `thinking` field this
+# probe never reads. Measured 2026-08-01 on a local 100B-class reasoning model,
+# that plus a 262144-token default context cost ~150s/pair against ~8.4s/pair
+# for a same-machine non-reasoning 70B — 18x slower, and a projected ~10 hours
+# of saturated GPU for a full three-model run. Pinned so every model answers
+# under the SAME one-shot contract:
 #   think=False  — no hidden reasoning budget; the JSON contract is the whole task
 #   num_ctx      — prompts are ~500 tokens, so a 262k KV allocation is pure cost
 #                  (a trivial 17-token request measured 18s of prompt-eval alone)
@@ -921,8 +922,8 @@ def main() -> int:
     ap.add_argument("--sample", action="store_true", help="build the strata")
     ap.add_argument("--run", metavar="MODEL",
                     help="ask ONE model (run them one at a time, cooling "
-                         "between; three resident models at once is what made "
-                         "the first attempt a 10-hour GPU burn)")
+                         "between; three large local models at once is what "
+                         "made the first attempt a 10-hour GPU burn)")
     ap.add_argument("--timeit", metavar="MODEL",
                     help="measure s/pair on 3 pairs and project the full run")
     ap.add_argument("--review", action="store_true", help="write the review sheet")

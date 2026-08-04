@@ -93,12 +93,12 @@ the store during dream, it could propose *reasoned* links — "X causes Y",
 inherit richer glue for free, at the only point in the loop where heavyweight
 intelligence is affordable.
 
-A kill rule was written before any run: build iff the best resident model
-reaches ≥50% true-and-useful on causal+principle proposals **and** ≥80%
-correct contradiction triage. The probe is public —
+A kill rule was written before any run: build iff the best model reaches ≥50%
+true-and-useful on causal+principle proposals **and** ≥80% correct
+contradiction triage. The probe is public —
 `examples/reasoned_pairs_probe.py` — and was run over 180 questions against
-two lived-in stores with three resident models (qwen2.5:72b, qwen3.5:122b,
-gpt-oss:120b).
+two lived-in stores with three locally-hosted models in the 70B–120B range,
+two of them reasoning models.
 
 **All three failed both bars.** Best triage was 76% against a ~82%
 always-say-`refines` majority baseline, and causal yield was *zero* — not one
