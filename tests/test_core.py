@@ -48,11 +48,22 @@ class TestRecallHasAnswer(unittest.TestCase):
             [{"vec_cos": 0.0, "raw_cos": 0.001, "kw_rel": 9.26,
               "relevance": 9.26}]))
 
+    def test_hybrid_polysemous_anchor_abstains(self):
+        # regression for the 2026-08-03 'sourdough' leak: a single shared word
+        # used in two unrelated senses ("bake bread" vs baking geometry in a 3-D
+        # tool) cleared the anchor band (kw_rel 8.99) AND dragged the raw cosine
+        # to 0.167 — a static embedder cannot separate the senses, so the
+        # corroboration bar has to sit above the noise the store actually
+        # produces. The leg's real positives sit far higher (0.297+).
+        self.assertFalse(recall_has_answer(
+            [{"vec_cos": 0.0, "raw_cos": 0.167, "kw_rel": 8.99,
+              "relevance": 8.99}]))
+
     def test_hybrid_keyword_anchor_below_band_abstains(self):
         # the calibrated negative band (clear negatives sat < 5.2) stays quiet
-        # even with a corroborating cosine
+        # even with a fully corroborating cosine — kw_rel alone decides here
         self.assertFalse(recall_has_answer(
-            [{"vec_cos": 0.11, "raw_cos": 0.2, "kw_rel": 5.1,
+            [{"vec_cos": 0.11, "raw_cos": 0.30, "kw_rel": 5.1,
               "relevance": 5.2}]))
 
     def test_weak_vector_match_abstains(self):

@@ -143,7 +143,17 @@ RECALL_ANSWER_COS = 0.30  # a real vector match (== the include floor)
 # negatives at cos < 0.12. bm25 magnitudes are store-dependent, so these are
 # provisional like the other constants — tune against the eval fence.
 RECALL_ANSWER_KW_REL = 7.1   # literal-token anchor: calibrated positive band
-RECALL_ANSWER_KW_COS = 0.15  # raw-cosine corroboration for that anchor
+# Raised 0.15 -> 0.22 on 2026-08-03: the 0.15 bar rested on "clear negatives sit
+# at cos < 0.12", and store growth expired that premise. A negative reached raw
+# cosine 0.167 with kw_rel 8.99 ("how do I bake sourdough bread" matched a row
+# about BAKING skeletal meshes to static ones — one shared word, two unrelated
+# senses, which a static embedder cannot tell apart) and leaked through this leg.
+# Re-measured across both live stores: the leg's only golden positive sits at
+# raw 0.297 / kw_rel 18.32, every leg-eligible negative at raw <= 0.167. 0.22
+# splits that gap, leaning toward the positive because false-abstain is the
+# regression this leg was added to fix. Store-dependent like the rest — re-measure
+# it, don't inherit it.
+RECALL_ANSWER_KW_COS = 0.22  # raw-cosine corroboration for that anchor
 # The cosine leg's own corroboration band (2026-07-17, after the reverse leak):
 # best-chunk scoring over long DOCUMENT rows (the markdown bridge ingests whole
 # files; an 8-chunk 9.5KB file was the first) hands each chunk a lottery ticket

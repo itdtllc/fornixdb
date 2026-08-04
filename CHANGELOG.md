@@ -26,6 +26,17 @@ and can change through the day.
   makes "pick up the R&D world" resolve it.
 
 ### Fixed
+- **An out-of-store question no longer gets an answer because one word means
+  two things.** Recall's abstention gate trusts a strong literal-token match
+  whose raw cosine corroborates it, and that corroboration bar was set when
+  clearly-unrelated queries scored below 0.12. A growing store expired that
+  premise: a question about *baking bread* matched a note about *baking*
+  geometry — one shared word in two unrelated senses, which a static embedder
+  cannot separate — and it cleared both halves of the test, so recall claimed
+  to have an answer it did not have. The bar is now measured against what a
+  real store actually produces rather than against the store it was born on.
+  Nothing that legitimately answers a question is affected: the near-miss band
+  this leg exists to rescue sits well clear of the noise.
 - **One project, one spelling.** Capture takes a memory's project from the
   host's cwd basename, so the same project fragmented the moment a session ran
   from a differently-cased or renamed directory. Measured on this machine's
