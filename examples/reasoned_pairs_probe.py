@@ -87,6 +87,12 @@ analogy ("both are a gate that admits only reviewed work") quotes neither
 memory. Analogy claims are entity-grounded instead — every mapped role must
 name something that really appears on its own side.
 
+Point it at your own stores and your own local models before running:
+    export FORNIXDB_PROBE_STORES="main=~/.fornixdb/fornix.db:second=/path/to/other.db"
+    export FORNIXDB_PROBE_MODELS="model-a,model-b"    # base models, not personas
+    export FORNIXDB_PROBE_ENDPOINT="http://localhost:11434/api/chat"
+Unset, it probes this machine's default store with one small local model.
+
 Usage:
     .venv/bin/python examples/reasoned_pairs_probe.py --sample      # strata -> JSON + relabel sheet
       (fill examples/_probe/relabel.json from the sheet BEFORE the first run)
@@ -100,6 +106,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import re
 import sys
@@ -113,20 +120,49 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fornixdb.consolidate import _distinct_pairs  # noqa: E402
 from fornixdb.core import MemoryStore  # noqa: E402
+from fornixdb.db import default_db_path  # noqa: E402
 from fornixdb.vectors import cosine, from_blob  # noqa: E402
 
 OUT_DIR = Path(__file__).resolve().parent / "_probe"
 
-STORES = {
-    "fornix": Path.home() / "dev/ITDT/AIMemory/store/fornix.db",
-    "engram": Path.home() / "dev/ITDT/AI/memories/engram.db",
-}
 
-# The three residents, base models — NOT the persona variants, which
-# carry a personality system prompt that would bias a classification task.
-MODELS = ["qwen2.5:72b-instruct-q4_K_M", "qwen3.5:122b-a10b-q4_K_M", "gpt-oss:120b"]
+def _stores() -> dict[str, Path]:
+    """Stores to probe, from $FORNIXDB_PROBE_STORES as `label=path` entries
+    separated by os.pathsep; a bare path is labelled by its filename stem.
+    Defaults to the store this machine already uses.
 
-OLLAMA = "http://localhost:11434/api/chat"
+    The premise being tested is whether a REAL, LIVED-IN store holds enough
+    reasoned structure to mine, so point this at your own — a synthetic or
+    freshly-seeded store cannot answer the question either way. Two stores of
+    different shape and size are better than one: a result that only holds on
+    the store the probe was written against has not been tested."""
+    spec = os.environ.get("FORNIXDB_PROBE_STORES", "").strip()
+    if not spec:
+        return {"default": Path(default_db_path())}
+    out: dict[str, Path] = {}
+    for entry in spec.split(os.pathsep):
+        entry = entry.strip()
+        if not entry:
+            continue
+        label, sep, path = entry.partition("=")
+        p = Path(path if sep else label).expanduser()
+        out[label if sep else p.stem] = p
+    return out
+
+
+STORES = _stores()
+
+# Local models to ask, from $FORNIXDB_PROBE_MODELS (comma-separated tags for
+# whatever the endpoint below serves). Use BASE models: a persona or character
+# variant carries a personality system prompt that biases a classification task.
+# Ask more than one — the pre-registered rule is about the BEST model, and one
+# model's ceiling is not the premise's.
+MODELS = [m.strip() for m in os.environ.get(
+    "FORNIXDB_PROBE_MODELS", "qwen2.5:7b-instruct").split(",") if m.strip()]
+
+# Any OpenAI-style chat endpoint on a machine you control; default is Ollama's.
+OLLAMA = os.environ.get("FORNIXDB_PROBE_ENDPOINT",
+                        "http://localhost:11434/api/chat")
 
 PER_STRATUM = 20
 TRIAGE_N = 30                  # the objectively-scored stratum: 15 labelled

@@ -38,8 +38,10 @@ class TestSafeFilename(unittest.TestCase):
         self.assertNotIn("#", out)
 
     def test_safe_name_is_left_intact(self):
-        self.assertEqual(_safe_filename("retirement-estimator-notes"),
-                         "retirement-estimator-notes")
+        # a hyphenated multi-word name has nothing to sanitise; it must come
+        # back byte-identical rather than be "cleaned" into something else
+        self.assertEqual(_safe_filename("quarterly-planning-notes"),
+                         "quarterly-planning-notes")
 
     def test_all_unsafe_falls_back(self):
         # nothing usable left -> a stable default, never an empty filename.

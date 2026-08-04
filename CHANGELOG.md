@@ -9,6 +9,19 @@ and can change through the day.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-08-04
+
+*Runs on your machine, not on ours.* Documentation and example updates.
+
+### Changed
+- The reasoned-pairs probe under `examples/` now takes its stores, its models
+  and its endpoint from the environment — `FORNIXDB_PROBE_STORES`,
+  `FORNIXDB_PROBE_MODELS`, `FORNIXDB_PROBE_ENDPOINT` — instead of values fixed
+  in the file, so it runs anywhere without editing it. Unset, it probes this
+  machine's default store with one small local model. The probe asks whether a
+  *real, lived-in* store holds enough reasoned structure to be worth mining, so
+  being able to point it at your own stores is the whole point of it.
+
 ## [1.2.0] - 2026-08-04
 
 *Fast when it's full, honest when it's empty.* At twelve thousand memories a
@@ -98,7 +111,7 @@ question it was never going to be able to answer.
 - **ROADMAP no longer sells a rung that was measured and killed.** The
   association-gap section still presented model-mediated consolidation
   ("reasoned dreaming") as "the next achievable rung", with no trace of the
-  2026-08-01 Phase 0 probe that closed it negative — three resident models,
+  2026-08-01 Phase 0 probe that closed it negative — three local models,
   180 questions, both bars failed, kill rule honored, feature not built. The
   section now records the negative and says plainly what follows from it: the
   work that pays is cross-cutting, measured by referenced-push rate, not
