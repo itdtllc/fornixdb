@@ -8,6 +8,7 @@ import zlib
 # back locally (the env switch only gates the auto path, not explicit embedders).
 os.environ["FORNIXDB_VECTORS"] = "off"
 
+from fornixdb import vectors
 from fornixdb.core import MemoryStore, recall_has_answer
 from fornixdb.db import connect
 from fornixdb.vectors import (backfill, cosine, cosines_for, from_blob,
@@ -406,6 +407,82 @@ class TestVectorsDefaultOn(unittest.TestCase):
         mid = s.store("a vehicle on the road")
         self.assertEqual(self._emb(s, mid), 0)
         self.assertIsNone(s._auto_embedder)
+
+
+class TestScoringPathsAgree(unittest.TestCase):
+    """The numpy fast path must be the pure-Python loop, only quicker.
+
+    Scoring is one matmul per block where numpy imports and the same arithmetic
+    row by row where it does not — and a store built on one machine has to
+    recall identically on the other, so these two paths agreeing is the whole
+    contract. They are compared here rather than trusted: float32 matmul and
+    float64 scalars land ~1e-07 apart, which must not move a ranking.
+    """
+
+    def setUp(self):
+        self.s = mem_store()
+        self.emb = FakeEmbedder()
+        for text in ("a car on the road", "an automobile parked outside",
+                     "the glitch where her eyes sparkled", "a twinkle of light",
+                     "bread baking in a hot oven", "sourdough starter",
+                     "a lighthouse keeper polishes the lantern",
+                     "the vehicle would not start"):
+            self.s.store(text)
+        backfill(self.s, self.emb)
+        self._real = vectors._numpy
+        self.addCleanup(setattr, vectors, "_numpy", self._real)
+        if self._real() is None:
+            self.skipTest("numpy absent — only one scoring path to compare")
+
+    def _both(self, fn):
+        """(numpy result, pure-Python result) for the same call."""
+        vectors._numpy = self._real
+        fast = fn()
+        vectors._numpy = lambda: None
+        slow = fn()
+        vectors._numpy = self._real
+        return fast, slow
+
+    def test_similar_ranks_identically_either_way(self):
+        fast, slow = self._both(
+            lambda: similar(self.s, self.emb, "automobile", limit=8))
+        self.assertEqual([m for m, _ in fast], [m for m, _ in slow])
+        for (_, a), (_, b) in zip(fast, slow):
+            self.assertAlmostEqual(a, b, places=5)
+
+    def test_cosines_for_agrees_either_way(self):
+        ids = [m for m, _ in similar(self.s, self.emb, "car", limit=8)]
+        fast, slow = self._both(
+            lambda: cosines_for(self.s, self.emb, "car", ids))
+        self.assertEqual(set(fast), set(slow))
+        for k in fast:
+            self.assertAlmostEqual(fast[k], slow[k], places=5)
+
+    def test_scores_are_plain_floats(self):
+        # a numpy scalar reads as a float right up until json.dumps
+        fast, _ = self._both(
+            lambda: similar(self.s, self.emb, "car", limit=3))
+        self.assertIs(type(fast[0][1]), float)
+
+    def test_block_boundary_does_not_change_ranking(self):
+        # blocks bound peak memory; a block edge must not be a ranking edge
+        full = similar(self.s, self.emb, "automobile", limit=8)
+        self.addCleanup(setattr, vectors, "_SCORE_BLOCK", vectors._SCORE_BLOCK)
+        vectors._SCORE_BLOCK = 1
+        tiny = similar(self.s, self.emb, "automobile", limit=8)
+        self.assertEqual([m for m, _ in full], [m for m, _ in tiny])
+
+    def test_zero_vector_scores_zero_not_nan(self):
+        # a degenerate embedding must not divide by zero and poison the sort
+        mid = self.s.store("placeholder row")
+        self.s.conn.execute(
+            "INSERT INTO embedding(memory_id, chunk, model, dim, vector) "
+            "VALUES (?,0,?,?,?)", (mid, self.emb.name, DIM, to_blob([0.0] * DIM)))
+        self.s.conn.commit()
+        fast, slow = self._both(
+            lambda: dict(similar(self.s, self.emb, "car", limit=20)))
+        self.assertEqual(fast[mid], 0.0)
+        self.assertEqual(slow[mid], 0.0)
 
 
 if __name__ == "__main__":

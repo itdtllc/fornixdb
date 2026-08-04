@@ -8,9 +8,12 @@ similarity axis: "the glitch where her eyes sparkled" finds the eye-twinkle
 memory with zero keyword overlap.
 
 Vectors are stored as float32 little-endian BLOBs in the `embedding` table.
-Search is exact brute-force cosine — at the few-thousand-memory scale of a hot
-store this is sub-millisecond and avoids any index dependency. An ANN index
-(sqlite-vec) becomes worthwhile only far beyond that; revisit at P3 scale.
+Search is exact brute-force cosine — every chunk scored, no index dependency,
+no approximation. Scoring is one matmul per block where numpy is available and
+the same arithmetic row by row where it is not; measured on a live store of
+24.6k chunks, exact search costs ~21ms, of which ~17ms is reading the blobs out
+of SQLite. An ANN index (sqlite-vec) buys nothing until well past that, and
+costs the exactness; revisit only when the read itself stops being the floor.
 
 Embedder protocol: any object with `.name` (str) and `.embed(texts) ->
 list[list[float]]` works, so other backends (ONNX, llama.cpp, a remote box on
@@ -145,6 +148,96 @@ def cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
+# ------------------------------------------------------- scoring many vectors
+
+def _numpy():
+    """numpy if it imports, else None — the fast path, never a requirement.
+    numpy arrives with model2vec, so in practice it is present exactly when
+    vectors are; but an injected embedder (set_default_embedder) can bring its
+    own backend with no numpy at all, and a store built with vectors must still
+    open on a machine without them. Probed per call: the import is cached by
+    Python, and deciding once at module load would freeze the answer for
+    processes that install numpy later."""
+    try:
+        import numpy
+        return numpy
+    except Exception:
+        return None
+
+
+# Rows are scored in blocks so peak memory stays bounded by the block, not by
+# the store. The old loop held one vector at a time; reading every blob at once
+# would be ~25MB at today's scale and ~700MB at the size the disk budget
+# permits, which is not a trade worth making for a few milliseconds.
+#
+# Changing this constant perturbs the LAST BIT of a cosine (~3e-08, one float32
+# ULP) without changing any ranking: BLAS chooses its accumulation strategy by
+# matrix shape, so a different block size sums the same products in a different
+# order. Verified on the live store — block 7 vs block 8192 gives byte-different
+# scores on 18 of 25 rows and the identical row order. Worth knowing before
+# treating a cosine as reproducible to full precision across machines.
+_SCORE_BLOCK = 8192  # chunks per matmul (~8MB at 256 dims)
+
+
+def _best_by_memory(qvec: list[float], rows) -> dict[int, float]:
+    """memory_id → best cosine over its chunks, for rows of (memory_id, vector).
+
+    A memory scores as its best-matching chunk, so this is where every
+    vector-recall path converges. With numpy the per-block cosines are one
+    matmul; without it, the identical arithmetic one row at a time. The two
+    paths agree to ~6e-08 (float32 matmul vs float64 scalars) and return the
+    same ranking — verified against the live store, top-10 identical.
+
+    Grouping stays a plain dict: a memory has few chunks, and a numpy
+    sort-and-segment measured SLOWER than the dict it would replace."""
+    np = _numpy()
+    best: dict[int, float] = {}
+    block_ids: list[int] = []
+    block_blobs: list[bytes] = []
+
+    def flush() -> None:
+        if not block_blobs:
+            return
+        dim = len(block_blobs[0]) // 4
+        buf = b"".join(block_blobs)
+        if not dim or len(buf) != len(block_blobs) * dim * 4:
+            # ragged: one model reporting two dimensionalities. Shouldn't
+            # happen (rows are filtered by model) but a reshape would raise,
+            # and a scoring path must degrade rather than fail.
+            for mid, blob in zip(block_ids, block_blobs):
+                c = cosine(qvec, from_blob(blob))
+                if c > best.get(mid, -1.0):
+                    best[mid] = c
+            return
+        m = np.frombuffer(buf, dtype="<f4").reshape(len(block_blobs), dim)
+        q = np.asarray(qvec, dtype=np.float32)
+        norms = np.linalg.norm(m, axis=1)
+        norms[norms == 0] = 1.0  # a zero vector scores 0.0, as cosine() gives
+        qn = float(np.linalg.norm(q)) or 1.0
+        # .tolist() and not float(): callers compare and serialize these, and a
+        # numpy scalar leaking into a result row reads as a float until it hits
+        # json.dumps
+        sims = ((m @ q) / (norms * qn)).tolist()
+        for mid, c in zip(block_ids, sims):
+            if c > best.get(mid, -1.0):
+                best[mid] = c
+
+    for r in rows:
+        if np is None:
+            c = cosine(qvec, from_blob(r["vector"]))
+            mid = r["memory_id"]
+            if c > best.get(mid, -1.0):
+                best[mid] = c
+            continue
+        block_ids.append(r["memory_id"])
+        block_blobs.append(r["vector"])
+        if len(block_blobs) >= _SCORE_BLOCK:
+            flush()
+            block_ids, block_blobs = [], []
+    flush()
+    return best
+
+
 # ---------------------------------------------------------------- store ops
 
 # A memory embeds as several chunks: chunk 0 = name + gist (the headline),
@@ -261,15 +354,10 @@ def cosines_for(store, embedder: Embedder, query: str,
         return {}
     qvec = embedder.embed([query])[0]
     ph = ",".join("?" * len(ids))
-    best: dict[int, float] = {}
-    for r in store.conn.execute(
-            f"SELECT e.memory_id, e.vector FROM embedding e "
-            f"WHERE e.model = ? AND e.memory_id IN ({ph})",
-            (embedder.name, *ids)):
-        cos = cosine(qvec, from_blob(r["vector"]))
-        if cos > best.get(r["memory_id"], -1.0):
-            best[r["memory_id"]] = cos
-    return best
+    return _best_by_memory(qvec, store.conn.execute(
+        f"SELECT e.memory_id, e.vector FROM embedding e "
+        f"WHERE e.model = ? AND e.memory_id IN ({ph})",
+        (embedder.name, *ids)))
 
 
 def similar(store, embedder: Embedder, query: str, *, limit: int = 25,
@@ -279,12 +367,8 @@ def similar(store, embedder: Embedder, query: str, *, limit: int = 25,
     qvec = embedder.embed([query])[0]
     where = "" if include_superseded else \
         "JOIN memory m ON m.id = e.memory_id AND m.superseded_time IS NULL"
-    best: dict[int, float] = {}
-    for r in store.conn.execute(
-            f"SELECT e.memory_id, e.vector FROM embedding e {where} WHERE e.model = ?",
-            (embedder.name,)):
-        cos = cosine(qvec, from_blob(r["vector"]))
-        if cos > best.get(r["memory_id"], -1.0):
-            best[r["memory_id"]] = cos
+    best = _best_by_memory(qvec, store.conn.execute(
+        f"SELECT e.memory_id, e.vector FROM embedding e {where} WHERE e.model = ?",
+        (embedder.name,)))
     scored = sorted(best.items(), key=lambda t: t[1], reverse=True)
     return scored[:limit]

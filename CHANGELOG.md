@@ -26,6 +26,18 @@ and can change through the day.
   makes "pick up the R&D world" resolve it.
 
 ### Fixed
+- **Recall on a large store is roughly fourteen times faster, and returns
+  exactly what it returned before.** Similarity search compared the query
+  against every stored vector one at a time in Python. It now compares against
+  a block of them at once where numpy is available — which is wherever the
+  bundled embedder is, since it brings numpy with it — and falls back to the
+  original loop where it is not. On a store of 12,500 memories a recall went
+  from 380ms to 27ms. The search is still exact: every vector is still scored,
+  nothing is approximated or indexed, and the ranking is unchanged (verified
+  case-for-case against the full golden set, and top-25 identical on the live
+  store to within 1e-07). Nothing is cached between calls, so a memory written
+  a moment ago is still visible to the very next recall.
+
 - **Opening a session on a large store is no longer slow.** Every session starts
   with `brief`, which reads where each thread stands by walking supersede chains
   — and the column those walks follow had no index, so each link cost a scan of
