@@ -9,6 +9,17 @@ and can change through the day.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-04
+
+*Fast when it's full, honest when it's empty.* At twelve thousand memories a
+recall cost a third of a second and opening a session cost six tenths of one —
+nearly all of it spent on work that could be done differently rather than done
+less. They now cost 27ms and 18ms, and return exactly what they returned
+before, checked case for case rather than assumed. The other half of this
+release is the opposite failure: recall claiming an answer it did not have,
+because a note in the store happened to share one common word with an everyday
+question it was never going to be able to answer.
+
 ### Added
 - `projects` — the project labels in a store, their row counts, and which of
   them are spellings of one project. `projects --normalize` proposes the fold
