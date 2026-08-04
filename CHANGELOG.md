@@ -26,6 +26,14 @@ and can change through the day.
   makes "pick up the R&D world" resolve it.
 
 ### Fixed
+- **Opening a session on a large store is no longer slow.** Every session starts
+  with `brief`, which reads where each thread stands by walking supersede chains
+  — and the column those walks follow had no index, so each link cost a scan of
+  the whole table and a brief walked fifteen chains. On a store of 12,500
+  memories `brief` took 606ms; it now takes 18ms, for about 100KB of index.
+  `lineage` walks the same chains and gets the same speedup. Existing stores
+  pick the index up on the next open, with no migration step and nothing to run.
+
 - **Everyday questions your memory has no business answering now get an honest
   "nothing relevant".** Asked how tall a mountain is, how long to boil an egg,
   or how to renew a passport, recall could still claim it had an answer —

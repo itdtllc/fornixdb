@@ -11,7 +11,7 @@ tombstoned ancestor as the current row, and dropping a merged branch.
 import unittest
 
 from fornixdb.core import MemoryStore
-from fornixdb.db import connect
+from fornixdb.db import _setup, connect
 
 
 def mem_store():
@@ -167,6 +167,30 @@ class TestStatusTips(unittest.TestCase):
     def test_brief_carries_threads(self):
         self._chain("alpha", 2, 1)
         self.assertTrue(self.s.brief()["threads"])
+
+    def test_supersede_walk_is_indexed_not_scanned(self):
+        # _mainline follows the chain one link at a time, so an unindexed
+        # superseded_by costs a full table scan PER LINK — and status_tips()
+        # walks 15 chains on every brief(). Measured at 12.5k rows, the index
+        # takes brief(days=7) from 606ms to 18ms. A plan test rather than a
+        # timing test: on a small fixture the scan is fast enough to pass.
+        plan = [r[3] for r in self.s.conn.execute(
+            "EXPLAIN QUERY PLAN SELECT id FROM memory WHERE superseded_by = ? "
+            "ORDER BY event_time DESC", (1,))]
+        self.assertTrue(any("idx_memory_superseded_by" in step for step in plan),
+                        f"supersede walk is not using the index: {plan}")
+
+    def test_index_reaches_a_store_that_predates_it(self):
+        # the index lives in _SCHEMA as CREATE ... IF NOT EXISTS, which the
+        # schema script runs unconditionally on EVERY connect — so an existing
+        # store gains it with no SCHEMA_VERSION bump and no migration. If that
+        # ever stops being true, old stores silently keep the slow scan.
+        self.s.conn.execute("DROP INDEX idx_memory_superseded_by")
+        self.s.conn.commit()
+        _setup(self.s.conn)
+        self.assertTrue(self.s.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' "
+            "AND name='idx_memory_superseded_by'").fetchone())
 
 
 if __name__ == "__main__":
