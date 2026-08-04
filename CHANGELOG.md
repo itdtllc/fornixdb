@@ -26,6 +26,20 @@ and can change through the day.
   makes "pick up the R&D world" resolve it.
 
 ### Fixed
+- **Everyday questions your memory has no business answering now get an honest
+  "nothing relevant".** Asked how tall a mountain is, how long to boil an egg,
+  or how to renew a passport, recall could still claim it had an answer —
+  because a note in the store happened to reuse one common word from the
+  question. Every signal the abstention gate had was a *magnitude*, and a
+  magnitude cannot separate "this answers the question" from "this contains
+  that word": one accidental word in a short note outweighs several real ones
+  in a long note. So the gate now also counts how many distinct meaningful
+  words the question and the candidate answer actually agree on, because a real
+  answer agrees about several things and a coincidence agrees about one. A
+  sweep of twenty ordinary out-of-store questions leaked six before this and
+  none after, on two stores of different shape and size, with no question that
+  the store *can* answer falling silent. Unlike the score thresholds beside it,
+  a count does not drift as a store grows.
 - **An out-of-store question no longer gets an answer because one word means
   two things.** Recall's abstention gate trusts a strong literal-token match
   whose raw cosine corroborates it, and that corroboration bar was set when

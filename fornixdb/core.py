@@ -165,6 +165,19 @@ RECALL_ANSWER_KW_COS = 0.22  # raw-cosine corroboration for that anchor
 # [COS, COS_STRONG) it needs a pinch of the other signal.
 RECALL_ANSWER_COS_STRONG = 0.40  # cosine alone suffices above this
 RECALL_ANSWER_COS_KW = 3.0       # minimal keyword corroboration in the band
+# ...and the count that magnitude alone could not supply (2026-08-03). Both weak
+# legs below rest on MAGNITUDES (bm25 sum, cosine), and one accidentally-shared
+# word in a short row can clear any magnitude floor that still admits real
+# answers. A sweep of twenty ordinary out-of-store questions leaked six of them
+# through the two weak legs — household repair, geography, sport, cooking — each
+# on a SINGLE common word. Measured on both live stores: real answers decided by
+# a weak leg share 3-7 distinct content words with the query, noise shares 0-1.
+# Nothing sat at 2. So the weak legs also ask what a magnitude cannot answer —
+# how many DISTINCT things do the query and the hit agree on? — because a real
+# answer agrees about several and noise agrees about one. A count does not scale
+# with store size or row length, which is exactly the portability the bm25 floors
+# beside it lack. 2 sits in the measured gap and leans toward answering.
+RECALL_ANSWER_MIN_TERMS = 2      # distinct shared content words, both weak legs
 # Unsolicited PUSH needs a higher bar than an explicit PULL. When the user asks
 # (recall_memory), surfacing a weak 0.30 match is acceptable — they invited it.
 # When memory injects itself every turn (proactive recall), that same 0.30 floor
@@ -185,6 +198,50 @@ PROACTIVE_RECALL_COS = 0.45
 # remains stricter than L3. Per-store override: meta rhythmic_recall_floor.
 RHYTHMIC_RECALL_COS = 0.50
 
+# Function words carry no topic, so sharing one is not agreement ABOUT anything —
+# they are excluded when counting how much a query and a hit really have in common.
+# English-only and deliberately short: this is a noise filter, not linguistics, and
+# a word wrongly left in costs at most one point of a count that needs two. FTS5's
+# own tokenizer does no stopping, so the list lives here rather than in the schema.
+_STOPWORDS = frozenset("""
+a an the is are was were be been being am do does did doing done have has had having
+how what when where why who whom which that this these those there here can could
+should would will shall may might must i you he she it we they me him her us them my
+your his its our their mine yours hers ours theirs of to in on for with from by at as
+and or but if then than so not no nor yes about into over under out up down off again
+more most some any all each every both few other another new own same too very just
+only also even still much many such get gets got make makes made use uses used using
+go goes going come comes came know knows knew think thinks want wants need needs
+""".split())
+
+
+def _content_terms(text: str) -> list[str]:
+    """Topic-bearing words of `text`, lowercased and de-duplicated in order.
+    Two-character and shorter tokens go with the stopwords: they are overwhelmingly
+    function words or fragments, and keeping them would let 'do'/'go'-style noise
+    count as agreement."""
+    seen = {}
+    for w in re.findall(r"[a-z0-9]+", (text or "").lower()):
+        if len(w) > 2 and w not in _STOPWORDS:
+            seen[w] = None
+    return list(seen)
+
+
+def shared_term_count(query: str, row: dict) -> int:
+    """How many DISTINCT content words the query and a recalled row agree on.
+
+    The question bm25 cannot answer. A relevance score is a magnitude: one
+    accidentally-shared word in a short row can outscore several genuinely-shared
+    words in a long one, so magnitude alone cannot tell "this answers the question"
+    from "this happens to contain that word". A count can, because a real answer
+    agrees with its question about several things and noise agrees about one.
+    Unlike bm25 it does not scale with store size or document length."""
+    if not query:
+        return 0
+    hit = set(_content_terms((row.get("gist") or "") + " "
+                             + (row.get("detail") or "")))
+    return sum(1 for w in _content_terms(query) if w in hit)
+
 
 def recall_has_answer(rows: list[dict]) -> bool:
     """True if recall's best hit is a real match; False if the store has
@@ -201,7 +258,13 @@ def recall_has_answer(rows: list[dict]) -> bool:
     recall the same literal anchor deserves the same trust: a top hit whose
     pre-blend keyword relevance clears the calibrated positive band
     (RECALL_ANSWER_KW_REL) is a real match even when its cosine is weak —
-    otherwise turning vectors ON makes a keyword-answerable question abstain."""
+    otherwise turning vectors ON makes a keyword-answerable question abstain.
+
+    Inside the weak-cosine floor band the gate also counts SHARED CONTENT WORDS
+    (`shared_terms`, set by recall()). Every other signal here is a magnitude, and
+    magnitudes cannot separate "answers the question" from "happens to contain
+    that word" — a single common word in a short row clears any floor that still
+    admits real answers. Agreement about several distinct things can."""
     if not rows:
         return False
     top = rows[0]
@@ -213,13 +276,26 @@ def recall_has_answer(rows: list[dict]) -> bool:
     if vc >= RECALL_ANSWER_COS:
         # floor band: a real match here shares at least a little literal
         # vocabulary with the query; a deep-chunk cosine brush does not
-        return float(top.get("kw_rel") or 0.0) >= RECALL_ANSWER_COS_KW
+        if float(top.get("kw_rel") or 0.0) < RECALL_ANSWER_COS_KW:
+            return False
+        return _agrees_enough(top)
     # hybrid keyword anchor: a strong literal-token match whose raw (unfloored)
     # cosine corroborates it — semantically-unrelated common-token overlap
     # (raw cosine ~0) stays abstained no matter how big its bm25 sum
     raw = float(top.get("raw_cos", top["vec_cos"]) or 0.0)
-    return (float(top.get("kw_rel") or 0.0) >= RECALL_ANSWER_KW_REL
-            and raw >= RECALL_ANSWER_KW_COS)
+    if (float(top.get("kw_rel") or 0.0) < RECALL_ANSWER_KW_REL
+            or raw < RECALL_ANSWER_KW_COS):
+        return False
+    return _agrees_enough(top)
+
+
+def _agrees_enough(top: dict) -> bool:
+    """Does the top hit agree with the query about SEVERAL things, not one word?
+    The shared check both weak legs end on. Absent means UNMEASURED, not zero —
+    a row built by something other than recall() never had a query to measure
+    against, and must keep the pre-2026-08-03 behavior rather than abstain."""
+    terms = top.get("shared_terms")
+    return terms is None or int(terms) >= RECALL_ANSWER_MIN_TERMS
 
 # Negative feedback (explicit mark_irrelevant, query-conditional penalty; shipped
 # 2026-06-12). When the current query is similar to a query a
@@ -890,6 +966,11 @@ class MemoryStore:
         now = datetime.now()
         for r in rows:
             r["stale_days"] = self.stale_days(r, now)
+            # Set on EVERY path — keyword-only, hybrid and exact-name alike — so
+            # the field means "measured, and this is the answer" wherever a row
+            # comes from. A field that exists on only some paths reads as 0 on
+            # the others, and 0 is exactly the value that makes the gate abstain.
+            r["shared_terms"] = shared_term_count(query, r)
         if related:
             self._attach_neighbors(rows)
         if count_recall:

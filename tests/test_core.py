@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta
 
-from fornixdb.core import MemoryStore, recall_has_answer
+from fornixdb.core import MemoryStore, recall_has_answer, shared_term_count
 from fornixdb.db import connect
 
 
@@ -82,6 +82,29 @@ class TestRecallHasAnswer(unittest.TestCase):
         # the real near-floor positives all share some query vocabulary
         # (golden-set minimum kw_rel 3.54) — a pinch of the other signal
         # keeps them answered
+        self.assertTrue(recall_has_answer(
+            [{"vec_cos": 0.335, "kw_rel": 3.54, "relevance": 3.6}]))
+
+    def test_floor_band_single_shared_word_abstains(self):
+        # regression for the 2026-08-03 sweep: ordinary out-of-store questions
+        # leaked through the floor band on ONE accidentally-shared common word,
+        # with a bm25 magnitude well over the floor. Measured on a live store,
+        # real answers in this band share 3-7 content words and noise shares 0-1.
+        self.assertFalse(recall_has_answer(
+            [{"vec_cos": 0.354, "kw_rel": 7.46, "shared_terms": 1,
+              "relevance": 7.5}]))
+
+    def test_floor_band_several_shared_words_is_answer(self):
+        # the same band, same magnitude — agreement about several distinct
+        # things is what makes it an answer
+        self.assertTrue(recall_has_answer(
+            [{"vec_cos": 0.354, "kw_rel": 7.46, "shared_terms": 3,
+              "relevance": 7.5}]))
+
+    def test_floor_band_unmeasured_shared_terms_keeps_old_behavior(self):
+        # a row built by something other than recall() has no query to measure
+        # against; absent must mean unmeasured, not zero, or such a caller would
+        # abstain on every floor-band hit
         self.assertTrue(recall_has_answer(
             [{"vec_cos": 0.335, "kw_rel": 3.54, "relevance": 3.6}]))
 
@@ -225,3 +248,45 @@ class TestStoreRecall(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSharedTermCount(unittest.TestCase):
+    """Counting agreement, the signal bm25 magnitude cannot supply."""
+
+    def test_counts_distinct_content_words_only(self):
+        row = {"gist": "Baking a loaf of bread needs a hot oven",
+               "detail": "Sourdough starter takes a week."}
+        # 'bread' and 'baking' agree; 'how', 'do', 'the' are function words
+        self.assertEqual(shared_term_count("how do I bake the bread", row), 1)
+        self.assertEqual(shared_term_count("sourdough bread recipe", row), 2)
+
+    def test_repeated_word_counts_once(self):
+        row = {"gist": "harbor harbor harbor", "detail": "harbor"}
+        self.assertEqual(shared_term_count("harbor harbor harbor", row), 1)
+
+    def test_function_words_are_not_agreement(self):
+        # the failure this exists to catch: two texts about nothing in common
+        # still share plenty of grammar
+        row = {"gist": "How do I get to the station from here", "detail": ""}
+        self.assertEqual(shared_term_count("how do I get to the airport", row), 0)
+
+    def test_short_tokens_ignored(self):
+        row = {"gist": "an ox in a bin", "detail": ""}
+        self.assertEqual(shared_term_count("the ox and the bin", row), 1)  # 'bin' only
+
+    def test_detail_counts_toward_agreement(self):
+        row = {"gist": "a lighthouse", "detail": "keeper polishes the lantern"}
+        self.assertEqual(shared_term_count("lantern keeper", row), 2)
+
+    def test_empty_query_or_row_is_zero(self):
+        self.assertEqual(shared_term_count("", {"gist": "anything"}), 0)
+        self.assertEqual(shared_term_count("anything", {}), 0)
+
+    def test_measured_end_to_end_by_recall(self):
+        # recall() must attach the count, or the gate silently degrades to its
+        # pre-2026-08-03 behavior on every row
+        s = mem_store()
+        s.store("the lighthouse keeper polishes the lantern each evening")
+        rows = s.recall("lighthouse keeper", count_recall=False)
+        self.assertTrue(rows)
+        self.assertEqual(rows[0].get("shared_terms"), 2)
