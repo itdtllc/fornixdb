@@ -4,8 +4,10 @@ signals into a single summary so any session can answer it in one call:
   COST  — tokens.report: fixed per-session + per-call footprint.
   REACH — benefit.coverage: how much of the store the flat markdown can't give
           (optional; needs the host's memory files).
-  USED  — usefulness_scan: referenced-push rate from the host's transcripts —
-          the honest "did pushed memory actually get used" signal (optional).
+  USED  — usefulness_scan: reference rate from the host's transcripts, for BOTH
+          channels — memories FornixDB pushed and memories the agent pulled
+          for itself — the honest "did memory actually get used" signal, with
+          the cost each channel paid per use (optional).
 
 Read-only; wraps existing functions, adds no schema or ranking behavior. REACH
 and USED are optional so it still answers on any store / air-gapped endpoint.
@@ -41,6 +43,10 @@ def report(store, *, transcripts: str | None = None,
                        "referenced": s["referenced"],
                        "reference_rate": s["reference_rate"],
                        "injected_tokens": s.get("injected_tokens", 0),
+                       "pull_impressions": s.get("pull_impressions", 0),
+                       "pull_referenced": s.get("pull_referenced", 0),
+                       "pull_rate": s.get("pull_rate", 0.0),
+                       "pulled_tokens": s.get("pulled_tokens", 0),
                        "by_channel": s.get("by_channel", {})}
         if s["sessions"]:
             out["net"] = _net(out["cost"], s)
@@ -50,10 +56,18 @@ def report(store, *, transcripts: str | None = None,
 def _net(cost: dict, scan: dict) -> dict:
     """Net tokens/session = assumed savings − measured cost.
 
-    Cost side is measured: the fixed integration surfaces plus the actual
-    injected push blocks found in the transcripts. Savings side is the
-    REDERIVE_TOKENS assumption band applied to the measured count of pushes
-    that were actually referenced downstream.
+    Cost side is measured: the fixed integration surfaces, the injected push
+    blocks, and the results of the agent's own pulls — all three found in the
+    transcripts. Savings side is the REDERIVE_TOKENS assumption band applied to
+    the measured count of deliveries actually referenced downstream, from EITHER
+    channel.
+
+    Both channels or neither. Counting push cost but not pull cost, and push
+    benefit but not pull benefit, half-counted both sides and let the verdict
+    rest on the more expensive, less-referenced channel — while three quarters
+    of the demonstrated value sat outside the frame. A pull is cheaper per use
+    (paid only when asked for) but it is not free, and it earns references at
+    roughly twice the rate, so both belong in the same sum.
 
     Both sides are CONTEXT-SPACE figures — each token counted once. The host
     re-reads everything on every API request (token-turns), so a usage panel
@@ -64,19 +78,30 @@ def _net(cost: dict, scan: dict) -> dict:
     sess = scan["sessions"]
     fixed = cost["fixed_per_session"]["total_tokens"]
     push_ps = round(scan.get("injected_tokens", 0) / sess)
+    pull_ps = round(scan.get("pulled_tokens", 0) / sess)
     refs_ps = scan["referenced"] / sess
+    pull_refs_ps = scan.get("pull_referenced", 0) / sess
+    used_ps = refs_ps + pull_refs_ps
+    total_cost = fixed + push_ps + pull_ps
+    bc = scan.get("by_channel") or {}
     return {
         "sessions_scanned": sess,
         "measured_cost_per_session": {"fixed_surfaces": fixed,
                                       "injected_pushes": push_ps,
-                                      "total": fixed + push_ps},
+                                      "pull_results": pull_ps,
+                                      "total": total_cost},
         "referenced_pushes_per_session": round(refs_ps, 2),
+        "referenced_pulls_per_session": round(pull_refs_ps, 2),
+        "referenced_per_session": round(used_ps, 2),
+        # what a downstream reference cost on each channel — the like-for-like
+        # comparison between paying up front (push) and paying on demand (pull)
+        "tokens_per_reference_by_channel": {
+            ch: c.get("tokens_per_reference") for ch, c in sorted(bc.items())},
         "assumed_tokens_saved_per_referenced_push": dict(REDERIVE_TOKENS),
         "net_tokens_per_session": {
-            k: round(refs_ps * v) - (fixed + push_ps)
+            k: round(used_ps * v) - total_cost
             for k, v in REDERIVE_TOKENS.items()},
-        "not_counted": ("explicit pull results (recall/brief/show — see per_call "
-                        "cost); session-end auto-capture costs 0 prompt tokens "
+        "not_counted": ("session-end auto-capture costs 0 prompt tokens "
                         "(post-session OS process); timeline answers have no "
                         "re-derivation path, so their value exceeds any token "
                         "count"),
@@ -110,14 +135,27 @@ def format_report(r: dict) -> str:
                f"{cps['fixed_surfaces']:,} fixed surfaces"
                + (f" ({schemas.get('tools')} tool schemas + instructions + "
                   f"startup)" if schemas else "")
-               + f" + {cps['injected_pushes']:,} injected push blocks",
-               f"    use/session (measured)     {net['referenced_pushes_per_session']} "
-               f"pushes referenced downstream",
+               + f" + {cps['injected_pushes']:,} injected push blocks"
+               + f" + {cps.get('pull_results', 0):,} pull results",
+               f"    use/session (measured)     "
+               f"{net.get('referenced_per_session', 0)} deliveries referenced "
+               f"downstream ({net['referenced_pushes_per_session']} pushed, "
+               f"{net.get('referenced_pulls_per_session', 0)} pulled)",
                f"    saving/reference (ASSUMED) {band['low']:,} / {band['mid']:,} / "
                f"{band['high']:,} tokens (low/mid/high) — the re-derivation or "
                "re-explaining one referenced push replaces; printed, not measured",
                f"    net = use × assumption − cost; a true measured savings "
-               "number is impossible (no without-memory session to compare).",
+               "number is impossible (no without-memory session to compare)."]
+        tpr = net.get("tokens_per_reference_by_channel") or {}
+        priced = {c: v for c, v in tpr.items() if v}
+        if priced:
+            out.append("    cost per reference, by channel (lower is better — "
+                       "L1 is the agent asking, L3/L4/L5 are FornixDB offering):")
+            for ch, v in sorted(priced.items(), key=lambda kv: kv[1]):
+                how = "pulled" if ch == "L1" else "pushed"
+                out.append(f"      {ch}  ~{v:,} tokens per downstream "
+                           f"reference ({how})")
+        out += [
                "    units: context-space, each token counted ONCE. Hosts re-read "
                "context every API request, so usage panels show ~30-150x these "
                "figures — on both sides equally (`fornixdb tokens --billed` "
@@ -155,8 +193,11 @@ def format_report(r: dict) -> str:
         chans = " ".join(f"{k} {v.get('reference_rate', 0):.0%}"
                          for k, v in sorted(bc.items()))
         out.append(f"  USED  ~ {used['reference_rate']:.0%} of proactive pushes "
-                   f"referenced downstream ({chans}) over {used['sessions']} "
-                   f"sessions — the honest 'did memory help' signal.")
+                   f"and {used.get('pull_rate', 0):.0%} of explicit pulls "
+                   f"referenced downstream over {used['sessions']} sessions — "
+                   f"the honest 'did memory help' signal.")
+        out.append(f"          by channel: {chans}   "
+                   "(L1 = the agent asking; L3/L4/L5 = FornixDB offering)")
     else:
         out.append("  USED    (no injected blocks found in transcripts)")
 

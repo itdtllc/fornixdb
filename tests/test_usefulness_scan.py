@@ -10,29 +10,37 @@ from fornixdb import usefulness_scan as us
 
 
 class TestAttribute(unittest.TestCase):
+    """Push attribution. Per-memory rows also carry the pull tallies (see
+    test_pull_channel.py), so these assert the PUSH fields rather than the whole
+    row — the counts are the contract, the dict's shape is not."""
+
+    def assertPush(self, row, impressions, referenced):
+        self.assertEqual((row["impressions"], row["referenced"]),
+                         (impressions, referenced))
+
     def test_push_then_cite_is_referenced(self):
         events = [("push", {36, 99}, "UserPromptSubmit"), ("cite", {36}, None)]
         t, _ = us.attribute(events)
-        self.assertEqual(t[36], {"impressions": 1, "referenced": 1})
-        self.assertEqual(t[99], {"impressions": 1, "referenced": 0})  # never cited
+        self.assertPush(t[36], 1, 1)
+        self.assertPush(t[99], 1, 0)                       # never cited
 
     def test_cite_before_push_does_not_count(self):
         # a citation with no preceding push (e.g. an explicit show/pull) is no credit
         t, _ = us.attribute([("cite", {7}, None), ("push", {7}, "UserPromptSubmit")])
-        self.assertEqual(t[7], {"impressions": 1, "referenced": 0})
+        self.assertPush(t[7], 1, 0)
 
     def test_repush_without_citation_is_ignored(self):
         # pushed, pushed again (first injection went unused), then cited once:
         # two impressions, one referenced (only the latest injection is credited)
         t, _ = us.attribute([("push", {5}, "UserPromptSubmit"),
                              ("push", {5}, "PostToolUse"), ("cite", {5}, None)])
-        self.assertEqual(t[5], {"impressions": 2, "referenced": 1})
+        self.assertPush(t[5], 2, 1)
 
     def test_one_citation_credits_one_injection(self):
         t, _ = us.attribute([("push", {5}, "UserPromptSubmit"),
                              ("cite", {5}, None), ("cite", {5}, None)])
         # second citation has nothing pending -> still just one referenced
-        self.assertEqual(t[5], {"impressions": 1, "referenced": 1})
+        self.assertPush(t[5], 1, 1)
 
     def test_citation_credited_to_the_injecting_channel(self):
         # L3 pushed and cited; L4 pushed and never cited -> per-channel split

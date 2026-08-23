@@ -28,7 +28,8 @@ from .adapters.mcp_server import TOOLS, active_tools
 from .adapters.native_memory import auto_background_enabled, ingest_mode, native_dir
 from .budget import DEFAULT_POLICY, status as budget_status
 from .db import (DEFAULT_MACHINE_CAP_DISK_FRACTION, DEFAULT_MACHINE_CAP_MAX_MB,
-                 SCHEMA_VERSION, default_db_path)
+                 SCHEMA_VERSION, SESSION_SCOPED_META_PREFIXES,
+                 default_db_path)
 from .multistore import capture_mode, get_config, set_config
 from .tokens import estimate_tokens
 
@@ -189,6 +190,10 @@ def host_hook_status(paths=DEFAULT_HOST_SETTINGS) -> list[dict]:
 # set_config side-effect handlers (the machine-budget family).
 _INDIRECT_CONFIG_READERS = frozenset({
     "frozen", "mcp_tools_disabled",
+    # the enabled-tools twin of mcp_tools_disabled, read via _TOOLS_ENABLED_KEY
+    # (mcp_server), and the reproject undo journal, read via UNDO_KEY
+    # (reproject) — both named constants the literal scan cannot see
+    "mcp_tools_enabled", "reproject_undo",
     "machine_budget_mb", "machine_budget_policy", "machine_budget_defaulted",
     # read by db.connect()/_setup() with raw SQL — the meta table is consulted
     # before the higher-level config helpers are importable at open time
@@ -199,8 +204,9 @@ _INDIRECT_CONFIG_READERS = frozenset({
 })
 # Per-entity dynamic keys (prefix + session-id / kind), read via helper-built
 # names or a `LIKE` scan — recognized by prefix, never flagged.
-_CONFIG_READ_PREFIXES = ("decay_", "active_project_session_", "cadence_turn_",
-                         "cadence_episode_", "proactive_injected_")
+# "decay_" is per-KIND and durable; the rest are per-session and collectable,
+# so they come from the one list the meta GC also works from.
+_CONFIG_READ_PREFIXES = ("decay_",) + SESSION_SCOPED_META_PREFIXES
 _READER_RE = re.compile(
     r'(?:get_config\([^,]+,\s*|_setting_off\()"([a-z_][a-z0-9_]*)"')
 

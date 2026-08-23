@@ -121,3 +121,43 @@ class TestDiagnose(_FileStoreCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestConfigIntegrityScannerGaps(_FileStoreCase):
+    """Keys that ARE read, but not by a literal get_config("name") call — the
+    scanner has to be told about each one or it reports a healthy store as sick.
+    Every warning on the live store was one of these: 37 of them, all false.
+    """
+
+    def _flagged(self):
+        import re
+        return {m.group(1) for m in
+                (re.search(r"config '([^']+)'", r["msg"])
+                 for r in doctor.config_integrity(self.s)) if m}
+
+    def test_per_session_writeback_key_is_not_flagged(self):
+        # built by proactive._writeback_key(session_id), so the literal scan
+        # cannot see it — and one lands per session, forever
+        set_config(self.s, "writeback_hint_shown_abc-123", "1")
+        self.assertNotIn("writeback_hint_shown_abc-123", self._flagged())
+
+    def test_keys_read_through_a_named_constant_are_not_flagged(self):
+        # mcp_server._TOOLS_ENABLED_KEY and reproject.UNDO_KEY
+        set_config(self.s, "mcp_tools_enabled", "see_image")
+        set_config(self.s, "reproject_undo", "[]")
+        flagged = self._flagged()
+        self.assertNotIn("mcp_tools_enabled", flagged)
+        self.assertNotIn("reproject_undo", flagged)
+
+    def test_a_genuinely_unread_key_is_still_flagged(self):
+        # the check must still do its job — this is the bug class it exists for
+        set_config(self.s, "prooactive_recall", "on")     # typo, nothing reads it
+        self.assertIn("prooactive_recall", self._flagged())
+
+    def test_every_session_scoped_prefix_is_recognized(self):
+        from fornixdb.db import SESSION_SCOPED_META_PREFIXES
+        for prefix in SESSION_SCOPED_META_PREFIXES:
+            set_config(self.s, f"{prefix}some-session-id", "x")
+        flagged = self._flagged()
+        for prefix in SESSION_SCOPED_META_PREFIXES:
+            self.assertNotIn(f"{prefix}some-session-id", flagged, prefix)

@@ -12,27 +12,56 @@ edge the CLI wires in.
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from pathlib import Path
+
+
+def _since_cutoff(since_days: int | None) -> str | None:
+    """Date floor for a log filter, as a YYYY-MM-DD string.
+
+    Log timestamps are local ISO with an offset ("2026-07-02T13:55:22-05:00"),
+    all written by the same host, so comparing the date prefix is both correct
+    at the day granularity `--since-days` promises and free of timezone parsing.
+    """
+    if not since_days or since_days <= 0:
+        return None
+    return (date.today() - timedelta(days=int(since_days))).isoformat()
+
 from statistics import mean, median
 
 
-def load_records(path: str | Path | None) -> list[dict]:
-    """Parse a floor_log.jsonl into records, skipping blank/corrupt lines."""
+def load_records(path: str | Path | None,
+                 since_days: int | None = None) -> list[dict]:
+    """Parse a floor_log.jsonl into records, skipping blank/corrupt lines.
+
+    `since_days` keeps only recent records. Without it the verdict is computed
+    across every configuration the store has ever run under — and this log is
+    the one that grows fastest, so the oldest era usually outweighs the era the
+    reader is actually asking about.
+
+    Streamed rather than slurped: this is the largest file the project keeps
+    (kept on purpose), and read_text().splitlines() costs several times its size
+    in memory before a single record has been looked at."""
     out: list[dict] = []
     if not path:
         return out
     p = Path(path)
     if not p.exists():
         return out
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            rec = json.loads(line)
-        except (ValueError, TypeError):
-            continue
-        if isinstance(rec, dict):
+    cutoff = _since_cutoff(since_days)
+    with p.open(encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if cutoff and str(rec.get("ts") or "")[:10] < cutoff:
+                continue
             out.append(rec)
     return out
 
@@ -172,7 +201,9 @@ def format_report(s: dict) -> str:
         return (f"  {label:<16} n={sp['n']:<4} min={sp['min']:.3f} "
                 f"med={sp['median']:.3f} max={sp['max']:.3f} mean={sp['mean']:.3f}")
 
-    out = [f"floor log: {s.get('log_path', '(in-memory)')}",
+    window = (f"  (last {s['since_days']} day(s))" if s.get("since_days")
+              else "  (all history — no window)")
+    out = [f"floor log: {s.get('log_path', '(in-memory)')}{window}",
            f"records: {s['records']}"]
     if not s["records"]:
         out.append("  (empty — enable with `config floor_log on` and let pulses run)")

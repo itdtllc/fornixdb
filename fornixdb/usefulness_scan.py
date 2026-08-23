@@ -17,6 +17,16 @@ later messages (which cite memories by `#id`). Walk a session in order; a push o
 pushed again — so each injection is credited only by a use that actually followed
 it, and a re-push with no citation between counts as ignored.
 
+It also measures the OTHER channel, and that turned out to be the bigger one.
+A memory can reach the model two ways: pushed (a hook injects it, paid for on
+every session whether used or not) or PULLED (the agent runs recall/show/
+timeline/brief itself, paid for only when asked for). Measuring only pushes and
+calling the result "did memory help" credits the most expensive, least-referenced
+channel with the whole question — on this store 74% of all citations were of
+memories no push ever surfaced. Pulls are attributed the same way pushes are, on
+one shared pending map, so a citation is credited to whichever delivery actually
+preceded it and the channels can be compared on equal terms.
+
 Portable-pure where it can be: `attribute` is a function over ordered events; the
 only host-specific edge is the transcript JSONL shape (`iter_events`).
 """
@@ -28,6 +38,23 @@ from pathlib import Path
 
 BLOCK_MARKER = "possibly-relevant past"   # stable substring of proactive.HEADER
 _ID = re.compile(r"#(\d{1,6})")
+# A pull is recognized by the SHAPE OF ITS RESULT, not by parsing the command
+# that produced it: the command arrives as free-form shell (variables, aliases,
+# pipes, `-m fornixdb` vs the console script), and every reader verb —
+# recall/timeline/show/brief/lineage — renders its rows the same way. Anchored
+# at line start with an id then an ISO date, which "stored #123" and
+# "#12 superseded by #13" cannot match, so writes are never counted as reads.
+_PULL_ROW = re.compile(r"^#(\d{1,6})\s+\d{4}-\d{2}-\d{2}\s", re.M)
+
+
+def _tool_result_text(block) -> str:
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(x.get("text", "") for x in content
+                        if isinstance(x, dict) and isinstance(x.get("text"), str))
+    return ""
 
 
 def _unwrap_hook_stdout(s: str) -> tuple[str, str | None]:
@@ -101,6 +128,29 @@ def iter_events(path: str | Path):
                     # cost of this push (cite events stay 3-tuples — a citation
                     # costs nothing). Unescaped, so the cost is honest.
                     yield ("push", ids, ev, len(text))
+        elif t == "user" and not d.get("isSidechain"):
+            # An explicit pull: the agent ran a reader verb and its rows came
+            # back as a tool result. Counted at the RESULT, so it does not
+            # matter how the command was spelled.
+            content = (d.get("message") or {}).get("content")
+            if not isinstance(content, list):
+                continue
+            for blk in content:
+                if not (isinstance(blk, dict) and blk.get("type") == "tool_result"):
+                    continue
+                text = _tool_result_text(blk)
+                # A hook can append its injected block to a tool result (24 of
+                # them in the live transcripts). Those ids are PUSHES and are
+                # already counted from the attachment, so drop the whole result
+                # rather than risk crediting a push to the pull channel — an
+                # undercount is the honest direction for the channel being
+                # newly measured.
+                if BLOCK_MARKER in text:
+                    continue
+                ids = {int(m) for m in _PULL_ROW.findall(text)}
+                if ids:
+                    # 4th field = measured context cost, same contract as a push
+                    yield ("pull", ids, "L1", len(text))
         elif t == "assistant" and not d.get("isSidechain"):
             txt = _text_of((d.get("message") or {}).get("content"))
             # An assistant message that REPRODUCES the block (quoting/summarizing
@@ -122,45 +172,73 @@ def _channel(raw) -> str:
     return "L3" if raw == "UserPromptSubmit" else "L4"
 
 
+PULL_CHANNEL = "L1"     # the explicit-pull rung, in the ladder's own vocabulary
+
+
 def attribute(events) -> tuple[dict, dict]:
-    """Per-memory and per-CHANNEL push/reference tallies from one session's
+    """Per-memory and per-CHANNEL delivery/reference tallies from one session's
     ordered events.
 
-    Returns (per_memory, per_channel), each {key: {"impressions", "referenced"}}.
-    Each push is one impression; it is `referenced` iff a later assistant citation
-    of that id occurs before the id is pushed again (precise per-injection
-    attribution). A citation is credited to the CHANNEL of the injection it
-    satisfies, so L3 and L4 each get a fair reference rate."""
+    Returns (per_memory, per_channel). Each push is one impression; it is
+    `referenced` iff a later assistant citation of that id occurs before the id
+    is DELIVERED again (precise per-injection attribution). A citation is
+    credited to the CHANNEL of the delivery it satisfies, so L3, L4 and L5 each
+    get a fair reference rate.
+
+    Pulls run through the SAME pending map under the L1 channel, which is what
+    makes the comparison honest: if a memory was pushed and the agent then
+    pulled it anyway, the citation belongs to the pull, because the pull is what
+    put it in front of the model at the moment it was used. Per-memory pull
+    counts are kept in their own keys so that the push-only figures the
+    suppression and floor joins depend on are unchanged by this."""
     per_memory: dict[int, dict[str, int]] = {}
     per_channel: dict[str, dict[str, int]] = {}
-    pending: dict[int, str] = {}      # id -> channel of an injection awaiting a cite
+    # id -> ("push"|"pull", channel) of a delivery awaiting a citation
+    pending: dict[int, tuple[str, str] | None] = {}
 
-    def slot(d, k):
-        return d.setdefault(k, {"impressions": 0, "referenced": 0})
+    def slot(d, k):        # per-memory: push and pull tallied separately
+        return d.setdefault(k, {"impressions": 0, "referenced": 0,
+                                "pull_impressions": 0, "pull_referenced": 0})
+
+    def cslot(k):          # per-channel: one delivery is one impression
+        return per_channel.setdefault(k, {"impressions": 0, "referenced": 0})
 
     for ev in events:
-        kind, ids, chan = ev[0], ev[1], ev[2]   # a push may carry a 4th field (chars)
+        kind, ids, chan = ev[0], ev[1], ev[2]   # a delivery carries a 4th field (chars)
         if kind == "push":
             ch = _channel(chan)
             for i in ids:
                 slot(per_memory, i)["impressions"] += 1
-                slot(per_channel, ch)["impressions"] += 1
-                pending[i] = ch         # a prior un-cited push (if any) stays ignored
+                cslot(ch)["impressions"] += 1
+                pending[i] = ("push", ch)   # a prior un-cited delivery stays ignored
+        elif kind == "pull":
+            for i in ids:
+                slot(per_memory, i)["pull_impressions"] += 1
+                cslot(PULL_CHANNEL)["impressions"] += 1
+                pending[i] = ("pull", PULL_CHANNEL)
         elif kind == "cite":
             for i in ids:
-                ch = pending.get(i)
-                if ch is not None:
+                got = pending.get(i)
+                if got is None:
+                    continue
+                how, ch = got
+                if how == "push":
                     slot(per_memory, i)["referenced"] += 1
-                    slot(per_channel, ch)["referenced"] += 1
-                    pending[i] = None
+                else:
+                    slot(per_memory, i)["pull_referenced"] += 1
+                cslot(ch)["referenced"] += 1
+                pending[i] = None
     return per_memory, per_channel
 
 
 def _merge(into: dict, more: dict) -> None:
+    """Sum tallies key by key. Key-agnostic on purpose: per-memory rows carry
+    push AND pull counts, per-channel rows carry only the two, and neither
+    should acquire the other's fields by being merged."""
     for i, c in more.items():
-        s = into.setdefault(i, {"impressions": 0, "referenced": 0})
-        s["impressions"] += c["impressions"]
-        s["referenced"] += c["referenced"]
+        s = into.setdefault(i, {})
+        for k, v in c.items():
+            s[k] = s.get(k, 0) + v
 
 
 def transcript_paths(source: str | Path) -> list[Path]:
@@ -223,18 +301,31 @@ def scan(source: str | Path, since_days: int | None = None) -> dict:
         _merge(per_memory, pm)
         _merge(per_channel, pc)
         for ev in evs:
-            if ev[0] == "push" and len(ev) > 3:
-                ch = _channel(ev[2])
+            if len(ev) > 3 and ev[0] in ("push", "pull"):
+                ch = PULL_CHANNEL if ev[0] == "pull" else _channel(ev[2])
                 chars_by_channel[ch] = chars_by_channel.get(ch, 0) + ev[3]
     impressions = sum(c["impressions"] for c in per_memory.values())
     referenced = sum(c["referenced"] for c in per_memory.values())
+    # Kept SEPARATE from the push totals on purpose. The referenced-PUSH rate is
+    # the number this project has tracked release over release, and folding
+    # pulls into it would silently redefine the health metric mid-history.
+    pull_impressions = sum(c.get("pull_impressions", 0) for c in per_memory.values())
+    pull_referenced = sum(c.get("pull_referenced", 0) for c in per_memory.values())
     from .tokens import EST_CHARS_PER_TOKEN
     for name, c in per_channel.items():
         c["reference_rate"] = (round(c["referenced"] / c["impressions"], 4)
                                if c["impressions"] else 0.0)
         c["injected_tokens"] = round(
             chars_by_channel.get(name, 0) / EST_CHARS_PER_TOKEN)
-    injected_chars = sum(chars_by_channel.values())
+        # The figure that lets a push rung and the pull channel be compared at
+        # all: what a downstream reference COST on this channel. None when the
+        # channel earned no reference — a rate of zero has no cost-per-use.
+        c["tokens_per_reference"] = (
+            round(c["injected_tokens"] / c["referenced"]) if c["referenced"]
+            else None)
+    pulled_chars = chars_by_channel.get(PULL_CHANNEL, 0)
+    injected_chars = sum(v for k, v in chars_by_channel.items()
+                         if k != PULL_CHANNEL)
     return {
         "source": str(source),
         "since_days": since_days,
@@ -247,6 +338,16 @@ def scan(source: str | Path, since_days: int | None = None) -> dict:
         # chars→tokens is the only approximation)
         "injected_chars": injected_chars,
         "injected_tokens": round(injected_chars / EST_CHARS_PER_TOKEN),
+        # The pull channel, measured the same way and reported alongside — never
+        # merged into the push figures above.
+        "memories_pulled": sum(1 for c in per_memory.values()
+                               if c.get("pull_impressions")),
+        "pull_impressions": pull_impressions,
+        "pull_referenced": pull_referenced,
+        "pull_rate": (round(pull_referenced / pull_impressions, 4)
+                      if pull_impressions else 0.0),
+        "pulled_chars": pulled_chars,
+        "pulled_tokens": round(pulled_chars / EST_CHARS_PER_TOKEN),
         "by_channel": per_channel,
         "per_memory": per_memory,
     }
@@ -271,8 +372,12 @@ def referenced_counts_from_scan(scan_result: dict) -> dict[int, int]:
     `effective_floor` stops treating proven-useful pushes as ignored noise. Every
     pushed id is included (0 for never-referenced) so an `--apply` pass also resets
     the credit of a memory that has since gone quiet (idempotent absolute set)."""
+    # PUSHED ids only. per_memory also carries memories that were merely pulled;
+    # writing them a 0 here would clear use-credit a push had legitimately
+    # earned, on the strength of a window in which nothing pushed them.
     return {int(i): int(c["referenced"])
-            for i, c in scan_result.get("per_memory", {}).items()}
+            for i, c in scan_result.get("per_memory", {}).items()
+            if c.get("impressions", 0) > 0}
 
 
 def format_report(s: dict) -> str:
@@ -286,17 +391,27 @@ def format_report(s: dict) -> str:
         return "\n".join(out)
     out.append(f"push impressions: {s['impressions']}  referenced downstream: "
                f"{s['referenced']}  ({s['reference_rate']:.0%})")
+    if s.get("pull_impressions"):
+        out.append(f"pull  deliveries: {s['pull_impressions']}  referenced "
+                   f"downstream: {s['pull_referenced']}  ({s['pull_rate']:.0%})"
+                   f"   [{s['memories_pulled']} memories]")
+    out.append(f"context cost: pushes {s['injected_tokens']:,} tok "
+               f"(paid every session, used or not), pulls "
+               f"{s.get('pulled_tokens', 0):,} tok (paid only when asked for)")
     bc = s.get("by_channel") or {}
     if bc:
-        out.append("by channel (L3 = per-turn, L4 = rhythmic in-thought, "
-                   "L5 = settled field):")
+        out.append("by channel (L1 = explicit pull, L3 = per-turn, "
+                   "L4 = rhythmic in-thought, L5 = settled field):")
         for ch in sorted(bc):
             c = bc[ch]
-            out.append(f"  {ch}  pushed {c['impressions']:<5} referenced "
+            verb = "pulled" if ch == PULL_CHANNEL else "pushed"
+            out.append(f"  {ch}  {verb} {c['impressions']:<5} referenced "
                        f"{c['referenced']:<4} ({c['reference_rate']:.0%})")
         if {"L3", "L4"} <= set(bc):
-            out.append("  (note: a citation credits the most-recent injection, so "
-                       "when L3 and L4 push the same id the split leans toward L4.)")
+            out.append("  (note: a citation credits the most-recent DELIVERY, so "
+                       "when L3 and L4 push the same id the split leans toward "
+                       "L4 — and a pull of an already-pushed id takes the credit, "
+                       "because the pull is what put it in front of the model.)")
     pm = s["per_memory"]
     chronic = sorted(((i, c) for i, c in pm.items()
                       if c["referenced"] == 0 and c["impressions"] >= 3),
@@ -311,4 +426,15 @@ def format_report(s: dict) -> str:
         out.append("most-referenced pushes (proven-useful):")
         for i, c in proven:
             out.append(f"  #{i:<5} pushed {c['impressions']}, used {c['referenced']}")
+    # The memories the push channels never surfaced but the agent went and got
+    # anyway — the clearest statement of what the push side is missing.
+    missed = sorted(((i, c) for i, c in pm.items()
+                     if c.get("pull_referenced", 0) > 0 and not c["impressions"]),
+                    key=lambda kv: -kv[1]["pull_referenced"])[:8]
+    if missed:
+        out.append("referenced after a PULL, never pushed at all "
+                   "(the push channels did not surface these):")
+        for i, c in missed:
+            out.append(f"  #{i:<5} pulled {c['pull_impressions']}, "
+                       f"used {c['pull_referenced']}")
     return "\n".join(out)

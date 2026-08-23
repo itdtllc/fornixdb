@@ -28,8 +28,8 @@ import json
 import sys
 
 from .. import __version__
-from ..core import (AUTO_CAPTURE_SOURCES, FrozenStoreError, MemoryStore,
-                    recall_has_answer)
+from ..core import (AUTO_CAPTURE_SOURCES, DEFAULT_MAX_CHARS,
+                    FrozenStoreError, MemoryStore, recall_has_answer)
 from ..multistore import capture_mode, multi_recall, multi_timeline, open_stores
 from ..proactive import resolve_active_project
 from ..timeparse import parse_when
@@ -62,7 +62,7 @@ TOOLS = [
          "include_related": {"type": "boolean", "default": False,
                              "description": "Also list each hit's linked memories."},
          "limit": {"type": "integer", "default": 5},
-         "max_chars": {"type": "integer", "default": 4000,
+         "max_chars": {"type": "integer", "default": DEFAULT_MAX_CHARS,
                        "description": "Result char budget; whole hits best-first."}},
          "required": ["query"]}},
     {"name": "recall_timeline",
@@ -70,7 +70,7 @@ TOOLS = [
                     "everything in that window.",
      "inputSchema": {"type": "object", "properties": {
          "when": {"type": "string"},
-         "max_chars": {"type": "integer", "default": 4000}},
+         "max_chars": {"type": "integer", "default": DEFAULT_MAX_CHARS}},
          "required": ["when"]}},
     {"name": "show_memory",
      "description": "Full detail of one memory (gist→detail; reinforces it).",
@@ -402,7 +402,7 @@ class FornixMCP:
 
     def recall_memory(self, query: str, when: str | None = None,
                       include_related: bool = False, limit: int = 5,
-                      max_chars: int = 4000) -> str:
+                      max_chars: int = DEFAULT_MAX_CHARS) -> str:
         since = until = None
         if when:
             s, e = parse_when(when)
@@ -415,7 +415,8 @@ class FornixMCP:
             return f"Nothing relevant is stored about '{query}'."
         return self._fit(rows, max_chars, "(no memories found)")
 
-    def recall_timeline(self, when: str, max_chars: int = 4000) -> str:
+    def recall_timeline(self, when: str,
+                        max_chars: int = DEFAULT_MAX_CHARS) -> str:
         try:
             start, end = parse_when(when)
         except ValueError:

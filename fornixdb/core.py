@@ -103,6 +103,60 @@ def _canonical_project(store, project):
         return project.strip() if isinstance(project, str) else project
 
 
+# Write-path gist ceiling. A gist is what recall returns and what proactive.py
+# pushes — and that push truncates at MAX_GIST=200, so an oversized gist reaches
+# the consumer as a headline cut mid-sentence. Measured 2026-08-23 over 49
+# sessions of live transcripts, downstream reference rate by gist length peaks
+# in the 301-400 band (25%) and falls monotonically above it: 401-500 13.6%,
+# 501-600 10.0%, 601-800 0%, 1201+ 3.2%. So the write path splits here rather
+# than trusting each writer to be disciplined — 74% of gists written in August
+# blew the advisory limit, 212 of 235 from an agent calling
+# `store --gist "<wall of text>"` with no --detail at all.
+#
+# Deliberately NOT the same number as consolidate.GIST_MAX_CHARS (200): that one
+# is an advisory dream complaint ("a gist this long is a summary that failed"),
+# and splitting every row down to it would cut into the best-measured band.
+# Kept as a separate constant rather than shared because core cannot import
+# consolidate (cycle) and the two answer different questions.
+GIST_MAX_CHARS = 400
+GIST_MIN_HEAD = 120       # never leave a stub gist: a split this early is worse
+                          # than a slightly long one, so fall back instead
+_GIST_BOUNDARIES = ("\n\n", ". ", "! ", "? ", ".\n", "!\n", "?\n")
+
+
+def split_gist(gist: str, detail: str | None = None,
+               limit: int = GIST_MAX_CHARS) -> tuple[str, str | None]:
+    """Fold an oversized gist's overflow into detail. Content is never lost —
+    only moved to where drill-down already reads it (`show`).
+
+    Splits at the last paragraph or sentence boundary at or before `limit`, else
+    the last word boundary, so what stays in the gist is a whole thought rather
+    than a fragment. Returns its arguments unchanged when the gist already fits,
+    which makes it idempotent and safe to call on any write path."""
+    if not gist or len(gist) <= limit:
+        return gist, detail
+    window = gist[:limit + 1]
+    cut = max((window.rfind(b) for b in _GIST_BOUNDARIES), default=-1)
+    if cut >= GIST_MIN_HEAD:
+        cut += 1                                   # keep the terminator
+    else:
+        cut = window.rfind(" ", GIST_MIN_HEAD)     # no sentence end: word break
+        if cut < GIST_MIN_HEAD:
+            cut = limit                            # one unbroken token
+    head, tail = gist[:cut].rstrip(), gist[cut:].strip()
+    if not tail:                                   # split fell in trailing space
+        return head, detail
+    return head, (tail + "\n\n" + detail) if detail else tail
+
+
+# Default output budget for the recall/timeline SURFACES. Not a store concern —
+# it lives here only so the CLI and the MCP server cannot drift apart again, as
+# they had: MCP defaulted to 4000 while the CLI had no default at all, and the
+# writeback hint points agents at the CLI, so the guard was absent on the path
+# actually used. 0 or None means unlimited (see cli.fit_chars).
+DEFAULT_MAX_CHARS = 4000
+
+
 VECTOR_WEIGHT = 15.0      # scales cosine into the -bm25 range. Tuned 2026-06-11
                           # via the eval fence: at 6.0, OR-mode keyword noise
                           # (bm25 ≈ 7-9 from common tokens) buried the clearly
@@ -493,6 +547,11 @@ class MemoryStore:
         # Folding here rather than at every call site means no writer — CLI, MCP,
         # hooks, importers — can reintroduce a variant.
         project = _canonical_project(self, project)
+        # One gist, one size. Folded here for the same reason as the project
+        # label above: enforcing at each call site means the next writer — a new
+        # adapter, a hook, an importer — reintroduces the wall of text. The
+        # overflow moves into detail, so nothing is lost and `show` still has it.
+        gist, detail = split_gist(gist, detail)
         # Resolve the embedder BEFORE inserting: first resolution runs the
         # missing-vector backfill, and with the new row already committed the
         # backfill would count it as a gap — embedding it a first time and

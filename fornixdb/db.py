@@ -44,6 +44,17 @@ SCHEMA_VERSION = 13  # v2: FTS gains name; chunked embeddings. v3: last_reinforc
                     #      embedding in `embedding` (the cross-modal text lane)
 
 DEFAULT_DB_ENV = "FORNIXDB_DB"
+
+# Meta keys that are scoped to ONE session: prefix + the host's session id, one
+# set written per session. Two places need to agree about them — `doctor` must
+# not flag them as unread config (they are read via helper-built names), and the
+# meta GC must know they are the collectable ones. Anything not listed here is
+# treated as durable configuration and is never collected.
+SESSION_SCOPED_META_PREFIXES = (
+    "active_project_session_", "cadence_turn_", "cadence_episode_",
+    "proactive_injected_", "writeback_hint_shown_",
+)
+
 # FornixDB-branded so a default store is never mistaken for a host AI's memory
 # file (e.g. a "memory.db"). Existing stores are referenced by explicit path, so
 # this only names NEWLY created default-path stores. See decision #356.

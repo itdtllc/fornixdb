@@ -9,6 +9,63 @@ and can change through the day.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-23
+
+*A gist stays a gist, and both channels count.* A gist is what recall returns
+and what a proactive push delivers, but nothing on the write path kept one short
+— so gists grew into walls of text, and a push, which truncates, delivered them
+as a headline cut mid-sentence. The ceiling is now enforced where memories are
+written. Separately, the usefulness measurement learned to see the other half of
+what it was measuring: memories the agent fetches for itself, which turned out to
+be where most of the value was.
+
+### Added
+- `gist-backfill` brings gists written before the ceiling into line with it,
+  splitting them the same lossless way and folding the overflow into detail.
+  Dry-run unless `--apply`; superseded rows are never touched, so history is not
+  rewritten. Re-embedding the changed rows is part of the operation and most of
+  its value — a memory's first vector chunk is its name and gist together, so an
+  oversized gist embedded as one blurred vector.
+- `meta-gc` collects the per-session bookkeeping keys left behind by sessions
+  that ended long ago. It runs automatically when a dream pass opens, alongside
+  the other housekeeping that needs no judgement. A key whose session has no
+  recorded row belongs to a session still running and is never collected.
+- `field-stats` and `floor-stats` take `--since-days`. Without a window both
+  average across every configuration a store has ever run under, which is how a
+  closed trial's readings go on being counted after the dial that produced them
+  is switched off.
+- The usefulness scan and `value` now measure the **pull** channel — memories
+  the agent fetched for itself — beside the pushed ones, and report what a
+  downstream reference cost on each channel. Pulls are detected by the shape of
+  a result rather than by parsing the command that produced it, so a write is
+  never counted as a read.
+
+### Changed
+- A gist longer than 400 characters is split at the last sentence or paragraph
+  boundary at or before the limit, and the overflow moves into detail. Enforced
+  in the store itself, so every writer inherits it. Nothing is lost. The limit is
+  measured rather than chosen: across a corpus of real sessions the rate at which
+  a memory is referenced downstream peaks in the 301-400 band and falls away
+  above it.
+- `recall` and `timeline` on the CLI default to a 4,000-character output budget,
+  which the same two tools on the MCP surface already had. `--max-chars 0`
+  restores unlimited output.
+- `value` counts pull cost and pull benefit alongside push cost and push
+  benefit. Counting one side of each half-counted both. One consequence worth
+  knowing when comparing with earlier figures: a citation is credited to
+  whichever delivery preceded it, so a pull of an already-pushed memory takes
+  the credit, and the referenced-push rate reads slightly lower than it did when
+  pulls were invisible.
+- The floor-log reader streams its file instead of reading it whole.
+
+### Fixed
+- `doctor` no longer reports config keys that are read through a named constant
+  or built per session from a prefix. Every warning it raised on a lived-in store
+  was one of these, and the real signals were buried underneath them.
+- Use-credit and the floor outcome join are restricted to memories that were
+  actually pushed, so a memory that was only pulled cannot have credit an earlier
+  push earned written back to zero.
+
 ## [1.2.2] - 2026-08-04
 
 *Documentation updates.* Wording only — no functional change.

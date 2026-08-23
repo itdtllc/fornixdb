@@ -14,9 +14,10 @@ from datetime import datetime
 from pathlib import Path
 
 from . import __version__
-from .consolidate import mark_done
+from .consolidate import META_GC_KEEP_DAYS, mark_done
 from .consolidate import status as consolidate_status
-from .core import AUTO_CAPTURE_SOURCES, FrozenStoreError, MemoryStore
+from .core import (AUTO_CAPTURE_SOURCES, DEFAULT_MAX_CHARS,
+                   FrozenStoreError, GIST_MAX_CHARS, MemoryStore)
 from .db import DEFAULT_DB_ENV, KINDS, RELATIONS, default_db_path
 from .multistore import (CAPTURE_MODE_HELP, get_config, multi_brief, multi_recall,
                          multi_timeline, open_stores, resolve_ref, set_config,
@@ -229,7 +230,10 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--shared", action="store_true",
                     help="write to the machine-level shared tier (owner facts/preferences "
                          "every agent should know) instead of this agent's store")
-    sp.add_argument("--gist", required=True, help="one-line summary (always recalled first)")
+    sp.add_argument("--gist", required=True,
+                    help=f"one-line summary (always recalled first); over "
+                         f"{GIST_MAX_CHARS} chars the overflow is moved into "
+                         f"--detail, so write the headline here and the rest there")
     sp.add_argument("--detail", help="full detail (recalled on drill-down)")
     sp.add_argument("--kind", choices=KINDS, default="semantic")
     sp.add_argument("--name", help="optional unique slug handle")
@@ -253,9 +257,10 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument("--related", action="store_true",
                     help="show each hit's 1-hop linked memories")
     rp.add_argument("--all", action="store_true", help="include superseded memories")
-    rp.add_argument("--max-chars", type=int,
-                    help="character budget for the output (recall costs the "
-                         "consuming AI context); whole hits kept best-first")
+    rp.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS,
+                    help=f"character budget for the output (recall costs the "
+                         f"consuming AI context); whole hits kept best-first. "
+                         f"Default {DEFAULT_MAX_CHARS}; 0 = unlimited")
 
     tp = sub.add_parser("timeline", help='recall by time: fornixdb timeline "last thursday"')
     tp.add_argument("when", nargs="?", help='"yesterday", "last thursday", "2026-06-05", ...')
@@ -264,8 +269,9 @@ def main(argv: list[str] | None = None) -> int:
     tp.add_argument("--kind", choices=KINDS)
     tp.add_argument("--project")
     tp.add_argument("--limit", type=int, default=50)
-    tp.add_argument("--max-chars", type=int,
-                    help="character budget for the output")
+    tp.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS,
+                    help=f"character budget for the output. "
+                         f"Default {DEFAULT_MAX_CHARS}; 0 = unlimited")
 
     rm = sub.add_parser("remind", help='prospective memory: fornixdb remind '
                                        '"talk to Joe about his vacation plans" --when "tomorrow 9am"')
@@ -586,18 +592,37 @@ def main(argv: list[str] | None = None) -> int:
                      help="comma-separated memory ids already active this episode "
                           "(seeds the neighborhood domain)")
 
+    mg = sub.add_parser("meta-gc",
+                        help="collect per-session bookkeeping keys (push/cadence/"
+                             "project state) left behind by sessions that ended "
+                             "long ago. Dry-run unless --apply. Runs automatically "
+                             "when a dream pass opens.")
+    mg.add_argument("--apply", action="store_true", help="write the deletions")
+    mg.add_argument("--keep-days", type=int, default=META_GC_KEEP_DAYS,
+                    metavar="N",
+                    help=f"keep keys for sessions that ended within N days "
+                         f"(default {META_GC_KEEP_DAYS})")
+
     fbp = sub.add_parser("field-stats",
                          help="analyze the L5 field log (settle rate, which domains "
                               "light winners, link-vs-topic glue, dissent shadow, "
                               "per-beat cost)")
     fbp.add_argument("--log", help="field log path (default: field_log.jsonl "
                                    "beside the store)")
+    fbp.add_argument("--since-days", type=int, metavar="N",
+                     help="only beats from the last N days. Without it the "
+                          "figures average across config eras that no longer "
+                          "exist, so a change's before/after cannot be read")
 
     fsp = sub.add_parser("floor-stats",
                          help="analyze the floor log (cosine distributions, dial "
                               "activity, and an evidence-based floor recommendation)")
     fsp.add_argument("--log", help="floor log path (default: floor_log.jsonl beside "
                                    "the store)")
+    fsp.add_argument("--since-days", type=int, metavar="N",
+                     help="only records from the last N days (same reason as "
+                          "field-stats: otherwise every past configuration is "
+                          "averaged into one verdict)")
     fsp.add_argument("--transcripts", metavar="PATH",
                      help="session-transcript file or dir; when given, the useful/"
                           "noise outcome join uses whether each PUSH was actually "
@@ -642,6 +667,18 @@ def main(argv: list[str] | None = None) -> int:
                      help="a .jsonl transcript or a directory of them "
                           "(default: this store's transcripts_path config, "
                           "else ~/.claude/projects)")
+
+    gb = sub.add_parser("gist-backfill",
+                        help=f"split LIVE gists over {GIST_MAX_CHARS} chars the way "
+                             f"the write path splits new ones — overflow folded into "
+                             f"detail, nothing lost. Dry-run unless --apply.")
+    gb.add_argument("--apply", action="store_true",
+                    help="write the splits and re-embed the changed rows "
+                         "(back up the store first — this edits rows in place)")
+    gb.add_argument("--limit", type=int,
+                    help="only the N longest gists (they carry the most waste)")
+    gb.add_argument("--show", type=int, default=15, metavar="N",
+                    help="how many proposals to print (default 15)")
 
     vp = sub.add_parser("value",
                         help="one-shot 'how useful has FornixDB been?': cost (token "
@@ -770,6 +807,14 @@ def _dispatch(p, args, store, stores) -> int:
             return 1
         where = "shared:" if (args.shared and len(stores) > 1) else ""
         print(f"stored #{where}{mem_id}")
+        # Say it out loud rather than splitting silently: the writer is usually
+        # an agent, and the point is that the NEXT gist arrives the right size.
+        if len(args.gist) > GIST_MAX_CHARS:
+            print(f"  note: gist was {len(args.gist)} chars — split at "
+                  f"{GIST_MAX_CHARS}, overflow moved into detail (`show "
+                  f"{mem_id}` still has it). A gist is what recall returns and "
+                  f"what a proactive push cuts to 200 chars, so put the headline "
+                  f"in --gist and the body in --detail.", file=sys.stderr)
         linked = target.conn.execute(
             "SELECT related_id FROM memory_link WHERE memory_id = ? "
             "AND relation = 'relates'", (mem_id,)).fetchall()
@@ -1759,11 +1804,30 @@ def _dispatch(p, args, store, stores) -> int:
         print(format_field_debug(store, args.thought,
                                  active_project=args.project, episode_ids=lit))
 
+    elif args.cmd == "meta-gc":
+        from .consolidate import meta_gc
+        res = meta_gc(store, keep_days=args.keep_days, apply=args.apply)
+        if args.json:
+            print(json.dumps(res, indent=2, default=str))
+            return 0
+        print(f"per-session bookkeeping keys: {res['session_scoped']}  "
+              f"(collectable: {len(res['collectable'])}, "
+              f"live or not yet ended: {res['live_or_unrecorded']})")
+        print(f"  cutoff: sessions ended before {res['cutoff'][:10]}")
+        if not res["collectable"]:
+            print("nothing to collect.")
+        elif args.apply:
+            print(f"collected {res['deleted']} key(s). No memory was touched.")
+        else:
+            print("(dry run — pass --apply to write. These are bookkeeping "
+                  "keys, not memories and not configuration.)")
+
     elif args.cmd == "field-stats":
         from .field import field_log_path_for
         from .field_stats import format_report, load_beats, summarize
         path = args.log or field_log_path_for(store)
-        summary = summarize(load_beats(path))
+        summary = summarize(load_beats(path, args.since_days))
+        summary["since_days"] = args.since_days
         if args.json:
             summary["log_path"] = str(path) if path else None
             print(json.dumps(summary, indent=2))
@@ -1775,7 +1839,7 @@ def _dispatch(p, args, store, stores) -> int:
                                   outcomes_from_store, summarize)
         from .proactive import floor_log_path_for
         path = args.log or floor_log_path_for(store)
-        records = load_records(path)
+        records = load_records(path, args.since_days)
         ids = {r.get("id") for r in records if r.get("decision") == "surfaced"}
         if args.transcripts:
             # honest outcome: was each PUSH actually referenced downstream, from
@@ -1787,6 +1851,8 @@ def _dispatch(p, args, store, stores) -> int:
         summary = summarize(records, outcomes)
         summary["log_path"] = str(path) if path else None
         summary["outcome_source"] = "transcripts" if args.transcripts else "store_counts"
+        summary["since_days"] = args.since_days
+
         if args.json:
             print(json.dumps(summary, indent=2, default=str))
         else:
@@ -1822,6 +1888,38 @@ def _dispatch(p, args, store, stores) -> int:
                       f"(of {result['applied']['memories_scanned']} pushed).")
             print(f"\nproactive-suppressed: {n_suppressed} memory(ies) muted from the "
                   "push channels (`fornixdb suppress --scan` to refresh, --list to see).")
+
+    elif args.cmd == "gist-backfill":
+        from .consolidate import gist_backfill
+        res = gist_backfill(store, apply=args.apply, limit=args.limit)
+        if args.json:
+            print(json.dumps({k: v for k, v in res.items() if k != "candidates"}
+                             | {"candidates": [{ck: cv for ck, cv in c.items()
+                                                if ck != "detail"}
+                                               for c in res["candidates"]]},
+                             indent=2, default=str))
+            return 0
+        cands = res["candidates"]
+        if not cands:
+            print(f"no live gist is over {res['ceiling']} chars — nothing to tidy.")
+            return 0
+        waste = sum(c["old_chars"] - c["new_chars"] for c in cands)
+        print(f"gists over {res['ceiling']} chars: {len(cands)}  "
+              f"({waste:,} chars would move from gist to detail)")
+        no_detail = sum(1 for c in cands if not c["had_detail"])
+        print(f"  {no_detail} of them have NO detail today, so the split gives "
+              f"`show` something to return")
+        for c in cands[:max(args.show, 0)]:
+            print(f"  #{c['id']:<6} {c['old_chars']:>5} -> {c['new_chars']:<4} "
+                  f"{c['gist'][:70]}")
+        if len(cands) > args.show:
+            print(f"  … and {len(cands) - args.show} more")
+        if not args.apply:
+            print("(dry run — pass --apply to write. The split is lossless: "
+                  "the overflow moves into detail, where `show` reads it.)")
+        else:
+            print(f"applied: {res['applied']} gist(s) split, "
+                  f"{res['reembedded']} re-embedded.")
 
     elif args.cmd == "suppress":
         from . import suppress as sup

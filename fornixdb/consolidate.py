@@ -17,10 +17,11 @@ the last pass; per-store overrides in meta (consolidate_days / consolidate_sessi
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from .core import (HELPFUL_USE_WEIGHT, REFERENCED_USE_WEIGHT, MemoryStore,
-                   now_iso)
+from .core import (GIST_MAX_CHARS as WRITE_PATH_GIST_MAX, HELPFUL_USE_WEIGHT,
+                   REFERENCED_USE_WEIGHT, MemoryStore, now_iso, split_gist)
+from .db import SESSION_SCOPED_META_PREFIXES
 from .multistore import get_config, set_config
 from .vectors import cosine, from_blob
 
@@ -231,6 +232,112 @@ def _gist_problem(gist: str, detail: str | None) -> str | None:
     if detail and len(detail) > 2 * len(gist) and detail.startswith(gist):
         return "gist is a raw truncation of much longer detail"
     return None
+
+
+def gist_backfill(store: MemoryStore, apply: bool = False,
+                  limit: int | None = None, embedder=None) -> dict:
+    """Split over-long LIVE gists the way the write path now splits new ones,
+    folding the overflow into detail.
+
+    The actionable half of the dream's "gists to tidy" complaint. Dream reports
+    that a gist is too long; rewriting it into a better SUMMARY needs judgement
+    and stays a worklist for the owner, but moving the overflow to where
+    drill-down already reads it needs none — `split_gist` is lossless and
+    idempotent, so this changes no meaning, only which column the words sit in.
+
+    That is why it is a plain UPDATE and not a supersede. Superseding is for new
+    knowledge that contradicts old; using it here would tombstone hundreds of
+    rows and break their lineage chains to record nothing new. This is the same
+    kind of mechanical, reversible reshaping the retention tiers do.
+
+    Two things must follow the edit or recall silently degrades: the FTS index
+    (handled by the memory_au trigger, which fires on gist/detail) and the
+    vectors — chunk 0 is `name + gist`, so an unsplit 3600-char gist embeds as
+    ONE blurred vector. Re-embedding after the split is most of the win here.
+
+    Dry run unless `apply` — propose-not-dispose."""
+    rows = store.conn.execute(
+        "SELECT id, gist, detail FROM memory "
+        "WHERE superseded_time IS NULL AND length(gist) > ? "
+        "ORDER BY length(gist) DESC", (WRITE_PATH_GIST_MAX,)).fetchall()
+    proposals = []
+    for r in rows:
+        gist, detail = split_gist(r["gist"] or "", r["detail"])
+        if gist == (r["gist"] or ""):      # nothing the split can improve
+            continue
+        proposals.append({"id": r["id"], "old_chars": len(r["gist"] or ""),
+                          "new_chars": len(gist), "gist": gist, "detail": detail,
+                          "had_detail": bool(r["detail"])})
+        if limit and len(proposals) >= limit:
+            break
+    out = {"candidates": proposals, "applied": 0, "reembedded": 0,
+           "ceiling": WRITE_PATH_GIST_MAX}
+    if not apply or not proposals:
+        return out
+    store._check_writable()
+    with store.write_txn() as conn:
+        for p in proposals:
+            conn.execute("UPDATE memory SET gist = ?, detail = ? WHERE id = ?",
+                         (p["gist"], p["detail"], p["id"]))
+    out["applied"] = len(proposals)
+    # After the commit, mirroring store(): an embedding failure must never undo
+    # a write that already landed. A row left with its old vector is stale, not
+    # lost — `embed` backfill is the safety net.
+    emb = store._resolve_embedder(embedder)
+    if emb is not None:
+        from .vectors import embed_memory
+        for p in proposals:
+            try:
+                embed_memory(store, emb, p["id"])
+                out["reembedded"] += 1
+            except Exception:
+                pass
+    return out
+
+
+META_GC_KEEP_DAYS = 30    # a session's bookkeeping is worth keeping while the
+                          # work is still recent enough to be looked at again
+
+
+def meta_gc(store: MemoryStore, keep_days: int = META_GC_KEEP_DAYS,
+            apply: bool = False) -> dict:
+    """Collect per-session meta keys whose session ended long ago.
+
+    Every session writes one set of these — which memories it was pushed, where
+    its cadence stood, which project it pinned — and nothing ever removed them,
+    so they accumulate for the life of the store. They are bookkeeping, not
+    memories and not configuration: collecting them loses no knowledge, which is
+    why this is judgement-free housekeeping rather than a worklist.
+
+    SAFETY: a key is collectable only when the store HAS a session row for it.
+    Session rows are written when a session ENDS, so a key with no row belongs
+    to a session that is still running — collecting those would re-push memories
+    that session has already seen and re-show its writeback hint. Orphans are
+    counted and reported, never deleted.
+
+    Dry run unless `apply`."""
+    cutoff = (datetime.now() - timedelta(days=keep_days)).replace(
+        microsecond=0).isoformat()
+    collectable: list[str] = []
+    for prefix in SESSION_SCOPED_META_PREFIXES:
+        collectable += [r[0] for r in store.conn.execute(
+            """SELECT m.key FROM meta m JOIN session s ON m.key = ? || s.id
+               WHERE COALESCE(s.ended, s.started) < ?""", (prefix, cutoff))]
+    scoped = sum(
+        store.conn.execute(
+            "SELECT COUNT(*) FROM meta WHERE key LIKE ? || '%'", (prefix,)
+        ).fetchone()[0] for prefix in SESSION_SCOPED_META_PREFIXES)
+    out = {"collectable": collectable, "session_scoped": scoped,
+           "live_or_unrecorded": scoped - len(collectable),
+           "cutoff": cutoff, "deleted": 0}
+    if not apply or not collectable:
+        return out
+    store._check_writable()
+    with store.write_txn() as conn:
+        conn.executemany("DELETE FROM meta WHERE key = ?",
+                         [(k,) for k in collectable])
+    out["deleted"] = len(collectable)
+    return out
 
 
 def _pair_scan(store: MemoryStore, exclude_ids: set[int]) -> tuple[list, list, list]:
@@ -903,6 +1010,7 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
     marker = get_config(store, "dream_pass_super0")
     credit = None
     suppression = None
+    meta_collected = 0
     if marker is None:
         marker = str(_superseded_count(store))
         set_config(store, "dream_pass_super0", marker)
@@ -912,6 +1020,13 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
         # ...then re-classify chronic push-noise on those fresh counts: suppress
         # the never-referenced, redeem any that just earned a reference
         suppression = suppress_refresh(store)
+        # ...and collect the per-session bookkeeping of sessions long ended.
+        # Same class as the two above: mechanical, loses no knowledge. Reported
+        # rather than silent, and best-effort — housekeeping never fails a pass.
+        try:
+            meta_collected = meta_gc(store, apply=True)["deleted"]
+        except Exception:
+            meta_collected = 0
     st = status(store)
     work = propose(store)
     woven = 0
@@ -985,6 +1100,10 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
         narrative += (f"\n(pass open: push-noise scan — {ap['newly_suppressed']} "
                       f"memory(ies) muted, {ap['redeemed']} redeemed; "
                       f"{suppression.get('total_suppressed', 0)} suppressed total)")
+    if meta_collected:
+        narrative += (f"\n(pass open: collected {meta_collected} bookkeeping "
+                      f"key(s) from sessions ended over {META_GC_KEEP_DAYS} "
+                      "days ago — no memory touched)")
     # dial report: read the accrued telemetry back at the decision moment. The
     # scan-derived rules only have their honest inputs at pass open (credit);
     # the field-log rule reads on every call.
@@ -1008,6 +1127,7 @@ def dream(store: MemoryStore, weave: bool = False, done: bool = False) -> dict:
                       "run `recaption` with a local VLM to fill real captions.")
     return {"status": st, "counts": counts, "work": work, "woven": woven,
             "applied": applied, "use_credit": credit, "suppression": suppression,
+            "meta_collected": meta_collected,
             "dials": dials, "awaiting_captions": awaiting_captions,
             "narrative": narrative}
 

@@ -18,20 +18,44 @@ Reads field_log.jsonl (written beside the store whenever `floor_log` is on).
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from pathlib import Path
 
 
-def load_beats(path: str | Path | None) -> list[dict]:
+def _since_cutoff(since_days: int | None) -> str | None:
+    """Date floor for a log filter, as a YYYY-MM-DD string.
+
+    Log timestamps are local ISO with an offset ("2026-07-02T13:55:22-05:00"),
+    all written by the same host, so comparing the date prefix is both correct
+    at the day granularity `--since-days` promises and free of timezone parsing.
+    """
+    if not since_days or since_days <= 0:
+        return None
+    return (date.today() - timedelta(days=int(since_days))).isoformat()
+
+
+def load_beats(path: str | Path | None,
+               since_days: int | None = None) -> list[dict]:
+    """Beats from the field log, optionally only the last `since_days`.
+
+    Without a window this averages across every configuration the store has
+    ever run under, which is how a closed trial's beats went on being counted
+    long after the dial that produced them was turned off. A window is how a
+    change's before and after get read apart."""
     if not path or not Path(path).is_file():
         return []
+    cutoff = _since_cutoff(since_days)
     beats = []
     for line in Path(path).read_text(encoding="utf-8").splitlines():
         try:
             d = json.loads(line)
         except (ValueError, TypeError):
             continue
-        if isinstance(d, dict):
-            beats.append(d)
+        if not isinstance(d, dict):
+            continue
+        if cutoff and str(d.get("ts") or "")[:10] < cutoff:
+            continue
+        beats.append(d)
     return beats
 
 
@@ -84,7 +108,9 @@ def format_report(s: dict, path: str | None) -> str:
     if not s["beats"]:
         return (f"field log: {path or '(none)'}\nno beats recorded yet — the "
                 "log fills as L5 pulses fire with `floor_log on`.")
-    lines = [f"field log: {path}",
+    window = (f"  (last {s['since_days']} day(s))" if s.get("since_days")
+              else "  (all history — no window)")
+    lines = [f"field log: {path}{window}",
              f"beats: {s['beats']}  settled={s['settled']} "
              f"(emitted={s['settled_emitted']}, quiet={s['settled_quiet']} — "
              "all gists already injected this session, cost ~0)  "
