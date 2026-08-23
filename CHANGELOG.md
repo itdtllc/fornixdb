@@ -9,6 +9,39 @@ and can change through the day.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-08-23
+
+*Agreement up close, and a redemption that sticks.* Two places where the system
+was drawing a conclusion the evidence did not support: agreement counted across
+a whole memory regardless of how far apart the words were, and a memory's second
+chance was withdrawn by the very evidence it had just overruled.
+
+### Fixed
+- The abstention gate ends on a count of how many content words a query and a
+  recalled memory agree about, described as not scaling with document length. It
+  did. Counted across a whole memory, a long one about something else collects
+  the query's words scattered over pages of unrelated prose, in senses that have
+  nothing to do with the question — and two of them was all the gate asked for.
+  A memory's detail now contributes only through its single most agreeing
+  window, so several of the query's words have to appear near one another rather
+  than merely somewhere in the same record. The gist always counts wherever that
+  window falls: it is the summary, and it is capped, so it cannot become a
+  haystack of its own. Ranking is unaffected — the count feeds only the gate.
+- A redemption is no longer reversed by the next suppression scan. Suppression
+  is decided by scanning the host's transcripts, and those do not change, so a
+  memory redeemed today still showed the same pushes and the same zero
+  references tomorrow and was suppressed again immediately. Every deliberate
+  "this one matters" signal — an explicit undo, a `show`, a `mark_helpful`, a
+  rewrite — was losing to the evidence it had just overruled. Suppression now
+  has to be re-earned from pushes that happen after the redemption, and the scan
+  reports which memories it spared and why.
+
+### Changed
+- Store schema v14 adds one nullable column recording the push count a
+  redemption overruled. Existing stores migrate forward automatically on open;
+  memories redeemed before it existed keep being judged on their whole history,
+  which is the behavior they have today.
+
 ## [1.3.0] - 2026-08-23
 
 *A gist stays a gist, and both channels count.* A gist is what recall returns

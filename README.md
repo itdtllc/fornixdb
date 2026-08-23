@@ -64,7 +64,7 @@ active development branch and can change through the day; for a stable checkout,
 install a tagged release instead:
 
 ```bash
-pip install "git+https://github.com/itdtllc/fornixdb@v1.3.0"
+pip install "git+https://github.com/itdtllc/fornixdb@v1.3.1"
 ```
 
 Releases are listed at <https://github.com/itdtllc/fornixdb/releases>; see

@@ -281,20 +281,60 @@ def _content_terms(text: str) -> list[str]:
     return list(seen)
 
 
+# How much text may contribute one agreement. A row's DETAIL counts only within
+# a window this wide, because agreement has to be CONCENTRATED to mean anything:
+# a real answer says several of the query's things close together, while a long
+# memory about something else collects the same words scattered across pages of
+# unrelated prose. Set to the gist ceiling — a paragraph's worth — so the gist
+# and a comparable slice of detail are weighed alike.
+AGREEMENT_WINDOW_CHARS = GIST_MAX_CHARS
+
+
 def shared_term_count(query: str, row: dict) -> int:
-    """How many DISTINCT content words the query and a recalled row agree on.
+    """How many DISTINCT content words the query and a recalled row agree on,
+    counting the gist plus the single most agreeing WINDOW of the detail.
 
     The question bm25 cannot answer. A relevance score is a magnitude: one
     accidentally-shared word in a short row can outscore several genuinely-shared
     words in a long one, so magnitude alone cannot tell "this answers the question"
     from "this happens to contain that word". A count can, because a real answer
     agrees with its question about several things and noise agrees about one.
-    Unlike bm25 it does not scale with store size or document length."""
+
+    But a count over the WHOLE row is not length-independent, which is what it was
+    claimed to be. Measured on a lived-in store against queries it has no answer
+    to, the chance of accidentally agreeing about two things rose with row size —
+    0% up to 800 characters, 0.47% past 1600. A long memory is a haystack: given
+    enough unrelated prose it will contain any two words you like, in senses that
+    have nothing to do with the question. Counting the best window instead makes
+    the measure honest about length: on the same store it cut those accidental
+    agreements from eight to one and cost none of the golden positives, including
+    the six whose agreement lives in their detail rather than their gist.
+
+    The gist always counts, wherever the window falls: it is the summary, and it
+    is capped, so it cannot become a haystack of its own."""
     if not query:
         return 0
-    hit = set(_content_terms((row.get("gist") or "") + " "
-                             + (row.get("detail") or "")))
-    return sum(1 for w in _content_terms(query) if w in hit)
+    q_terms = _content_terms(query)
+    if not q_terms:
+        return 0
+    wanted = set(q_terms)
+    gist_hits = {w for w in _content_terms(row.get("gist") or "") if w in wanted}
+    detail = row.get("detail") or ""
+    if not detail:
+        return len(gist_hits)
+    # Only occurrences of the query's own words can ever contribute, so walk
+    # those rather than re-tokenizing overlapping windows of the whole detail.
+    hits = [(m.start(), m.group()) for m in re.finditer(r"[a-z0-9]+", detail.lower())
+            if m.group() in wanted]
+    best = len(gist_hits)
+    for i, (start, _) in enumerate(hits):
+        window = set(gist_hits)
+        for pos, term in hits[i:]:
+            if pos - start >= AGREEMENT_WINDOW_CHARS:
+                break
+            window.add(term)
+        best = max(best, len(window))
+    return best
 
 
 def recall_has_answer(rows: list[dict]) -> bool:
@@ -1737,7 +1777,10 @@ class MemoryStore:
         show/explicit-recall reinforcement, mark_helpful, and content change
         (supersede/set-gist). Logs only rows that were genuinely suppressed (so a
         no-op reinforce doesn't spam the log). Returns the number cleared. Frozen
-        stores skip silently."""
+        stores skip silently.
+
+        Records `redeemed_pushes` so the redemption STICKS: see the column note
+        in db.py. A redemption that the next scan reverses is not a redemption."""
         ids = [int(i) for i in ids]
         if not ids or self.frozen():
             return 0
@@ -1748,8 +1791,15 @@ class MemoryStore:
         if not cleared:
             return 0
         ph2 = ",".join("?" * len(cleared))
+        # Keep the push count the redemption overruled (v14). A scan re-derives
+        # from the same transcripts, so without this the row re-qualifies on the
+        # identical evidence and the redemption is undone before it can mean
+        # anything. Suppression now has to be re-earned from pushes that happen
+        # AFTER this moment.
         self.conn.execute(
             f"""UPDATE memory SET proactive_suppressed_at = NULL,
+                                  redeemed_pushes = COALESCE(suppressed_pushed,
+                                                             surfaced_count, 0),
                                   suppressed_pushed = NULL, suppressed_referenced = NULL
                 WHERE id IN ({ph2})""", cleared)
         self.conn.commit()

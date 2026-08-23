@@ -13,7 +13,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 13  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
+SCHEMA_VERSION = 14  # v2: FTS gains name; chunked embeddings. v3: last_reinforced.
                     # v13: proactive_suppressed_at + justifying stats — a memory
                     #     chronically pushed (>=N) but never referenced is excluded
                     #     from the L3/L4/L5 PUSH channels (never from explicit
@@ -42,6 +42,9 @@ SCHEMA_VERSION = 13  # v2: FTS gains name; chunked embeddings. v3: last_reinforc
                     #      a perceptual memory's modality vector (image/audio/sensor
                     #      model), one row per model, beside its ordinary caption
                     #      embedding in `embedding` (the cross-modal text lane)
+                    # v14: redeemed_pushes — a redemption resets the suppression
+                    #     clock, so the next scan cannot re-suppress a memory on
+                    #     the same stale evidence the redemption overruled
 
 DEFAULT_DB_ENV = "FORNIXDB_DB"
 
@@ -133,6 +136,16 @@ CREATE TABLE IF NOT EXISTS memory (
     suppressed_referenced INTEGER,  -- v13: the referenced count at suppression time
                            -- (0 by the rule) — kept so `suppress --list` can show
                            -- WHY without re-scanning transcripts
+    redeemed_pushes INTEGER,  -- v14: the push count a memory carried when it was
+                           -- REDEEMED. Without it a redemption is undone by the
+                           -- very next scan: the transcripts still show the same
+                           -- pushes and the same zero references, so the row
+                           -- re-qualifies immediately and every deliberate
+                           -- "this one matters" signal — show, mark_helpful, a
+                           -- content change, an explicit undo — silently loses.
+                           -- Suppression must be re-earned from pushes that
+                           -- happened AFTER the redemption. NULL = never
+                           -- redeemed, judged on its whole history.
     superseded_by   INTEGER REFERENCES memory(id),
     superseded_time TEXT
 );
@@ -330,6 +343,10 @@ def _migrate(conn: sqlite3.Connection) -> bool:
         conn.execute("ALTER TABLE memory ADD COLUMN proactive_suppressed_at TEXT")
         conn.execute("ALTER TABLE memory ADD COLUMN suppressed_pushed INTEGER")
         conn.execute("ALTER TABLE memory ADD COLUMN suppressed_referenced INTEGER")
+    if mem_cols and "redeemed_pushes" not in mem_cols:  # v14
+        # nullable, no default: rows redeemed before this existed keep being
+        # judged on their whole history, which is the pre-v14 behavior
+        conn.execute("ALTER TABLE memory ADD COLUMN redeemed_pushes INTEGER")
     # v12: a v11 prospective table (0.8.5) predates the nag columns; SQLite
     # adds them in place, defaults matching the schema (all existing reminders
     # are non-urgent — exactly their 0.8.5 behavior)

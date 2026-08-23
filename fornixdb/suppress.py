@@ -56,6 +56,36 @@ def classify(scan_result: dict, min_pushed: int,
     return to_suppress, earned_reference
 
 
+def _spare_redeemed(store, to_suppress: dict, min_pushed: int) -> tuple[dict, dict]:
+    """Drop candidates whose evidence predates their redemption.
+
+    A redemption says "this memory matters after all". The scan re-derives from
+    the same transcripts, so the pushes that justified suppression are still
+    there and the row re-qualifies at once — which silently undid every
+    redemption the system has: an explicit undo, a `show`, a `mark_helpful`, a
+    rewrite. A redeemed row must now be pushed `min_pushed` times AGAIN, after
+    the redemption, before it can be called noise a second time.
+
+    Returns (kept_candidates, {id: pushes_since_redemption} for those spared)."""
+    if not to_suppress:
+        return to_suppress, {}
+    ids = list(to_suppress)
+    ph = ",".join("?" * len(ids))
+    baseline = {r["id"]: r["redeemed_pushes"] for r in store.conn.execute(
+        f"SELECT id, redeemed_pushes FROM memory WHERE id IN ({ph}) "
+        "AND redeemed_pushes IS NOT NULL", ids)}
+    if not baseline:
+        return to_suppress, {}
+    kept, spared = {}, {}
+    for i, (pushed, ref) in to_suppress.items():
+        since = pushed - baseline.get(i, 0)
+        if i in baseline and since < min_pushed:
+            spared[i] = max(since, 0)
+        else:
+            kept[i] = (pushed, ref)
+    return kept, spared
+
+
 def scan_and_apply(store, transcripts, *, apply: bool = True) -> dict:
     """Scan the host transcripts, decide, and (unless `apply` is False) update the
     store: suppress fresh qualifiers, and self-correct by un-suppressing any
@@ -64,6 +94,10 @@ def scan_and_apply(store, transcripts, *, apply: bool = True) -> dict:
     result = scan(transcripts)
     lo, hi = thresholds(store)
     to_suppress, earned = classify(result, lo, hi)
+    # A redeemed row is judged only on what happened SINCE its redemption.
+    # classify() stays pure (a function of the scan alone); the store-dependent
+    # part lives here, where the store is already in hand.
+    to_suppress, spared = _spare_redeemed(store, to_suppress, lo)
     report = {
         "transcripts": str(transcripts),
         "sessions": result.get("sessions", 0),
@@ -72,6 +106,7 @@ def scan_and_apply(store, transcripts, *, apply: bool = True) -> dict:
         "candidates": {i: {"pushed": p, "referenced": r}
                        for i, (p, r) in sorted(to_suppress.items())},
         "candidate_count": len(to_suppress),
+        "spared_since_redemption": spared,
     }
     if apply:
         currently = {row["id"] for row in store.proactive_suppressed()}
@@ -95,6 +130,12 @@ def format_report(report: dict) -> str:
            f"candidates (chronic push-noise): {report.get('candidate_count', 0)}"]
     for i, c in list(report.get("candidates", {}).items())[:20]:
         out.append(f"  #{i:<5} pushed {c['pushed']}, referenced {c['referenced']}")
+    spared = report.get("spared_since_redemption") or {}
+    if spared:
+        out.append(f"spared ({len(spared)}): redeemed, and not yet pushed {lo} "
+                   "times since — suppression has to be re-earned on new evidence")
+        for i, since in list(spared.items())[:10]:
+            out.append(f"  #{i:<5} {since} push(es) since redemption")
     ap = report.get("applied")
     if ap is not None:
         out.append(f"applied: {ap['newly_suppressed']} newly suppressed, "
