@@ -118,7 +118,7 @@ def machine_usage() -> dict:
     Registry entries whose files are gone are pruned."""
     import json as _json
     import sqlite3
-    from .db import registry_path
+    from .db import _read_path_list, registry_ignore_path, registry_path
     from .multistore import shared_db_path
 
     reg = registry_path()
@@ -131,6 +131,12 @@ def machine_usage() -> dict:
     sp = str(shared_db_path().resolve()) if shared_db_path().exists() else None
     if sp and sp not in paths:
         paths.append(sp)
+    # Forgotten paths are excluded here too, not only at registration: the
+    # shared tier is added above without consulting the registry, and a store
+    # registered by an older version is already in the file.
+    forgotten = _read_path_list(registry_ignore_path())
+    if forgotten:
+        paths = [x for x in paths if x not in forgotten]
 
     stores, total = [], 0.0
     for p in sorted(set(paths)):
@@ -164,6 +170,7 @@ def machine_usage() -> dict:
             pass
     cap, pol, defaulted = machine_budget()
     return {"stores": stores, "total_mb": round(total, 3),
+            "forgotten": sorted(forgotten),
             "machine_budget_mb": round(cap / 1e6, 3) if cap else None,
             "machine_policy": pol, "machine_budget_defaulted": defaulted,
             "over_budget": bool(cap and total * 1e6 > cap)}

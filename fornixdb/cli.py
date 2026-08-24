@@ -561,8 +561,15 @@ def main(argv: list[str] | None = None) -> int:
     lkp.add_argument("--project", help="file the memory under a project "
                                        "(with --remember)")
 
-    sub.add_parser("usage", help="disk usage of EVERY FornixDB store on this "
-                                 "machine (per AI + total)")
+    usp = sub.add_parser("usage", help="disk usage of EVERY FornixDB store on this "
+                                       "machine (per AI + total)")
+    usp.add_argument("--forget", metavar="PATH",
+                     help="stop counting the store at PATH toward machine usage "
+                          "(backups and throwaway stores register themselves on "
+                          "open and inflate the total). Remembered, so re-opening "
+                          "the file does not undo it; the file is never touched")
+    usp.add_argument("--unforget", metavar="PATH",
+                     help="count PATH again; it re-registers on its next open")
     tkp = sub.add_parser("tokens", help="estimated prompt-token footprint of this "
                                         "store's AI integration (cost vs savings)")
     tkp.add_argument("--billed", action="store_true",
@@ -1755,6 +1762,17 @@ def _dispatch(p, args, store, stores) -> int:
 
     elif args.cmd == "usage":
         from .budget import machine_usage
+        from .db import forget_store, unforget_store
+        for path, fn, verb in ((args.forget, forget_store, "forgotten"),
+                               (args.unforget, unforget_store, "counted again")):
+            if path:
+                changed = fn(path)
+                p_ = Path(path).expanduser()
+                print(f"{p_} {verb}." if changed
+                      else f"{p_} was already {verb}; nothing changed.")
+                if not p_.exists():
+                    print("  note: no file there now — the entry is recorded "
+                          "anyway, so a store that reappears stays excluded.")
         u = machine_usage()
         if args.json:
             print(json.dumps(u, indent=2))
@@ -1767,6 +1785,9 @@ def _dispatch(p, args, store, stores) -> int:
                    + (", OVER" if u["over_budget"] else "") + ")"
                    if u["machine_budget_mb"] else "  (no machine-wide cap)")
             print(f"{'TOTAL':<24} {u['total_mb']:>8.3f} MB{cap}")
+            if u.get("forgotten"):
+                print(f"not counted ({len(u['forgotten'])} forgotten): "
+                      f"{', '.join(u['forgotten'])}")
             if u.get("machine_budget_defaulted"):
                 print("note: the machine cap is the INSTALL DEFAULT (20% of "
                       "free disk, max 2 GB) — review it: "
@@ -2050,8 +2071,6 @@ def _dispatch(p, args, store, stores) -> int:
 
     elif args.cmd == "export-markdown":
         target = stores[-1][1] if (args.shared and len(stores) > 1) else store
-        from pathlib import Path
-
         from .adapters.markdown_export import (export_directory,
                                                export_document)
         sel = dict(project=args.project, kind=args.kind,

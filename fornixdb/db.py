@@ -458,6 +458,80 @@ def registry_path() -> Path | None:
     return reg
 
 
+def registry_ignore_path() -> Path | None:
+    """Sibling of the registry listing store paths the owner has told `usage`
+    to FORGET. A separate file, not a flag inside the registry, so the registry
+    itself stays the plain list of paths every released version already reads."""
+    reg = registry_path()
+    return None if reg is None else reg.with_name(reg.name + ".ignored")
+
+
+def _read_path_list(p: Path | None) -> list[str]:
+    """A registry-shaped JSON file as a list of strings; [] for absent,
+    empty, unreadable, or wrong-shaped. Never raises: these files are
+    conveniences, and a damaged one must not stop a store from opening."""
+    import json
+    if p is None or not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text() or "[]")
+    except (OSError, ValueError):
+        return []
+    return [x for x in data if isinstance(x, str)] if isinstance(data, list) else []
+
+
+def _write_path_list(p: Path, paths: list[str]) -> None:
+    """Write-to-temp + atomic rename, owner-only — the registry's own rule:
+    paths reveal which AIs keep stores where, and no reader may see a torn file."""
+    import json
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(sorted(set(paths)), indent=1))
+    _restrict_to_owner_path(tmp)
+    os.replace(tmp, p)
+
+
+def forget_store(path: str | os.PathLike) -> bool:
+    """Drop `path` from the machine registry and remember that choice.
+
+    The remembering is the whole point. Every connect re-registers, so simply
+    deleting the entry is undone the moment anything opens that file again —
+    the same shape as the suppression bug where a redemption was reversed by
+    the very next scan. A forgotten path is recorded, and _register_store
+    consults that record, so the decision has to be reversed deliberately
+    (`--unforget`) rather than by an incidental open.
+
+    Returns True if this changed anything."""
+    ign = registry_ignore_path()
+    if ign is None:
+        return False
+    p = str(Path(path).expanduser().resolve())
+    ignored = _read_path_list(ign)
+    changed = p not in ignored
+    if changed:
+        _write_path_list(ign, ignored + [p])
+    reg = registry_path()
+    if reg is not None:
+        stores = _read_path_list(reg)
+        if p in stores:
+            _write_path_list(reg, [x for x in stores if x != p])
+            changed = True
+    return changed
+
+
+def unforget_store(path: str | os.PathLike) -> bool:
+    """Undo forget_store: the path counts again, and re-registers on next open."""
+    ign = registry_ignore_path()
+    if ign is None:
+        return False
+    p = str(Path(path).expanduser().resolve())
+    ignored = _read_path_list(ign)
+    if p not in ignored:
+        return False
+    _write_path_list(ign, [x for x in ignored if x != p])
+    return True
+
+
 def _register_store(path: Path) -> None:
     """Record this store in the machine-level registry so 'how much space is
     FornixDB taking OVERALL' is answerable from any one AI (each agent's tools
@@ -473,6 +547,9 @@ def _register_store(path: Path) -> None:
         p = str(path.resolve())
         if p.startswith(str(Path(tempfile.gettempdir()).resolve())):
             return
+        if p in _read_path_list(registry_ignore_path()):
+            return  # the owner forgot this one; an incidental open must not
+                    # resurrect it (see forget_store)
         new_reg_dir = not reg.parent.exists()
         reg.parent.mkdir(parents=True, exist_ok=True)
         if new_reg_dir:

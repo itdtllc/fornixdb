@@ -9,6 +9,33 @@ and can change through the day.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-24
+
+*A store you forgot should stay forgotten.* A number the disk-budget policy acts
+on was counting files nobody meant to keep, and there was no way to take one out
+— so the fix is a verb that removes a store from the count and, more to the
+point, remembers that you did.
+
+### Added
+- `usage --forget <path>` stops counting a store toward machine usage, and
+  `--unforget` puts it back. Any store opened with `--db` joins the machine
+  registry permanently, so backups and throwaway stores registered themselves
+  and inflated the total — on a real machine it read 63.8 MB against a true
+  16.8 MB, which is the number the disk-budget policy acts on.
+
+  The choice is remembered rather than merely applied. Every connect
+  re-registers, so removing the entry alone is undone by the next incidental
+  open — the same shape as a redemption reversed by the following suppression
+  scan. A forgotten path is recorded and consulted at registration, so it takes
+  `--unforget` to reverse. The store file is never touched, and a path can be
+  forgotten before it exists, so one that reappears stays excluded.
+
+### Fixed
+- A function-local `from pathlib import Path` in one branch of the CLI
+  dispatcher made `Path` local to the whole function, so any use of it earlier
+  in that function raised `UnboundLocalError`. Nothing had used it earlier yet;
+  the redundant import is gone.
+
 ## [1.4.1] - 2026-08-23
 
 *One injection, counted once.* A measurement that decides what gets built has to
