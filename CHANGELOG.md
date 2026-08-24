@@ -9,6 +9,47 @@ and can change through the day.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-23
+
+*Memories that can find each other.* A memory reaches a model by its words or by
+association, and association needs edges — shared topics and links. A store that
+stops making them keeps answering keyword questions and quietly stops answering
+the other kind. This release asks for topics where memories are written, proposes
+them where they are missing, and lets the pass that creates links run until it is
+finished.
+
+### Added
+- `dream --weave --passes N` keeps weaving until nothing is proposed or N passes
+  have run. A pass proposes a reviewable number of pairs, which is right for a
+  move that needs judgement and wrong for the one move here that does not — a
+  `relates` edge only ever adds. Clearing a real backlog previously meant running
+  the same command by hand two dozen times. One pass remains the default, and
+  without `--weave` it does nothing.
+- The MCP `remember` and `remember_many` tools accept `topics`. They had no way
+  to set one at all, so every memory stored through that path was unclusterable
+  by construction.
+- The consolidation worklist lists memories carrying no topic, with suggestions.
+  Suggestions prefer topic names the store already uses, because reusing a name
+  creates an edge to the memories carrying it while coining a fresh word connects
+  the memory to nothing.
+
+### Changed
+- Storing from the CLI without `--topic` now says so, and names the repair — the
+  same way the write path speaks up when it splits an oversized gist.
+- The pair scan reports how many candidates it found alongside the capped number
+  it shows. It had been finding hundreds and reporting fifteen, so a worklist
+  that read "fifteen connections to weave" was describing a backlog twenty times
+  that size.
+
+### Measured
+On a lived-in store, weaving the association backlog — 354 links across 752
+memories, no memory rewritten or removed — took the settle rate of a low-glue
+workload from 19.8% to 50.2% over four hundred real queries: 122 gained an
+answer, none lost one. Restoring topics to untagged memories was worth a further
+2.7 points on the same corpus, and suggestions drawn from existing topic names
+outperformed suggestions picked for distinctiveness alone. Recall ranking is
+unaffected by either, which was verified rather than assumed.
+
 ## [1.3.1] - 2026-08-23
 
 *Agreement up close, and a redemption that sticks.* Two places where the system

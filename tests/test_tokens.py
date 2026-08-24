@@ -60,7 +60,12 @@ class TestTokens(unittest.TestCase):
         # tools/descriptions to fit — raise the budget) -> 2260 (remind_me —
         # prospective memory, 0.8.5) -> 2300 (urgent nag param, 0.8.6) ->
         # 2360 (forget_memory replace-vs-remove guidance — prefer
-        # remember-then-supersede so lineage survives; 2026-07-25 audit) —
+        # remember-then-supersede so lineage survives; 2026-07-25 audit) ->
+        # 2410 (remember/remember_many `topics` — the MCP write path had NO way
+        # to set a topic, so every memory stored through it was unclusterable;
+        # topics are half the glue the field settles on, and measured on a live
+        # store restoring them to untagged rows lifted the settle rate by 2.7
+        # points, 11 queries gained and none lost) —
         # each a deliberate raise for named tools. This measures
         # ALL defined tools; the
         # live footprint is the
@@ -77,11 +82,12 @@ class TestTokens(unittest.TestCase):
         # included — has its own, deliberately higher ceiling for stores that
         # enable the senses (owner principle 2026-06-25: raise the budget, never
         # trim a description to fit).
-        DEFAULT_SCHEMA_TOKEN_BUDGET = 2360  # memory tools; link distinct + dream
+        DEFAULT_SCHEMA_TOKEN_BUDGET = 2410  # memory tools; link distinct + dream
                                             # + remind_me (prospective, 0.8.5;
                                             # urgent nag param, 0.8.6; forget
-                                            # lineage guidance, 1.0.0)
-        FULL_SCHEMA_TOKEN_BUDGET = 2960     # + look/feel/see/recaption (opt-in)
+                                            # lineage guidance, 1.0.0;
+                                            # topics on remember, 1.4.0)
+        FULL_SCHEMA_TOKEN_BUDGET = 3010     # + look/feel/see/recaption (opt-in)
         INSTRUCTIONS_TOKEN_BUDGET = 260
 
         default_schema = [t for t in TOOLS if t["name"] not in DEFAULT_OFF_TOOLS]

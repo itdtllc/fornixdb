@@ -358,6 +358,11 @@ def main(argv: list[str] | None = None) -> int:
     dp.add_argument("--weave", action="store_true",
                     help="also CREATE the proposed new associative links "
                          "(non-destructive — adds 'relates' links, changes nothing else)")
+    dp.add_argument("--passes", type=int, default=1, metavar="N",
+                    help="with --weave: keep weaving until the backlog is empty "
+                         "or N passes have run. A pass proposes a reviewable "
+                         "number of pairs, so clearing a real backlog takes many "
+                         "— on a lived-in store that was 24 runs by hand")
     dp.add_argument("--done", action="store_true",
                     help="close the pass: report what was reconciled (wake summary) "
                          "and reset the DUE clock")
@@ -815,6 +820,16 @@ def _dispatch(p, args, store, stores) -> int:
                   f"{mem_id}` still has it). A gist is what recall returns and "
                   f"what a proactive push cuts to 200 chars, so put the headline "
                   f"in --gist and the body in --detail.", file=sys.stderr)
+        # Topics are half of what lets the field cluster memories at all: a
+        # project whose memories carry none has no edges to settle on. Coverage
+        # fell from 89% to 32% over one month of untagged writes, so say it at
+        # the moment the memory is written rather than in a report nobody reads.
+        if not args.topic:
+            print(f"  note: no --topic. Topics are how memories find each other "
+                  f"— a project whose memories have none cannot cluster, and "
+                  f"recall falls back to words alone. Add one or more with "
+                  f"`--topic <name>` when storing, or `tag {mem_id} <name>` now.",
+                  file=sys.stderr)
         linked = target.conn.execute(
             "SELECT related_id FROM memory_link WHERE memory_id = ? "
             "AND relation = 'relates'", (mem_id,)).fetchall()
@@ -956,6 +971,16 @@ def _dispatch(p, args, store, stores) -> int:
                 print(f"--- rewrite poor gists ({len(work['gists'])}) ---")
                 for g in work["gists"]:
                     print(f"#{g['id']:<5} {g['problem']}: {g['gist'][:90]}")
+                tl = work.get("topicless") or []
+                if tl:
+                    print(f"--- tag untagged memories ({len(tl)}) — topics are "
+                          f"half the glue the field clusters on ---")
+                    for t in tl[:20]:
+                        sug = (" ".join(f"--topic {x}" for x in t["suggest"])
+                               or "(no suggestion — the project is too small)")
+                        print(f"#{t['id']:<5} {sug}   {(t['gist'] or '')[:60]}")
+                    if len(tl) > 20:
+                        print(f"      … and {len(tl) - 20} more")
                 print(f"--- close completed tasks ({len(work.get('resolutions', []))}) ---")
                 for m in work.get("resolutions", []):
                     print(f"supersede old=#{m['ids'][0]} new=#{m['ids'][1]} "
@@ -997,7 +1022,10 @@ def _dispatch(p, args, store, stores) -> int:
                     print(f"#{m['id']:<5} {m['current'] or '(none)'} -> "
                           f"{m['proposed']}  margin {m['margin']:.3f}")
                     print(f"        {(m['gist'] or '')[:90]}")
-                print(f"--- weave new associations ({len(work['associations'])}) ---")
+                _abl = (work.get("pair_totals") or {}).get("associations", 0)
+                _more = (f" of {_abl}" if _abl > len(work["associations"]) else "")
+                print(f"--- weave new associations "
+                      f"({len(work['associations'])}{_more}) ---")
                 for m in work["associations"]:
                     print(f"#{m['ids'][0]} <-> #{m['ids'][1]} cos {m['cosine']:.2f} "
                           f"({m['kinds'][0]}/{m['kinds'][1]})")
@@ -1010,6 +1038,20 @@ def _dispatch(p, args, store, stores) -> int:
         from .consolidate import dream
         try:
             rep = dream(store, weave=args.weave, done=args.done)
+            # Repeat the GENERATIVE half only. Weaving is the one move here that
+            # is purely additive, so repeating it is safe in a way that
+            # repeating a judgement move would not be; the pass still opens once
+            # and closes once, and the report rendered below is the final state.
+            woven_total = rep.get("woven", 0)
+            passes = 1
+            if args.weave and not args.done and args.passes > 1:
+                while passes < args.passes and rep["work"]["associations"]:
+                    rep = dream(store, weave=True)
+                    woven_total += rep.get("woven", 0)
+                    passes += 1
+                print(f"wove {woven_total} connection(s) over {passes} pass(es)"
+                      + (f"; {len(rep['work']['associations'])} still proposed"
+                         if rep["work"]["associations"] else "; backlog empty"))
         except FrozenStoreError as e:
             print(f"not dreamed: {e}", file=sys.stderr)
             return 1
@@ -1087,7 +1129,11 @@ def _dispatch(p, args, store, stores) -> int:
                     print(f"        suggestion: {d['suggestion']}")
             if work["associations"] and not args.done:
                 verb = "wove" if args.weave else "to weave"
-                print(f"\n--- new connections {verb} ({len(work['associations'])}) ---")
+                shown, backlog = (len(work["associations"]),
+                                  (work.get("pair_totals") or {}).get("associations", 0))
+                more = (f" of {backlog}, best first — rerun to continue"
+                        if backlog > shown else "")
+                print(f"\n--- new connections {verb} ({shown}{more}) ---")
                 for m in work["associations"]:
                     arrow = "<->" if args.weave else "<- ?->"
                     print(f"#{m['ids'][0]} {arrow} #{m['ids'][1]} cos {m['cosine']:.2f} "
@@ -1108,6 +1154,14 @@ def _dispatch(p, args, store, stores) -> int:
                 print(f"\n--- gists to tidy ({len(work['gists'])}) ---")
                 for g in work["gists"]:
                     print(f"#{g['id']:<5} {g['problem']}: {g['gist'][:90]}")
+            if work.get("topicless") and not args.done:
+                tl = work["topicless"]
+                print(f"\n--- untagged memories ({len(tl)}) — `tag <id> <name>` ---")
+                for t in tl[:10]:
+                    sug = ", ".join(t["suggest"]) or "(no suggestion)"
+                    print(f"#{t['id']:<5} suggest: {sug}   {(t['gist'] or '')[:55]}")
+                if len(tl) > 10:
+                    print(f"      … and {len(tl) - 10} more")
 
     elif args.cmd == "irrelevant":
         if args.retract is not None:

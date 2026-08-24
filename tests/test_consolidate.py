@@ -241,8 +241,13 @@ class TestPropose(unittest.TestCase):
         self.assertEqual(c["merges"], len(work["merges"]))
         self.assertGreaterEqual(c["gists"], 1)
         self.assertEqual(c["merges"], 1)
-        self.assertEqual(c["total"], c["distill"] + c["gists"] + c["merges"]
-                         + c["contradictions"] + c["associations"])
+        # every worklist category, not a hand-listed subset — this assertion
+        # used to name five of them and passed only because the rest happened
+        # to be empty in this fixture
+        self.assertEqual(c["total"],
+                         sum(v for k, v in c.items()
+                             if k not in ("total", "woven")))
+        self.assertEqual(c["topicless"], len(work["topicless"]))
         self.assertNotIn("nothing to reconcile", rep["narrative"])
         self.assertIn("dreaming", rep["narrative"])
 

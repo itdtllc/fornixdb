@@ -89,6 +89,10 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {
          "title": {"type": "string"},
          "content": {"type": "string"},
+         "topics": {"type": "array", "items": {"type": "string"},
+                    "description": "A few subject tags. Topics are how memories "
+                    "find each other — untagged ones cannot cluster, so recall "
+                    "falls back to words alone. Reuse existing topic names."},
          "kind": {"type": "string", "enum": ["semantic", "feedback", "reference",
                                              "episodic"], "default": "semantic"},
          "project": {"type": "string", "description": "Project you're working in "
@@ -118,6 +122,7 @@ TOOLS = [
          "items": {"type": "array", "items": {"type": "object", "properties": {
              "title": {"type": "string"},
              "content": {"type": "string"},
+             "topics": {"type": "array", "items": {"type": "string"}},
              "kind": {"type": "string", "enum": ["semantic", "feedback",
                                                  "reference", "episodic"]}},
              "required": ["content"]}},
@@ -455,7 +460,8 @@ class FornixMCP:
         return "\n".join(_line(dict(r)) for r in rows) or "(no standing memories)"
 
     def _remember_one(self, title: str, content: str, kind: str = "semantic",
-                      project: str | None = None) -> list[str]:
+                      project: str | None = None,
+                      topics: list | None = None) -> list[str]:
         """Store one memory and return its report line(s). Shared by `remember`
         (single) and `remember_many` (batch) so both honor the same update /
         auto-link / near-duplicate behavior. `project` scopes the memory for
@@ -465,6 +471,7 @@ class FornixMCP:
         old = self.store.show(title, reinforce=False) if title else None
         new_id = self.store.store(content[:120], content, kind=kind,
                                   name=None if old else title or None,
+                                  topics=[str(t) for t in (topics or []) if str(t).strip()],
                                   project=eff_project, source="mcp")
         self._session_writes.append(new_id)
         if old:
@@ -494,8 +501,8 @@ class FornixMCP:
         return out
 
     def remember(self, title: str, content: str, kind: str = "semantic",
-                 project: str | None = None) -> str:
-        return "\n".join(self._remember_one(title, content, kind, project))
+                 project: str | None = None, topics: list | None = None) -> str:
+        return "\n".join(self._remember_one(title, content, kind, project, topics))
 
     def remind_me(self, what: str, when: str, urgent: bool = False,
                   project: str | None = None) -> str:
@@ -515,7 +522,7 @@ class FornixMCP:
     def remember_many(self, items: list, project: str | None = None) -> str:
         """Store several memories in one call — the friction-reducer for an
         agent that accumulated multiple things to record (§15.2 #1). Each item
-        is {title, content, kind?}; same per-item behavior as `remember`
+        is {title, content, kind?, topics?}; same per-item behavior as `remember`
         (update-by-title, auto-link, near-duplicate nudge). `project` scopes the
         whole batch; a per-item `project` overrides it."""
         if not items:
@@ -527,7 +534,8 @@ class FornixMCP:
                 continue
             rep = self._remember_one(it.get("title", ""), it["content"],
                                      it.get("kind", "semantic"),
-                                     it.get("project") or project)
+                                     it.get("project") or project,
+                                     it.get("topics"))
             lines.append(f"{n}. " + "; ".join(rep))
         return "\n".join(lines)
 
