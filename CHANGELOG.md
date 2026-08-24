@@ -9,6 +9,30 @@ and can change through the day.
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-08-23
+
+*One injection, counted once.* A measurement that decides what gets built has to
+be right before the thing gets built. This one was not, and it was pointing at a
+working channel.
+
+### Fixed
+- The usefulness scan charged twice for every push delivered on the
+  per-turn seam. On that seam the host echoes a hook's output back into the
+  attachment's content field, so the transcript records the same injected block
+  in two places while the model is shown it once, and the scan summed both. The
+  tool-call seams carry the block once and were never affected, so the whole
+  error fell on one channel.
+
+  The error was invisible because it was consistent: that channel simply looked
+  expensive — expensive enough that trimming it was the obvious next piece of
+  work. Corrected, it costs about half what it appeared to, which puts it
+  mid-pack among the push channels rather than worst, and the channel it would
+  have been trimmed in favour of is now the dearest of them.
+
+  Measured push cost falls by roughly a seventh on a lived-in store, so `value`
+  is that much less pessimistic about what memory costs. No behavior changed —
+  only the accounting of what was already happening.
+
 ## [1.4.0] - 2026-08-23
 
 *Memories that can find each other.* A memory reaches a model by its words or by

@@ -110,13 +110,26 @@ def iter_events(path: str | Path):
             # (PostToolUse) put it in `stdout` as a hookSpecificOutput JSON
             # wrapper that must be UNWRAPPED before marker tests.
             att = d.get("attachment") or {}
-            parts, wrapper_event = [], None
-            if isinstance(att.get("content"), str):
-                parts.append(att["content"])
+            # ONE injection, recorded twice. On the UserPromptSubmit seam the
+            # host echoes the hook's stdout back into `content`, so the same
+            # block sits in both fields — but the model is shown it once.
+            # Joining them made every L3 push cost double, which is how the
+            # per-turn pulse came to look like the most expensive channel in the
+            # ladder when it is close to the cheapest. The PostToolUse seams
+            # carry the block in `stdout` alone and were never affected.
+            wrapper_event = None
+            stdout_block = None
             if isinstance(att.get("stdout"), str):
-                block, wrapper_event = _unwrap_hook_stdout(att["stdout"])
-                parts.append(block)
-            text = "\n".join(parts)
+                stdout_block, wrapper_event = _unwrap_hook_stdout(att["stdout"])
+            content = att.get("content") if isinstance(att.get("content"), str) else None
+            if stdout_block and BLOCK_MARKER in stdout_block:
+                # prefer the unwrapped stdout: it is the unescaped text, so its
+                # length is the honest one
+                text = stdout_block
+            elif content and BLOCK_MARKER in content:
+                text = content
+            else:
+                text = "\n".join(x for x in (content, stdout_block) if x)
             if BLOCK_MARKER in text:
                 ids = {int(m) for m in _ID.findall(text)}
                 if ids:

@@ -239,3 +239,53 @@ class TestSinceDaysWindow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOneInjectionCountedOnce(unittest.TestCase):
+    """On the UserPromptSubmit seam the host echoes the hook's stdout back into
+    `content`, so the transcript records the same block twice. The model is shown
+    it once. Summing both fields made every L3 push cost double — enough to make
+    the per-turn pulse look like the most expensive channel in the ladder when it
+    is close to the cheapest.
+    """
+
+    BLOCK = ("[FornixDB · possibly-relevant past — surfaced by topic]\n"
+             "#42 2026-08-01 sem  a gist that says something")
+
+    def _events(self, attachment):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "s.jsonl"
+            p.write_text(json.dumps({"type": "attachment",
+                                     "attachment": attachment}), encoding="utf-8")
+            return list(us.iter_events(str(p)))
+
+    def test_block_in_both_fields_is_charged_once(self):
+        evs = self._events({"hookEvent": "UserPromptSubmit",
+                            "content": self.BLOCK, "stdout": self.BLOCK})
+        self.assertEqual(len(evs), 1)
+        kind, ids, chan, chars = evs[0]
+        self.assertEqual(ids, {42})
+        # one copy, not the sum of two
+        self.assertLess(chars, len(self.BLOCK) * 2)
+        self.assertGreaterEqual(chars, len(self.BLOCK))
+
+    def test_stdout_only_is_unchanged(self):
+        evs = self._events({"hookEvent": "PostToolUse", "content": "",
+                            "stdout": self.BLOCK})
+        self.assertEqual(evs[0][1], {42})
+        self.assertEqual(evs[0][3], len(self.BLOCK))
+
+    def test_content_only_is_unchanged(self):
+        evs = self._events({"hookEvent": "UserPromptSubmit", "content": self.BLOCK})
+        self.assertEqual(evs[0][1], {42})
+        self.assertEqual(evs[0][3], len(self.BLOCK))
+
+    def test_the_channel_is_still_read_correctly(self):
+        evs = self._events({"hookEvent": "UserPromptSubmit",
+                            "content": self.BLOCK, "stdout": self.BLOCK})
+        self.assertEqual(us._channel(evs[0][2]), "L3")
+
+    def test_a_settled_field_block_is_still_l5(self):
+        settled = self.BLOCK + "\nsettled: knowledge+context"
+        evs = self._events({"hookEvent": "PostToolUse", "stdout": settled})
+        self.assertEqual(us._channel(evs[0][2]), "L5")
