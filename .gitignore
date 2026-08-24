@@ -1,8 +1,12 @@
-# The memory store is PERSONAL DATA — never commit or publish it.
+# The memory store is PERSONAL DATA — never commit or publish it. A compressed
+# or backed-up copy is the same personal data in a different shape, so the
+# archive suffixes and the backup directory are covered too.
 store/
 *.db
 *.db-wal
 *.db-shm
+*.db.gz
+_fornixdb_backups/
 
 # Generated markdown exports are a dump of the personal store — keep local.
 exports/
@@ -26,6 +30,11 @@ VERIFICATION.md
 # Claude Code project guidance — machine paths, store locations, Design/ refs.
 # Keep local, do not publish.
 CLAUDE.md
+
+# Host-tool settings are per-machine, not per-repo: they record absolute paths
+# and per-user permission entries. The whole directory, so a file added here
+# later is covered without anyone having to remember to add a rule.
+.claude/
 
 # Stray logo experiments — the published logo lives in assets/
 Logo/
