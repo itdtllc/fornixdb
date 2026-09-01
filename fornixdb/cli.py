@@ -386,6 +386,13 @@ def main(argv: list[str] | None = None) -> int:
     gp.add_argument("memory_id", type=int)
     gp.add_argument("topic")
 
+    ug = sub.add_parser("untag",
+                        help="take a topic off a memory (removes an edge, never "
+                             "the memory; the topic name goes too if it was the "
+                             "last one carrying it)")
+    ug.add_argument("memory_id", type=int)
+    ug.add_argument("topic")
+
     sg = sub.add_parser("set-gist", help="rewrite a gist in place (consolidation; "
                                          "meaning changes use store+supersede instead)")
     sg.add_argument("ref", help="memory id or name")
@@ -980,11 +987,13 @@ def _dispatch(p, args, store, stores) -> int:
                     print(f"#{g['id']:<5} {g['problem']}: {g['gist'][:90]}")
                 tl = work.get("topicless") or []
                 if tl:
-                    print(f"--- tag untagged memories ({len(tl)}) — topics are "
-                          f"half the glue the field clusters on ---")
+                    n_sug = sum(1 for t in tl if t["suggest"])
+                    print(f"--- tag untagged memories ({len(tl)}, {n_sug} with a "
+                          f"suggestion) — topics are half the glue the field "
+                          f"clusters on ---")
                     for t in tl[:20]:
                         sug = (" ".join(f"--topic {x}" for x in t["suggest"])
-                               or "(no suggestion — the project is too small)")
+                               or "(no suggestion — needs a human eye)")
                         print(f"#{t['id']:<5} {sug}   {(t['gist'] or '')[:60]}")
                     if len(tl) > 20:
                         print(f"      … and {len(tl) - 20} more")
@@ -1163,7 +1172,9 @@ def _dispatch(p, args, store, stores) -> int:
                     print(f"#{g['id']:<5} {g['problem']}: {g['gist'][:90]}")
             if work.get("topicless") and not args.done:
                 tl = work["topicless"]
-                print(f"\n--- untagged memories ({len(tl)}) — `tag <id> <name>` ---")
+                n_sug = sum(1 for t in tl if t["suggest"])
+                print(f"\n--- untagged memories ({len(tl)}, {n_sug} with a "
+                      f"suggestion) — `tag <id> <name>`, `untag` to undo ---")
                 for t in tl[:10]:
                     sug = ", ".join(t["suggest"]) or "(no suggestion)"
                     print(f"#{t['id']:<5} suggest: {sug}   {(t['gist'] or '')[:55]}")
@@ -1233,6 +1244,18 @@ def _dispatch(p, args, store, stores) -> int:
             print(f"refused: {e}", file=sys.stderr)
             return 1
         print(f"#{args.memory_id} tagged '{args.topic}'")
+
+    elif args.cmd == "untag":
+        try:
+            removed = store.untag(args.memory_id, args.topic)
+        except FrozenStoreError as e:
+            print(f"refused: {e}", file=sys.stderr)
+            return 1
+        if not removed:
+            print(f"#{args.memory_id} does not carry '{args.topic}'",
+                  file=sys.stderr)
+            return 1
+        print(f"#{args.memory_id} untagged '{args.topic}'")
 
     elif args.cmd == "set-gist":
         target, ref = resolve_ref(stores, args.ref)

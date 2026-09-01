@@ -688,6 +688,37 @@ class MemoryStore:
         self._apply_topic(self.conn, memory_id, topic)
         self.conn.commit()
 
+    def untag(self, memory_id: int, topic: str) -> bool:
+        """Take a topic off a memory. Returns False if it was not carrying it.
+
+        The counterpart `tag` never had. A topic is a judgement about what a
+        memory is ABOUT, and a judgement made in bulk is sometimes made wrong —
+        without this, a tagging pass is irreversible through the CLI, which is
+        exactly what makes a bulk pass timid. Removing a topic removes an EDGE,
+        never a memory, so this is not a delete in the budget sense.
+
+        When the last memory carrying a topic lets it go, the topic name itself
+        goes with it: a vocabulary word no memory uses connects nothing, and
+        leaving it behind would keep offering it as a suggestion."""
+        self._check_writable()
+        topic = topic.strip().lower()
+        row = self.conn.execute(
+            """SELECT t.id FROM topic t
+               JOIN memory_topic mt ON mt.topic_id = t.id AND mt.memory_id = ?
+               WHERE t.name = ?""", (memory_id, topic)).fetchone()
+        if row is None:
+            return False
+        topic_id = row[0]
+        self.conn.execute(
+            "DELETE FROM memory_topic WHERE memory_id = ? AND topic_id = ?",
+            (memory_id, topic_id))
+        self.conn.execute(
+            """DELETE FROM topic WHERE id = ? AND NOT EXISTS
+               (SELECT 1 FROM memory_topic WHERE topic_id = ?)""",
+            (topic_id, topic_id))
+        self.conn.commit()
+        return True
+
     def link(self, memory_id: int, related_id: int, relation: str = "relates") -> None:
         if relation not in RELATIONS:
             raise ValueError(f"relation must be one of {RELATIONS}")

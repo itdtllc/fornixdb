@@ -45,7 +45,7 @@ class TestOrphanAdoption(unittest.TestCase):
             "AND relation = 'supersedes'", (new, old)).fetchone())
 
     def test_distinct_content_not_adopted(self):
-        old = self.put("the pool attorney signed the structural engineer report")
+        old = self.put("the greenhouse thermostat was replaced on the north bench")
         self.s.tombstone(old)
         self.put(TEXT)
         self.assertIsNone(self.row(old)["superseded_by"])

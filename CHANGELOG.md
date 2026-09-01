@@ -9,6 +9,53 @@ and can change through the day.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-09-01
+
+*A topic has to name what a memory is about.* Tagging could only ever add, so a
+bulk pass was a decision you could not take back — and a pass you cannot undo is
+a pass you make timidly. This release supplies the missing verb, and then, with
+undo in hand, makes the suggester worth trusting: it was proposing words like
+"now" and "users", which would connect every memory to every other one.
+
+### Added
+- `untag <id> <topic>` takes a topic off a memory — the counterpart `tag` never
+  had. Without it a bulk tagging pass was irreversible through the CLI, which is
+  what made the first one timid: it hand-wrote its own rule and left a third of
+  the rows alone rather than risk a mistake it could not undo. Removing a topic
+  removes an edge, never a memory. When the last memory carrying a topic lets it
+  go, the topic name goes with it, because a vocabulary word no memory uses
+  connects nothing and would keep being offered as a suggestion.
+
+### Changed
+- The dream's topic suggester now proposes subjects rather than words. It was
+  offering "now", "never", "day", "users" and "app" — all of which pass the
+  retrieval stopword filter, appear all over a project, and would connect every
+  memory to every other. Three things changed: a topic-side stoplist (kept
+  separate from the retrieval one, which protects ranking and must not widen), a
+  floor of three memories before an existing topic is worth spreading, and a
+  shape rule that rejects identifier fragments like `e01`, `v2` and `72b`. On a
+  lived-in store the junk disappeared from the suggestion pool while real
+  subjects survived.
+- The untagged-memory worklist now says how many rows actually carry a
+  suggestion, not just how many are untagged. The old count claimed more
+  reviewable work than existed — 233 rows when about 169 had anything to act on.
+
+### Fixed
+- The reality check no longer reports a file that is sitting right there when
+  its name holds more than one space. The candidate walk stopped after the first
+  space, so `~/Desktop/Field Notes Draft.md` read as the missing directory
+  `~/Desktop/Field`. It now walks up to three words, and still reports a spaced
+  path that is genuinely gone.
+
+### Documentation
+- The dream worklist's `reproject` guidance no longer reads as "apply what you
+  just saw". The worklist prints the best fifteen; `--apply` writes every
+  proposal above the margin, which on a lived-in store is an order of magnitude
+  more and is not trustworthy at the low end, because projects that share
+  vocabulary attract each other's memories. Read the whole confident set first.
+- `distill` now says that the `distilled` tag, not the rewritten gist, is what
+  takes a session off the list.
+
 ## [1.5.0] - 2026-08-24
 
 *A store you forgot should stay forgotten.* A number the disk-budget policy acts

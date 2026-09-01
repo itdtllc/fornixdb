@@ -666,6 +666,28 @@ class TestRealityCheck(unittest.TestCase):
         finally:
             spaced.rmdir()
 
+    def test_two_spaces_in_one_segment_is_not_a_missing_path(self):
+        # measured on a live store 2026-09-01: a Desktop file whose name held
+        # two spaces was reported missing while it was sitting there, because
+        # the candidate walk stopped after ONE space.
+        spaced = self.home_dir / "Two Word Name"
+        spaced.mkdir()
+        try:
+            self.s.store(f"the link file is {spaced}/note.md now", kind="reference")
+            self.assertEqual(self._flagged(), set())
+        finally:
+            spaced.rmdir()
+
+    def test_a_spaced_path_that_is_really_gone_is_still_flagged(self):
+        # the widened walk must not turn the check off: a deleted
+        # 'Something Name.app' has to keep reporting. This is the live case
+        # that looked like a false positive and was not — the app really had
+        # been deleted, and accepting it would have hidden a true flag.
+        gone = str(self.home_dir / "Gone App.app")
+        mid = self.s.store(f"the launcher at {gone} rebuilds the project",
+                           kind="reference")
+        self.assertEqual({m for m, _ in self._flagged()}, {mid})
+
     def test_reality_ok_tag_accepts_a_reviewed_flag(self):
         mid = self.s.store(f"historical mention of {self.missing}",
                            kind="reference")

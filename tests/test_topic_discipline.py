@@ -13,8 +13,9 @@ import tempfile
 import unittest
 
 from fornixdb.cli import main
-from fornixdb.consolidate import (MAX_TOPIC_SUGGESTIONS, _topic_candidates,
-                                  _topicless_scan, propose)
+from fornixdb.consolidate import (MAX_TOPIC_SUGGESTIONS, TOPIC_MIN_CLUSTER,
+                                  TOPIC_MIN_PROJECT_DF, _is_topic_shaped,
+                                  _topic_candidates, _topicless_scan, propose)
 from fornixdb.core import MemoryStore
 from fornixdb.db import connect
 
@@ -88,6 +89,158 @@ class TestTopicSuggestions(unittest.TestCase):
         self.assertEqual(
             _topic_candidates(s, [{"id": mid, "gist": "a lone untagged memory"}],
                               None), {})
+
+
+class TestSuggestionsAreSubjects(unittest.TestCase):
+    """A suggestion has to name what the memory is ABOUT.
+
+    The first bulk tagging pass on a real store had to be done by hand-written
+    rule instead of by the worklist, because the worklist offered "now",
+    "never", "day", "users" and "app" — words that pass the retrieval stopword
+    filter, appear all over a project, and connect everything to everything.
+    """
+
+    def _corpus(self, store, phrase):
+        for i in range(8):
+            store.store(f"{phrase} run {i} finished cleanly", embedder=False,
+                        topics=["pipeline"])
+
+    def test_a_time_word_is_never_suggested(self):
+        s = mem_store()
+        for i in range(8):
+            s.store(f"the deploy never ran today, day {i}", topics=["pipeline"],
+                    embedder=False)
+        mid = s.store("the deploy never ran today either", embedder=False)
+        picks = _topic_candidates(
+            s, [{"id": mid, "gist": s.show(mid)["gist"]}], None).get(mid, [])
+        for junk in ("never", "today", "day"):
+            self.assertNotIn(junk, picks)
+
+    def test_a_generic_actor_is_never_suggested(self):
+        s = mem_store()
+        for i in range(8):
+            s.store(f"users open the app to check widget {i}", topics=["pipeline"],
+                    embedder=False)
+        mid = s.store("users open the app to check another widget", embedder=False)
+        picks = _topic_candidates(
+            s, [{"id": mid, "gist": s.show(mid)["gist"]}], None).get(mid, [])
+        for junk in ("users", "app"):
+            self.assertNotIn(junk, picks)
+
+    def test_a_real_subject_still_survives_the_filter(self):
+        # the filter must not be so wide that it silences the useful half
+        s = mem_store()
+        self._corpus(s, "the widget pipeline")
+        mid = s.store("a widget pipeline change nobody tagged", embedder=False)
+        picks = _topic_candidates(
+            s, [{"id": mid, "gist": s.show(mid)["gist"]}], None).get(mid, [])
+        self.assertIn("pipeline", picks)
+
+    def test_a_topic_only_one_memory_carries_is_not_suggested(self):
+        # a coinage is not vocabulary: suggesting it spreads a word nobody has
+        # committed to, and the point of preferring known topics is that they
+        # already connect something
+        s = mem_store()
+        self.assertGreater(TOPIC_MIN_CLUSTER, 1)
+        s.store("the solitary widget note", topics=["solitary"], embedder=False)
+        mid = s.store("another solitary widget remark", embedder=False)
+        picks = _topic_candidates(
+            s, [{"id": mid, "gist": s.show(mid)["gist"]}], None).get(mid, [])
+        self.assertNotIn("solitary", picks)
+
+    def test_a_word_in_only_two_project_memories_is_not_suggested(self):
+        s = mem_store()
+        self.assertGreater(TOPIC_MIN_PROJECT_DF, 2)
+        for i in range(8):
+            s.store(f"pipeline note {i}", topics=["pipeline"], embedder=False)
+        s.store("a note mentioning quicksilver", topics=["pipeline"], embedder=False)
+        mid = s.store("another note mentioning quicksilver", embedder=False)
+        picks = _topic_candidates(
+            s, [{"id": mid, "gist": s.show(mid)["gist"]}], None).get(mid, [])
+        self.assertNotIn("quicksilver", picks)
+
+    def test_identifier_fragments_are_not_subjects(self):
+        for frag in ("e01", "v2", "72b", "2026"):
+            self.assertFalse(_is_topic_shaped(frag), frag)
+        for real in ("model2vec", "sqlite3", "pipeline"):
+            self.assertTrue(_is_topic_shaped(real), real)
+
+    def test_the_retrieval_stopword_list_is_untouched(self):
+        # core's list protects RANKING, where a shared "day" is weak but real
+        # evidence. Widening it there would change scores; this filter must
+        # stay on the topic side of the fence.
+        from fornixdb.core import _STOPWORDS
+        for w in ("now", "never", "day", "users", "app"):
+            self.assertNotIn(w, _STOPWORDS)
+
+
+class TestUntag(unittest.TestCase):
+    """`tag` added and nothing removed, so any bulk tagging pass was
+    irreversible through the CLI — which is what made the first one timid."""
+
+    def test_a_topic_can_be_taken_off(self):
+        s = mem_store()
+        mid = s.store("a memory", topics=["alpha", "beta"], embedder=False)
+        self.assertTrue(s.untag(mid, "alpha"))
+        self.assertEqual(s.show(mid)["topics"], ["beta"])
+
+    def test_untagging_a_topic_it_does_not_carry_says_so(self):
+        s = mem_store()
+        mid = s.store("a memory", topics=["alpha"], embedder=False)
+        self.assertFalse(s.untag(mid, "gamma"))
+        self.assertEqual(s.show(mid)["topics"], ["alpha"])
+
+    def test_case_and_space_are_normalized_the_way_tag_normalizes_them(self):
+        s = mem_store()
+        mid = s.store("a memory", topics=["alpha"], embedder=False)
+        self.assertTrue(s.untag(mid, "  ALPHA "))
+        self.assertEqual(s.show(mid)["topics"], [])
+
+    def test_the_last_use_takes_the_topic_name_with_it(self):
+        # a vocabulary word no memory uses connects nothing, and leaving it
+        # behind would keep it in the suggestion pool
+        s = mem_store()
+        mid = s.store("a memory", topics=["alpha"], embedder=False)
+        s.untag(mid, "alpha")
+        self.assertEqual(
+            s.conn.execute("SELECT count(*) FROM topic WHERE name='alpha'"
+                           ).fetchone()[0], 0)
+
+    def test_a_topic_another_memory_still_uses_survives(self):
+        s = mem_store()
+        keep = s.store("keeper", topics=["alpha"], embedder=False)
+        drop = s.store("dropper", topics=["alpha"], embedder=False)
+        s.untag(drop, "alpha")
+        self.assertEqual(s.show(keep)["topics"], ["alpha"])
+
+    def test_untagging_removes_no_memory(self):
+        s = mem_store()
+        mid = s.store("a memory", topics=["alpha"], embedder=False)
+        s.untag(mid, "alpha")
+        self.assertIsNotNone(s.show(mid))
+
+    def test_it_round_trips_through_the_cli(self):
+        db = tempfile.mktemp(suffix=".db")
+        try:
+            main(["--db", db, "init"])
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                main(["--db", db, "store", "--gist", "a memory", "--topic", "alpha"])
+                main(["--db", db, "tag", "1", "beta"])
+                rc_ok = main(["--db", db, "untag", "1", "beta"])
+                rc_miss = main(["--db", db, "untag", "1", "beta"])
+                main(["--db", db, "show", "1"])
+            self.assertEqual(rc_ok, None if rc_ok is None else 0)
+            self.assertEqual(rc_miss, 1)
+            self.assertIn("untagged 'beta'", out.getvalue())
+            self.assertNotIn("beta", out.getvalue().rsplit("topics:", 1)[-1]
+                             .splitlines()[0])
+        finally:
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    os.remove(db + suffix)
+                except OSError:
+                    pass
 
 
 class TestTopiclessWorklist(unittest.TestCase):

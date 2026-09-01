@@ -346,6 +346,68 @@ TOPICLESS_MIN_PROJECT_ROWS = 5   # below this a project has no vocabulary to
 MAX_TOPIC_SUGGESTIONS = 3
 
 
+# Words that survive the RETRIEVAL stopword filter (core._STOPWORDS) but still
+# cannot name what a memory is ABOUT. The two lists do different jobs and must
+# not be merged: core's list protects ranking, where "day" in both a query and a
+# row is weak but real evidence, so removing it there would change scores. Here
+# the question is different — "day" as a TOPIC connects every memory that
+# mentions a day to every other, which is an edge that carries no meaning and
+# dilutes the ones that do.
+#
+# The test each word has to fail: could a person answer "what is this memory
+# about?" with it? Time words, counts, generic verbs of doing, bare qualifiers
+# and generic actors all fail. Domain words stay out of this list even when they
+# look bland — "recall", "release", "server" name real subjects in some store.
+_TOPIC_STOPWORDS = frozenset("""
+now never always today tomorrow yesterday day days time times week weeks month
+months year years hour hours minute minutes date dates ago later earlier soon
+next last first second third final morning night evening afternoon while before
+after during until since yet already sometimes often once twice recent recently
+one two three four five six seven eight nine ten hundred thousand per half lot
+lots number numbers count counts less least lower higher plus minus
+work works working worked done thing things stuff way ways part parts case cases
+point points item items step steps side sides place places end ends start starts
+started begin began left right read reads write writes wrote written run runs ran
+put puts say says said tell tells told ask asks asked see sees saw seen look
+looks looked take takes taken took give gives given gave let lets keep keeps kept
+find finds found add adds added set sets try tries tried call calls called show
+shows showed shown seem seems turn turns turned move moves moved hold holds held
+stop stops stopped help helps helped mean means meant happen happens happened
+become becomes became remain remains stay stays leave leaves bring brings
+shipped built fix fixed fixes making doing having being
+good bad better best worse worst big small large long short high low old real
+sure fine okay able likely possible actual actually really probably maybe instead
+rather without within because though although however therefore whether unless
+upon across against between among through around behind beyond above below near
+far else enough quite almost exactly simply nearly entirely fully
+user users owner app apps session sessions note notes someone something anything
+everything nothing everyone anyone others whatever whichever via etc
+""".split())
+
+# An EXISTING topic is worth suggesting only once it is a cluster. A topic
+# carried by one or two memories is a coinage, not vocabulary: suggesting it
+# spreads a word nobody has committed to, and the whole reason to prefer known
+# topics over fresh ones is that they already connect something.
+TOPIC_MIN_CLUSTER = 3
+
+# A FRESH word must appear in at least this many of the project's memories. The
+# old floor was 2 — a single other memory — which is the thinnest possible
+# evidence that a word means anything in this project, and it is where most of
+# the junk came from.
+TOPIC_MIN_PROJECT_DF = 3
+
+
+def _is_topic_shaped(word: str) -> bool:
+    """False for tokens that are identifier fragments rather than subjects:
+    bare numbers, anything starting with a digit ('72b', '4k'), and a single
+    letter followed by digits ('e01', 'v2'). A measurement or a version is not
+    a subject. Words like 'model2vec' or 'sqlite3' keep their digits and stay
+    eligible, because the letters come first and carry the meaning."""
+    if not word or word[0].isdigit():
+        return False
+    return not (len(word) > 1 and word[0].isalpha() and word[1:].isdigit())
+
+
 def _topic_candidates(store: MemoryStore, rows: list, project) -> dict:
     """Suggest topics for untagged rows from the words their own PROJECT already
     uses — distinctive within it, but not unique to one memory.
@@ -376,19 +438,24 @@ def _topic_candidates(store: MemoryStore, rows: list, project) -> dict:
     for r in corpus:
         for w in set(_content_terms(r["gist"] or "")):
             df[w] = df.get(w, 0) + 1
-    ceiling = max(len(corpus) // 4, 2)     # not "the project"
+    ceiling = max(len(corpus) // 4, TOPIC_MIN_PROJECT_DF)   # not "the project"
     out = {}
     for r in rows:
-        terms = _content_terms(r["gist"] or "")
-        # 1) words this memory uses that are ALREADY topics somewhere in the
-        #    store — each one is an edge to the memories carrying it, best-
-        #    connected first
-        known = sorted((w for w in terms if w in existing),
+        terms = [w for w in _content_terms(r["gist"] or "")
+                 if w not in _TOPIC_STOPWORDS and _is_topic_shaped(w)]
+        # 1) words this memory uses that are ALREADY an established topic
+        #    somewhere in the store — each one is an edge to the memories
+        #    carrying it, best-connected first
+        known = sorted((w for w in terms
+                        if existing.get(w, 0) >= TOPIC_MIN_CLUSTER),
                        key=lambda w: -existing[w])
         # 2) otherwise words distinctive within the project: common enough to
-        #    connect two memories, rare enough not to just name the project
+        #    connect several memories, rare enough not to just name the project.
+        #    A word that is a topic somewhere but below the cluster floor falls
+        #    through to here and has to earn its place on project evidence.
         fresh = [w for w in terms
-                 if w not in existing and 1 < df.get(w, 0) <= ceiling]
+                 if existing.get(w, 0) < TOPIC_MIN_CLUSTER
+                 and TOPIC_MIN_PROJECT_DF <= df.get(w, 0) <= ceiling]
         fresh.sort(key=lambda w: (-df[w], -len(w)))
         picks = known + fresh
         if picks:
@@ -578,6 +645,8 @@ def _resolution_scan(store: MemoryStore, exclude_ids: set[int]) -> list:
 _FS_PATH_RE = re.compile(r"(?:~|/Users)/[^\s`'\"()\[\]{}<>*,;|]+")
 _PATH_STRIP = ".,;:!?…"          # sentence punctuation that rides a path's tail
 MAX_REALITY_PER_MEMORY = 5       # a pathological detail can't flood the list
+MAX_PATH_SPACE_WORDS = 3         # how many spaces a single path segment may
+                                 # hold before we stop guessing where it ends
 # Paths that are missing by NATURE, not by rot — flagging them is noise
 # (measured on the live store's first run, 2026-07-01):
 _EPHEMERAL_SEGMENTS = ("Library/Developer/CoreSimulator/",  # sim containers
@@ -612,13 +681,20 @@ def _extract_paths(text: str) -> list[list[str]]:
         cands = [p]
         if nxt == " ":                        # maybe a space inside a segment
             tail = re.split(r"[`'\"()\[\]{}<>,;|\n]", text[m.end() + 1:], maxsplit=1)[0]
-            word = tail.split(" ", 1)[0].rstrip(_PATH_STRIP)
-            if word:
-                joined = f"{p} {word}"
+            # Walk WORD BY WORD, not one word: a segment can hold more than one
+            # space ('Field Notes Draft.md', 'Server Tools Beta.app'), and
+            # stopping at the first one reported a file that exists as missing.
+            joined = p
+            for word in tail.split(" ")[:MAX_PATH_SPACE_WORDS]:
+                word = word.rstrip(_PATH_STRIP)
+                if not word:
+                    break
+                joined = f"{joined} {word}"
                 cands.append(joined)          # …/Test Cases/P20/TestPlan.md
                 cut = joined.find("/", len(p) + 1)
                 if cut != -1:
                     cands.append(joined[:cut])  # …/Test Cases
+                    break                     # the spaced segment ended here
         out.append(cands)
     return out
 
