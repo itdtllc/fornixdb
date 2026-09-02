@@ -9,7 +9,7 @@ aspirational.
 An AI assistant forgets everything between sessions. The user pays for that
 every day: re-explaining context, re-stating preferences, watching the AI
 re-read files and re-derive decisions it already made. And some questions
-can't be answered at all — "what day did the pool guy come by?" has no answer
+can't be answered at all — "what day did the piano tuner come by?" has no answer
 in a stateless chat, no matter how good the model is.
 
 FornixDB is a persistent local memory any AI can use. It runs entirely
@@ -82,7 +82,7 @@ different confidence:
 Honesty is the pitch: at typical usage the verdict is break-even to
 modestly positive — memory roughly pays for itself in tokens — and what it
 buys with that budget is recall that has no token price at all: "what day
-did the pool guy come by?" is unanswerable in a stateless chat at any cost.
+did the piano tuner come by?" is unanswerable in a stateless chat at any cost.
 
 The running costs stay bounded: per-recall pulls are a few hundred tokens
 at default settings, hard-capped by a configurable character budget, and

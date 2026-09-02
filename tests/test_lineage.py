@@ -104,7 +104,7 @@ class TestStatusTips(unittest.TestCase):
     """`brief`'s thread dashboard. A resume pointer sits at default salience,
     so it loses the salience ranking to any long-lived reference row — measured
     on the live store 2026-08-02, the active project's pointer did not reach
-    even the top-40 candidate pool. Threads rank on a different axis: how
+    even the top-40 candidate shortlist. Threads rank on a different axis: how
     recently the thread moved."""
 
     def setUp(self):

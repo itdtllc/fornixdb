@@ -91,8 +91,8 @@ class TestParseAndScan(unittest.TestCase):
                 {"type": "attachment",
                  "attachment": {"hookEvent": "PostToolUse",
                                 "stdout": "[FornixDB · possibly-relevant past — …]\n"
-                                          "settled: pool · 2026-06-29 · knowledge+recent\n"
-                                          "#12 mortar gist"}},
+                                          "settled: irrigation · 2026-06-29 · knowledge+recent\n"
+                                          "#12 valve gist"}},
                 {"type": "attachment",
                  "attachment": {"hookEvent": "PostToolUse",
                                 "stdout": "[FornixDB · possibly-relevant past — …]\n"
@@ -172,7 +172,7 @@ class TestHookStdoutUnwrap(unittest.TestCase):
 
     def test_escaped_settled_block_attributes_to_l5(self):
         block = ("[FornixDB · possibly-relevant past — …]\n"
-                 "settled: pool · 2026-06-29 · knowledge+recent\n#12 mortar gist")
+                 "settled: irrigation · 2026-06-29 · knowledge+recent\n#12 valve gist")
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "s.jsonl"
             p.write_text(json.dumps(self._line(block)), encoding="utf-8")

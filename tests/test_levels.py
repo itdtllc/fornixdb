@@ -129,17 +129,17 @@ class LevelsCase(unittest.TestCase):
     # ---- the dials actually take effect when a rung is selected -----------
     def test_l1_off_makes_recall_exact_only(self):
         # L1's dial must really gate retrieval, not just be declarative
-        self.s.store("The pool guy comes on Tuesdays.",
-                     name="Pool cleaning schedule", kind="semantic")
+        self.s.store("The piano tuner comes on Tuesdays.",
+                     name="Piano tuning schedule", kind="semantic")
         # L1 on (default): a fuzzy subject query finds it via ranking
-        self.assertTrue(self.s.recall("pool guy day"))
+        self.assertTrue(self.s.recall("piano tuner day"))
         # drop to L0 (L1 off): no ranked recall, but exact name still works
         levels.toggle(self.s, "L1", False)
-        self.assertEqual(self.s.recall("pool guy day"), [])
-        self.assertTrue(self.s.recall("Pool cleaning schedule"))  # keyed get
+        self.assertEqual(self.s.recall("piano tuner day"), [])
+        self.assertTrue(self.s.recall("Piano tuning schedule"))  # keyed get
         # back on restores ranked recall
         levels.toggle(self.s, "L1", True)
-        self.assertTrue(self.s.recall("pool guy day"))
+        self.assertTrue(self.s.recall("piano tuner day"))
 
     def test_l2_l3_l4_dials_are_wired(self):
         # each rung writes the config key its runtime gate reads

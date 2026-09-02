@@ -88,11 +88,11 @@ class TestSettling(FieldBase):
         self.assertTrue(st.direction.startswith("settled: "))
 
     def test_shared_topic_clusters_across_domains(self):
-        k = self.s.store("Mortar spec: Ardex X 3 Plus is the wrong product",
-                         kind="semantic", topics=["pool"])
-        r = self.s.store("Stop-work called on the mortar issue",
-                         kind="episodic", event_time=iso(3), topics=["pool"])
-        fr = run_field(self.s, "mortar issue")
+        k = self.s.store("Valve spec: the Acme 3 Plus is the wrong part",
+                         kind="semantic", topics=["irrigation"])
+        r = self.s.store("Retested the valve issue on the bench",
+                         kind="episodic", event_time=iso(3), topics=["irrigation"])
+        fr = run_field(self.s, "valve issue")
         st = settle(self.s, fr)
         self.assertTrue(st.settled)
         self.assertEqual({m["id"] for m in st.rows}, {k, r})

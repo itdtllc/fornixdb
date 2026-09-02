@@ -26,11 +26,11 @@ from .timeparse import parse_when
 
 
 def _transcripts_source(store, arg):
-    """The transcript pool a push-usefulness command reads: the explicit
+    """The transcript source a push-usefulness command reads: the explicit
     --transcripts flag, else env FORNIXDB_TRANSCRIPTS, else this STORE's
     configured transcripts_path, else the Claude host default (matching the
     env>config precedence dream's refreshes already use). Config-before-default
-    matters on a second-consumer store with its own transcript pool: the old
+    matters on a second-consumer store with its own transcript source: the old
     hardcoded default silently scanned another host's sessions against it —
     the cross-store id-collision mode of the 2026-07-03 phantom-credit bug
     (hit live on a second-consumer store, 2026-07-26). An explicit empty string means

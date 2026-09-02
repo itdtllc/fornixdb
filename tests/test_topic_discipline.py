@@ -198,7 +198,7 @@ class TestUntag(unittest.TestCase):
 
     def test_the_last_use_takes_the_topic_name_with_it(self):
         # a vocabulary word no memory uses connects nothing, and leaving it
-        # behind would keep it in the suggestion pool
+        # behind would keep it in the suggestion set
         s = mem_store()
         mid = s.store("a memory", topics=["alpha"], embedder=False)
         s.untag(mid, "alpha")

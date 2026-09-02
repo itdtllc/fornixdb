@@ -8,7 +8,7 @@
 
 ## The problem
 
-An AI assistant forgets everything between sessions. You pay for that every day: re-explaining context, re-stating preferences, watching the model re-read files and re-derive decisions it already made. Some questions have no answer at all in a stateless chat — *"what day did the pool guy come by?"* — no matter how capable the model is.
+An AI assistant forgets everything between sessions. You pay for that every day: re-explaining context, re-stating preferences, watching the model re-read files and re-derive decisions it already made. Some questions have no answer at all in a stateless chat — *"what day did the piano tuner come by?"* — no matter how capable the model is.
 
 FornixDB is a memory any AI can read and write. It runs entirely on your machine, in a single SQLite file you own, and works with anything that can call a tool or run a shell command — Claude, a local Llama/Qwen, a robot's onboard model.
 
@@ -64,7 +64,7 @@ active development branch and can change through the day; for a stable checkout,
 install a tagged release instead:
 
 ```bash
-pip install "git+https://github.com/itdtllc/fornixdb@v1.6.0"
+pip install "git+https://github.com/itdtllc/fornixdb@v1.6.1"
 ```
 
 Releases are listed at <https://github.com/itdtllc/fornixdb/releases>; see

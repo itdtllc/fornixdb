@@ -36,7 +36,7 @@ MEMORIES = [
     ("commute", "Morning commute", "The automobile stalled."),
     ("render",  "Render note",     "Her eyes sparkled."),
     ("bugfix",  "Bug fix",         "Fixed the glitch."),
-    ("pool",    "Pool service",    "The pool guy came on Tuesday afternoon."),
+    ("piano",   "Piano tuning",    "The piano tuner came on Tuesday afternoon."),
     ("backup",  "Backups",         "Backups run to the NAS at 2 AM nightly."),
     ("storage", "Storage",         "The Synology NAS holds the family photos."),
     ("router",  "Router",          "The router admin page is at 192.168.1.1."),
@@ -51,7 +51,7 @@ QUERIES = [
     {"query": "twinkle",  "expect": "render",  "type": "synonym"},
     {"query": "artifact", "expect": "bugfix",  "type": "synonym"},
     # plain keyword — both modes should answer (no-regression control)
-    {"query": "pool guy",        "expect": "pool",    "type": "keyword"},
+    {"query": "piano tuner",     "expect": "piano",   "type": "keyword"},
     {"query": "nightly backups", "expect": "backup",  "type": "keyword"},
     {"query": "Synology photos", "expect": "storage", "type": "keyword"},
 ]

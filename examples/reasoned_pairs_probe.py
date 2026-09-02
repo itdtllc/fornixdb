@@ -26,7 +26,7 @@ Three strata are sampled per store (~20 pairs each, §2):
 
 DEVIATION FROM §2, and why it is a strengthening rather than a shortcut: the
 design sampled stratum A from the pair scan's live cosine-near candidates and
-had the owner review them afterwards. Measured 2026-08-01, that pool is EMPTY
+had the owner review them afterwards. Measured 2026-08-01, that set is EMPTY
 on both live stores — on the main store all 23 same-kind pairs in the
 [0.70,0.88) band have already been adjudicated, and the second store has 17
 non-episodic rows total. A well-groomed store does not carry a backlog of
@@ -383,11 +383,11 @@ def sample(store_name: str, rng: random.Random) -> list[dict]:
         # an embedder (up to 0.93) and were still ruled distinct by a human. A
         # randomly-drawn negative at cosine 0.3 is trivially separable and would
         # inflate the triage score; these are the pairs the workload is made of.
-        distinct_pool = [tuple(sorted(p)) for p in skip
+        distinct_set = [tuple(sorted(p)) for p in skip
                          if all(i in all_vecs for i in p)]
-        distinct_pool.sort(key=lambda p: cosine(all_vecs[p[0]], all_vecs[p[1]]),
+        distinct_set.sort(key=lambda p: cosine(all_vecs[p[0]], all_vecs[p[1]]),
                            reverse=True)
-        for aid, bid in distinct_pool[:TRIAGE_N - len(stratum_a)]:
+        for aid, bid in distinct_set[:TRIAGE_N - len(stratum_a)]:
             stratum_a.append((aid, bid, None))
             truth[(aid, bid)] = "DISTINCT"
         stratum_a = [(a, b, round(cosine(all_vecs[a], all_vecs[b]), 3))
@@ -418,12 +418,12 @@ def sample(store_name: str, rng: random.Random) -> list[dict]:
                 stratum_c.append((a["id"], b["id"], round(c, 3)))
 
         out = []
-        for name, pool in (("triage", stratum_a), ("time_adjacent", stratum_b),
+        for name, group in (("triage", stratum_a), ("time_adjacent", stratum_b),
                            ("mid_distance", stratum_c)):
             if name != "triage":
-                rng.shuffle(pool)
+                rng.shuffle(group)
             cap = TRIAGE_N if name == "triage" else PER_STRATUM
-            for aid, bid, c in pool[:cap]:
+            for aid, bid, c in group[:cap]:
                 ra, rb = by_id[aid], by_id[bid]
                 out.append({
                     "store": store_name, "stratum": name, "cosine": c,
@@ -433,8 +433,8 @@ def sample(store_name: str, rng: random.Random) -> list[dict]:
                     "a_date": (ra["event_time"] or ra["recorded_time"] or "")[:10],
                     "b_date": (rb["event_time"] or rb["recorded_time"] or "")[:10],
                 })
-            print(f"  {store_name}/{name}: {len(pool)} candidates -> "
-                  f"{min(len(pool), cap)} sampled")
+            print(f"  {store_name}/{name}: {len(group)} candidates -> "
+                  f"{min(len(group), cap)} sampled")
         return out
     finally:
         store.close()
@@ -539,8 +539,8 @@ def sample_analogy(store_name: str, rng: random.Random, n: int = 24) -> list[dic
         quads = [(sup[i][0], sup[i][1], sup[i + 1][0], sup[i + 1][1], "HOLDS")
                  for i in range(0, min(len(sup) - 1, 12), 2)]
         if len(rows) >= 4:
-            pool = [r["id"] for r in rows]
-            quads += [(*rng.sample(pool, 4), "FALSE") for _ in range(6)]
+            group = [r["id"] for r in rows]
+            quads += [(*rng.sample(group, 4), "FALSE") for _ in range(6)]
         for a, b, c_, d, truth in quads:
             out.append({"store": store_name, "stratum": "proportion",
                         "cosine": None, "truth": truth,

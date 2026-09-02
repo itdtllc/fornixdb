@@ -1975,7 +1975,7 @@ class MemoryStore:
         # importance axis `salient` ranks on, which is why a resume row at
         # default salience never reached that list: measured 2026-08-02, the
         # pointer to the current state of the active project did not make the
-        # top-40 salience pool, so a pickup fell back to re-reading a 42k-token
+        # top-40 salience shortlist, so a pickup fell back to re-reading a 42k-token
         # narrative file that the chain already summarises for ~800.
         return {"since": since[:10], "recent": recent, "salient": salient,
                 "useful": useful,

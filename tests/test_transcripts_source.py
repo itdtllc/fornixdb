@@ -1,4 +1,4 @@
-"""_transcripts_source: which transcript pool a push-usefulness CLI command
+"""_transcripts_source: which transcript source a push-usefulness CLI command
 reads. The old hardcoded ~/.claude/projects default silently scanned another
 host's sessions against a second-consumer store (a second consumer's, live 2026-07-26) —
 the cross-store id-collision mode of the 2026-07-03 phantom-credit bug. The
@@ -41,7 +41,7 @@ class TestTranscriptsSource(unittest.TestCase):
 
     def test_empty_flag_means_skip(self):
         # value's documented "empty string to skip" stays a skip, never a
-        # fall-through to config (that would scan a pool the caller opted out of)
+        # fall-through to config (that would scan a source the caller opted out of)
         set_config(self.store, "transcripts_path", "/cfg/dir")
         self.assertIsNone(_transcripts_source(self.store, ""))
 
@@ -54,7 +54,7 @@ class TestTranscriptsSource(unittest.TestCase):
             del os.environ["FORNIXDB_TRANSCRIPTS"]
 
     def test_store_config_beats_host_default(self):
-        # the second-consumer mode: a second-consumer store with its own pool must NEVER
+        # the second-consumer mode: a second-consumer store with its own source must NEVER
         # default to another host's sessions
         set_config(self.store, "transcripts_path", "/her/own/transcripts")
         self.assertEqual(_transcripts_source(self.store, None),
@@ -78,32 +78,32 @@ class TestTranscriptsSource(unittest.TestCase):
 class TestScanCliUsesStoreConfig(unittest.TestCase):
     def setUp(self):
         # the suite pins FORNIXDB_TRANSCRIPTS=off so tests never scan this
-        # machine's transcripts; this test provides its own pool
+        # machine's transcripts; this test provides its own source
         self._env = os.environ.pop("FORNIXDB_TRANSCRIPTS", None)
 
     def tearDown(self):
         if self._env is not None:
             os.environ["FORNIXDB_TRANSCRIPTS"] = self._env
 
-    def test_usefulness_scan_reads_configured_pool(self):
+    def test_usefulness_scan_reads_configured_source(self):
         with tempfile.TemporaryDirectory() as d:
             db = str(Path(d) / "t.db")
-            pool = Path(d) / "pool"
-            pool.mkdir()
-            (pool / "s.jsonl").write_text(
+            group = Path(d) / "group"
+            group.mkdir()
+            (group / "s.jsonl").write_text(
                 json.dumps({"type": "attachment",
                             "attachment": {"hookEvent": "UserPromptSubmit",
                                            "content": "[FornixDB · possibly-"
                                            "relevant past — …]\n#36 gist"}}),
                 encoding="utf-8")
             s = MemoryStore(db_path=db)
-            set_config(s, "transcripts_path", str(pool))
+            set_config(s, "transcripts_path", str(group))
             s.close()
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 rc = main(["--db", db, "usefulness-scan"])
             self.assertFalse(rc)
-            self.assertIn(str(pool), out.getvalue())
+            self.assertIn(str(group), out.getvalue())
             self.assertIn("push impressions: 1", out.getvalue())
 
 

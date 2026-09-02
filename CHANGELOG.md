@@ -9,6 +9,10 @@ and can change through the day.
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-09-01
+
+*Documentation updates.* Wording and example text only — no functional change.
+
 ## [1.6.0] - 2026-09-01
 
 *A topic has to name what a memory is about.* Tagging could only ever add, so a
@@ -34,7 +38,7 @@ undo in hand, makes the suggester worth trusting: it was proposing words like
   separate from the retrieval one, which protects ranking and must not widen), a
   floor of three memories before an existing topic is worth spreading, and a
   shape rule that rejects identifier fragments like `e01`, `v2` and `72b`. On a
-  lived-in store the junk disappeared from the suggestion pool while real
+  lived-in store the junk disappeared from the suggestion set while real
   subjects survived.
 - The untagged-memory worklist now says how many rows actually carry a
   suggestion, not just how many are untagged. The old count claimed more
@@ -419,11 +423,11 @@ about eight hundred.
   guesses they are, and say to read the other memory before superseding.
 
 - The push-usefulness CLI commands (`usefulness-scan`, `suppress`, `value`)
-  no longer hardcode `~/.claude/projects` as their default transcript pool:
+  no longer hardcode `~/.claude/projects` as their default transcript source:
   the default is now the same resolution dream's refreshes use — env
   `FORNIXDB_TRANSCRIPTS`, else the store's `transcripts_path` config (with
   the same off-sentinels), else the Claude host default. On a
-  second-consumer store with its own transcript pool (a second consumer's), the old
+  second-consumer store with its own transcript source (a second consumer's), the old
   default silently scanned another host's sessions against it — the
   cross-store id-collision mode of the 2026-07-03 phantom-credit bug.
   An explicit `--transcripts` flag always wins.

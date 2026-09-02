@@ -124,8 +124,8 @@ def pick_cpu_temp(sensors: list[tuple[str, float]]) -> float | None:
     plausible = [(n, t) for n, t in sensors
                  if 0.0 < t < 120.0 and "cal" not in n.lower()]
     die = [t for n, t in plausible if "tdie" in n.lower()]
-    pool = die or [t for _, t in plausible]
-    return round(max(pool), 1) if pool else None
+    readings = die or [t for _, t in plausible]
+    return round(max(readings), 1) if readings else None
 
 
 def _hid_temperatures() -> list[tuple[str, float]]:
