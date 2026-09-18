@@ -109,6 +109,30 @@ class TestKeywordModeEndToEnd(unittest.TestCase):
         self.assertEqual(row["project"], "InventoryApp")
         self.assertEqual(get_config(self.s, rp.UNDO_KEY, "[]"), "[]")
 
+    def test_forgotten_rows_are_neither_anchor_candidate_nor_relabelable(self):
+        # a forgotten row is tombstoned with NO successor — superseded_time set,
+        # superseded_by NULL — so a superseded_by liveness check lets it back in
+        dead_anchor = self.s.store("forgotten video clip lipsync comfyui note",
+                                   kind="reference", project="videos")
+        dead_cand = self.s.store("Session: forgotten video clip lipsync comfyui",
+                                 kind="episodic", project="InventoryApp")
+        # propose first, while both are live, so apply sees a stale proposal
+        stale = rp.propose(self.s, suspect=["InventoryApp"])["proposals"]
+        self.assertIn(dead_cand, {p["id"] for p in stale})
+        self.s.tombstone(dead_anchor)
+        self.s.tombstone(dead_cand)
+
+        anchors, cands = rp.anchors_and_candidates(self.s, {"inventoryapp"})
+        self.assertNotIn(dead_anchor, {r["id"] for r in anchors})
+        self.assertNotIn(dead_cand, {r["id"] for r in cands})
+        self.assertNotIn(dead_cand, {p["id"] for p in rp.propose(
+            self.s, suspect=["InventoryApp"])["proposals"]})
+
+        rp.apply_proposals(self.s, [p for p in stale if p["id"] == dead_cand])
+        row = self.s.conn.execute("SELECT project FROM memory WHERE id=?",
+                                  (dead_cand,)).fetchone()
+        self.assertEqual(row["project"], "InventoryApp")
+
     def test_alias_equivalent_not_churned(self):
         set_config(self.s, "project_aliases", "videos=clips")
         # an episodic labeled "clips" whose content is video — same canon, skip it

@@ -155,7 +155,7 @@ def anchors_and_candidates(store, suspect: set[str]):
     full set regardless of suspect so the centroids stay well-attested."""
     rows = store.conn.execute(
         "SELECT id, kind, project, name, gist, detail FROM memory "
-        "WHERE superseded_by IS NULL").fetchall()
+        "WHERE superseded_time IS NULL").fetchall()
     anchors, candidates = [], []
     for r in rows:
         if (r["project"] or "").strip() and r["kind"] != "episodic":
@@ -264,7 +264,7 @@ def apply_proposals(store, proposals: list[dict]) -> dict:
     applied = 0
     for p in proposals:
         cur = store.conn.execute("SELECT project FROM memory WHERE id = ? "
-                                 "AND superseded_by IS NULL", (p["id"],)).fetchone()
+                                 "AND superseded_time IS NULL", (p["id"],)).fetchone()
         if cur is None:
             continue
         undo.append([p["id"], cur["project"]])
