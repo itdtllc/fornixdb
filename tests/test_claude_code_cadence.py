@@ -10,6 +10,8 @@ import os
 import tempfile
 import time
 import unittest
+
+from fornixdb.levels import set_rung  # push rungs ship off since 1.7.0
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -122,6 +124,7 @@ class TestMain(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = str(Path(self.tmp.name) / "t.db")
         s = file_store(self.tmp.name)
+        set_rung(s, "L4")
         s.store("DEPLOY RULE: always run the migration script before deploy.",
                 kind="semantic", name="deploy-migration-rule")
         s.close()

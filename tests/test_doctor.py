@@ -66,8 +66,11 @@ class TestSuggestedDefaults(_FileStoreCase):
     def test_code_defaults_report_satisfied(self):
         rows = {r["key"]: r for r in doctor.suggested_settings(self.s)}
         for k in ("budget_policy", "capture_mode", "vectors",
-                  "proactive_recall", "session_capture"):
+                  "session_capture"):
             self.assertTrue(rows[k]["satisfied"], f"{k} should be satisfied")
+        # the push rungs are the owner's choice: suggesting a value would let
+        # `configure` undo a `level` someone picked on purpose
+        self.assertNotIn("proactive_recall", rows)
 
     def test_suggested_budget_is_bounded_by_ceiling(self):
         from fornixdb.db import DEFAULT_MACHINE_CAP_MAX_MB

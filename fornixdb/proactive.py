@@ -401,7 +401,9 @@ def proactive_recall(store: MemoryStore, prompt: str, *,
     if not auto_background_enabled(store):              # ingest_mode=explicit
         return None
     due_part = due_reminder_block(store)
-    if get_config(store, "proactive_recall", "on") in ("off", "0", "false"):
+    from .levels import dial_default
+    if get_config(store, "proactive_recall",
+                  dial_default("proactive_recall")) in ("off", "0", "false"):
         return due_part
     if not prompt or len(prompt.strip()) < MIN_PROMPT_CHARS:
         return due_part

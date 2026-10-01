@@ -3,6 +3,8 @@
 import os
 import tempfile
 import unittest
+
+from fornixdb.levels import set_rung  # push rungs ship off since 1.7.0
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -354,6 +356,10 @@ class TestBeatLog(FieldBase):
 class TestCadenceSeam(FieldBase):
     """L5 rides the L4 metronome: the dial changes the gather, not the beat."""
 
+    def setUp(self):
+        super().setUp()
+        set_rung(self.s, "L4")     # the metronome; each test sets the L5 dial
+
     def _seed_pattern(self):
         k = self.s.store("Seam freeze fix: soft seam seed kills Wan motion",
                          kind="semantic")
@@ -378,7 +384,7 @@ class TestCadenceSeam(FieldBase):
 
     def test_pulse_unchanged_when_dial_off(self):
         from fornixdb.cadence import Episode, pulse
-        set_config(self.s, "parallel_recall", "off")  # override the 0.5.0 default
+        set_config(self.s, "parallel_recall", "off")  # explicit, not the default
         self._seed_pattern()
         block = pulse(self.s, "chasing the seam freeze fix in the render",
                       Episode())

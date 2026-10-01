@@ -88,20 +88,23 @@ def multi_timeline(stores, start: str, end: str, *, limit: int = 50, **kw) -> li
 
 
 def multi_brief(stores, **kw) -> dict:
-    out = {"since": None, "recent": [], "salient": [], "useful": [],
-           "threads": []}
+    out = {"since": None, "recent": [], "recent_folded": {}, "salient": [],
+           "useful": [], "threads": []}
     for alias, store in stores:
         b = store.brief(**kw)
         out["since"] = out["since"] or b["since"]
         out["recent"] += _tag(b["recent"], alias)
+        for label, n in b.get("recent_folded", {}).items():
+            out["recent_folded"][label] = out["recent_folded"].get(label, 0) + n
         out["salient"] += _tag(b["salient"], alias)
         out["useful"] += _tag(b.get("useful", []), alias)
         out["threads"] += _tag(b.get("threads", []), alias)
     out["recent"].sort(key=lambda r: r["event_time"], reverse=True)
     out["salient"].sort(key=lambda r: r["salience"], reverse=True)
     out["threads"].sort(key=lambda r: r["event_time"], reverse=True)
-    out["useful"].sort(key=lambda r: (r["helpful_count"], r["recall_count"]),
-                       reverse=True)
+    out["useful"].sort(key=lambda r: (r["helpful_count"],
+                                      r.get("referenced_count") or 0,
+                                      r["recall_count"]), reverse=True)
     return out
 
 

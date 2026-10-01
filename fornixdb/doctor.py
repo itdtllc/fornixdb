@@ -84,7 +84,7 @@ def config_overview(store) -> list[tuple[str, str]]:
     active = active_tools(store)
     tools = (f"{len(active)}/{len(TOOLS)} advertised "
              f"(~{estimate_tokens(json.dumps(active))} tok)")
-    proactive = (get_config(store, "proactive_recall", "on") or "on")
+    proactive = _proactive_setting(store)
     floor_adapt = (get_config(store, "usefulness_floor_adapt", "on") or "on")
     proj_scope = (get_config(store, "project_scoped_pulse", "on") or "on")
     dedup = (get_config(store, "cross_pulse_dedup", "on") or "on")
@@ -129,12 +129,13 @@ def config_overview(store) -> list[tuple[str, str]]:
 # run shows what each option *would* be if never touched. Keys MUST stay in step
 # with config_overview labels (test_doctor enforces full coverage).
 CONFIG_DEFAULTS: dict[str, str] = {
-    "operating_level": "L5 — Parallel multi-domain activation (fresh-store "
-                       "default since 0.5.0)",
+    "operating_level": "L2 — Automatic capture (fresh-store default since "
+                       "1.7.0: the AI decides what to store and recall; "
+                       "`level L3|L4|L5` turns pushing on)",
     "capture_mode": "suggest",
     "ingest_mode": "passive",
     "session_capture": "on",
-    "proactive_recall": "on",
+    "proactive_recall": "off",
     "usefulness_floor_adapt": "on",
     "project_scoped_pulse": "on",
     "cross_pulse_dedup": "on",
@@ -157,6 +158,12 @@ CONFIG_DEFAULTS: dict[str, str] = {
     "frozen": "no",
     "MCP tools": "all advertised",
 }
+
+
+def _proactive_setting(store) -> str:
+    from .levels import dial_default
+    d = dial_default("proactive_recall")
+    return (get_config(store, "proactive_recall", d) or d)
 
 
 def host_hook_status(paths=DEFAULT_HOST_SETTINGS) -> list[dict]:
@@ -339,7 +346,6 @@ def suggested_settings(store) -> list[dict]:
     figure scaled to the device rather than a vague 'set one'."""
     st = budget_status(store)
     cap_set = bool(st.get("budget_mb"))
-    proactive = (get_config(store, "proactive_recall", "on") or "on")
     session_cap = (get_config(store, "session_capture", "on") or "on")
     rows = [
         {"key": "disk_budget_mb", "suggested": str(suggested_disk_budget_mb(store)),
@@ -361,10 +367,9 @@ def suggested_settings(store) -> list[dict]:
          "satisfied": ("off" not in _vectors_setting(store)
                        or "env" in _vectors_setting(store)),
          "why": "associative recall; switch off only for a deliberately lean build"},
-        {"key": "proactive_recall", "suggested": "on",
-         "current": "off" if proactive in _OFF else "on",
-         "satisfied": proactive not in _OFF,
-         "why": "surface relevant past once per turn (host UserPromptSubmit hook)"},
+        # no proactive_recall row: since 1.7.0 the push rungs ship off and are
+        # the owner's choice (`level`), so suggesting either value would let
+        # `configure` silently undo a rung someone picked on purpose
         {"key": "session_capture", "suggested": "on",
          "current": "off" if session_cap in _OFF else "on",
          "satisfied": session_cap not in _OFF,

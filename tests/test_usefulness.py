@@ -127,6 +127,19 @@ class TestUsefulnessRollup(unittest.TestCase):
         self.assertEqual(top[0]["id"], a)     # endorsed outranks recalled-only
         self.assertTrue(any(r["id"] == b for r in top))
 
+    def test_used_outranks_recalled_only(self):
+        # a program polling the store pumps recall_count; a push the model
+        # actually used is the stronger signal and must rank above it
+        polled = self.s.store("polled alert row", name="polled")
+        used = self.s.store("fact a model used", name="used")
+        self.s.conn.execute(
+            "UPDATE memory SET recall_count = 1000 WHERE id = ?", (polled,))
+        self.s.conn.execute(
+            "UPDATE memory SET referenced_count = 1 WHERE id = ?", (used,))
+        top = self.s.top_useful()
+        self.assertEqual([r["id"] for r in top], [used, polled])
+        self.assertEqual(top[0]["referenced_count"], 1)
+
     def test_brief_exposes_useful_key(self):
         m = self.s.store("budget note", name="m")
         self.s.mark_helpful(m)

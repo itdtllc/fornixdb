@@ -22,12 +22,13 @@ Nothing here is OS-specific; the only host-specific code is the thin caller.
 
 ADDITIVE, never a takeover: it only ADDS a block; it never replaces or owns the
 host's native context. Respects the same switches as L3 (`ingest_mode=explicit`
-off entirely; `config rhythmic_recall off` off on its own).
+off entirely; `rhythmic_recall` off on its own). Off by default since 1.7.0 —
+`level L4` turns it on.
 
-L5 rides on this metronome: unless `config parallel_recall off`, each beat
-gathers through the multi-domain field (`fornixdb.field`) instead of a single
-recall — same cadence, same budget, wider activation. L4 owns WHEN, L5 owns
-HOW WIDE. Default-on since 0.5.0.
+L5 rides on this metronome: with `parallel_recall` on, each beat gathers
+through the multi-domain field (`fornixdb.field`) instead of a single recall —
+same cadence, same budget, wider activation. L4 owns WHEN, L5 owns HOW WIDE.
+Default-on 0.5.0–1.6.x; off by default since 1.7.0 (`level L5`).
 """
 
 from __future__ import annotations
@@ -85,7 +86,9 @@ def pulse(store: MemoryStore, thought: str, episode: Episode, *,
     Mutates `episode` only when it actually returns a block."""
     if not auto_background_enabled(store):              # ingest_mode=explicit
         return None
-    if get_config(store, "rhythmic_recall", "on") in ("off", "0", "false"):
+    from .levels import dial_default
+    if get_config(store, "rhythmic_recall",
+                  dial_default("rhythmic_recall")) in ("off", "0", "false"):
         return None
     if not thought or len(thought.strip()) < MIN_THOUGHT_CHARS:
         return None
@@ -116,7 +119,8 @@ def pulse(store: MemoryStore, thought: str, episode: Episode, *,
     if dedup:
         exclude |= injected_this_session(store, session_id)
     active = resolve_active_project(store, active_project, session_id=session_id)
-    if get_config(store, "parallel_recall", "on") not in ("off", "0", "false"):
+    if get_config(store, "parallel_recall",
+                  dial_default("parallel_recall")) not in ("off", "0", "false"):
         # L5: the beat goes WIDE — a field of domain-scoped recalls settles
         # into one block. Same metronome (debounce/budget/dedup above), same
         # block budget; only the gather inside the beat changes.

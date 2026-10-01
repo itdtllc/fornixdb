@@ -29,7 +29,8 @@ and a turn change (or, as a standalone fallback when L3 isn't wired, a long idle
 gap) starts a fresh episode so pulse_count/dedup are per-turn, matching the local-model edge.
 
 ADDITIVE and gated exactly like L3 (#2/#276): ingest_mode=explicit turns it off;
-`config rhythmic_recall off` turns it off on its own; it only ADDS context.
+`rhythmic_recall` gates it on its own (off by default since 1.7.0 — `level L4`
+turns it on); it only ADDS context.
 Silence is the default — unsolicited mid-task interruption gates HARDER than the
 per-turn push (RHYTHMIC_RECALL_COS), so most tool calls inject nothing.
 

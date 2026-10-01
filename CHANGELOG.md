@@ -9,6 +9,43 @@ and can change through the day.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-30
+
+*The AI decides what to remember.* A fresh store is now pull-only. FornixDB
+still captures sessions on its own, but it no longer pushes memories into the
+conversation unasked: the AI recalls what it decides it needs. Measurement drove
+the change. On lived-in use, pushed memories were used downstream about 3% of
+the time, per-turn pushes went unused in a 12-day window while costing 39% of
+push tokens, and a trial with the field (L5) switched off showed no loss. The
+push rungs stay fully built and supported, one command away.
+
+### Changed
+- **The push rungs ship off.** L3 (per-turn injection), L4 (the in-thought
+  metronome) and L5 (the field) now default to off, so a fresh store sits at L2:
+  explicit and associative recall plus automatic capture. `fornixdb level L3`,
+  `L4` or `L5` turns pushing back on, cumulatively as before. A store that set
+  these dials explicitly keeps its setting. A store that never set them moves to
+  pull-only on upgrade, and the host hooks then deliver due reminders and
+  nothing else. `fornixdb level` shows where a store sits.
+- `configure` / `doctor --apply-suggested` no longer suggests a value for
+  `proactive_recall`. The push rungs are the owner's choice, and a suggested
+  value would let a bulk apply undo a rung someone picked on purpose.
+- The brief's recent-sessions list is shared fairly across projects. Unfiltered,
+  each project gets at most two rows, and the rows a busy project pushed out are
+  counted on one line instead of being dropped silently. One auto-capturing
+  consumer had been filling the whole list. `brief --project` is uncapped.
+- The brief's "most useful" rollup ranks endorsements first, then memories a
+  model actually used, then raw recall count. A program polling the store had
+  pumped two never-endorsed rows above everything a model had used. Each row now
+  shows its used count.
+
+### Fixed
+- The brief no longer lists a future-dated row, such as a scheduled reminder,
+  as a recent session.
+- `reproject` no longer treats a forgotten memory as live. A memory forgotten
+  without a successor could come back as an anchor or a candidate and be
+  relabelled.
+
 ## [1.6.1] - 2026-09-01
 
 *Documentation updates.* Wording and example text only — no functional change.

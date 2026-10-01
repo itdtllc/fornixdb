@@ -1,6 +1,8 @@
 import os
 import tempfile
 import unittest
+
+from fornixdb.levels import set_rung  # push rungs ship off since 1.7.0
 from pathlib import Path
 
 os.environ["FORNIXDB_VECTORS"] = "off"  # deterministic: keyword recall, no model
@@ -73,6 +75,7 @@ class TestProactiveRecall(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.s = file_store(self.tmp.name)
+        set_rung(self.s, "L3")
 
     def tearDown(self):
         self.s.close()

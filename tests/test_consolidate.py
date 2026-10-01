@@ -1045,10 +1045,11 @@ class TestDialReport(unittest.TestCase):
         ch = {"L4": {"impressions": 100, "referenced": 20},
               "L5": {"impressions": 30, "referenced": 9}}      # 30% vs 20%
         d = self._dials(scan_channels=ch)
-        self.assertIn("FOR default-on", d["parallel_recall"]["suggestion"])
+        self.assertIn("evidence FOR", d["parallel_recall"]["suggestion"])
+        self.assertEqual(d["parallel_recall"]["current"], "off (default)")
         ch["L5"] = {"impressions": 30, "referenced": 3}        # 10% vs 20%
         d = self._dials(scan_channels=ch)
-        self.assertIn("AGAINST default-on", d["parallel_recall"]["suggestion"])
+        self.assertIn("does not beat L4", d["parallel_recall"]["suggestion"])
 
     def test_gate_accruing_thin_l5(self):
         set_config(self.s, "parallel_recall", "on")
@@ -1058,7 +1059,7 @@ class TestDialReport(unittest.TestCase):
         self.assertIn("accruing", d["parallel_recall"]["suggestion"])
 
     def test_gate_silent_when_recall_off_and_no_l5(self):
-        set_config(self.s, "parallel_recall", "off")  # override the 0.5.0 default
+        set_config(self.s, "parallel_recall", "off")  # explicit, same as the default
         ch = {"L4": {"impressions": 100, "referenced": 20}}
         self.assertNotIn("parallel_recall", self._dials(scan_channels=ch))
 

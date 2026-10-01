@@ -34,6 +34,9 @@ class _Script:
 class WizardCase(unittest.TestCase):
     def setUp(self):
         self.s = MemoryStore(db_path=":memory:")
+        # the prompt scripts below were written against an L5 store; a fresh
+        # store has been pull-only (L2) since 1.7.0 — see TestFreshStoreWizard
+        levels.set_rung(self.s, "L5")
 
     def tearDown(self):
         self.s.close()
@@ -43,7 +46,7 @@ class WizardCase(unittest.TestCase):
         res = wizard.run_configure(self.s, ask=sc.ask, out=sc.out, db_label="x")
         return res, sc
 
-    # default fresh store sits at L5 with capture=suggest; the build prompts are
+    # this store sits at L5 with capture=suggest; the build prompts are
     # rung, dissent (asked at L5), capture-style, session, vectors, ingest,
     # budget (no policy when off), floor-log, transcripts-path, then the
     # MCP-tools mode (keep/minimal/custom)
@@ -67,7 +70,7 @@ class WizardCase(unittest.TestCase):
         res, sc = self._run("", "on", "", "", "", "", "", "", "", "", "y")
         self.assertIn("parallel_dissent", res["applied"])
         self.assertEqual(levels.current_rung(self.s)[0], "L5")
-        self.assertTrue(levels.is_on(self.s, "L5"))  # default-on since 0.5.0
+        self.assertTrue(levels.is_on(self.s, "L5"))
         self.assertEqual(get_config(self.s, "parallel_dissent"), "on")
         self.assertIn("dissent", sc.text())
 
@@ -224,6 +227,22 @@ class ResolveConfigureStoreCase(unittest.TestCase):
     def _fail_ask(*_a, **_k):
         raise AssertionError("should not prompt")
 
+
+
+class TestFreshStoreWizard(unittest.TestCase):
+    """A fresh store is pull-only (L2): keeping everything leaves it there and
+    never asks the L5-only dissent question."""
+
+    def test_keep_everything_stays_pull_only(self):
+        s = MemoryStore(db_path=":memory:")
+        try:
+            sc = _Script(*[""] * 12)
+            res = wizard.run_configure(s, ask=sc.ask, out=sc.out, db_label="x")
+            self.assertEqual(res["applied"], [])
+            self.assertEqual(levels.current_rung(s)[0], "L2")
+            self.assertNotIn("dissent", sc.text())
+        finally:
+            s.close()
 
 if __name__ == "__main__":
     unittest.main()

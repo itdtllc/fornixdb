@@ -62,19 +62,36 @@ LEVELS: tuple[Level, ...] = (
           BUILT, locked_on=False, dial="capture_mode"),
     Level("L3", "Proactive recall injection",
           "memory pushes relevant context in unasked, once per turn",
-          BUILT, locked_on=False, dial="proactive_recall"),
+          BUILT, locked_on=False, dial="proactive_recall",
+          dial_default="off"),
     Level("L4", "Rhythmic in-thought recall",
           "memory re-activates many times within one reasoning episode",
-          BUILT, locked_on=False, dial="rhythmic_recall"),
+          BUILT, locked_on=False, dial="rhythmic_recall",
+          dial_default="off"),
     Level("L5", "Parallel multi-domain activation",
           "many domain-scoped recalls fire at once and settle into a direction",
-          BUILT, locked_on=False, dial="parallel_recall"),
+          BUILT, locked_on=False, dial="parallel_recall",
+          dial_default="off"),
     Level("L6", "Federated / distributed memory",
           "the parallel model federated across endpoints and machines",
           PLANNED, locked_on=False, dial=None),
 )
 
 _BY_ID = {lv.id: lv for lv in LEVELS}
+
+# The push rungs (L3–L5) ship OFF since 1.7.0: out of the box the AI decides
+# what to store and what to recall (L0–L2), and pushing is opt-in via
+# `level L3|L4|L5`. Measured before the flip: L3 pushes went unused (0/340 in
+# a 12-day window) while costing 39% of push tokens, and L4/L5 pushes were used
+# about 3% of the time. Every reader of these dials takes its default from here.
+
+
+def dial_default(dial: str) -> str:
+    """The out-of-the-box value of a rung's dial ("on" for an unknown key)."""
+    for lv in LEVELS:
+        if lv.dial == dial:
+            return lv.dial_default
+    return "on"
 _INDEX = {lv.id: i for i, lv in enumerate(LEVELS)}
 
 

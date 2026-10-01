@@ -7,6 +7,8 @@ goes quiet. Reversible via `config usefulness_floor_adapt off`."""
 import os
 import unittest
 
+from fornixdb.levels import set_rung  # push rungs ship off since 1.7.0
+
 os.environ["FORNIXDB_VECTORS"] = "off"  # deterministic keyword recall, no model
 
 from fornixdb.core import (FLOOR_CAP, FLOOR_DISCOUNT_MAX, FLOOR_MIN_IMPRESSIONS,
@@ -315,6 +317,7 @@ class TestProactiveRecallRecordsImpressions(unittest.TestCase):
 
     def setUp(self):
         self.s = mem_store()
+        set_rung(self.s, "L3")
 
     def tearDown(self):
         self.s.close()

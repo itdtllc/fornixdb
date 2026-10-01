@@ -941,13 +941,20 @@ def _dispatch(p, args, store, stores) -> int:
                           f"{(m.get('gist') or '')[:76]}  [{eds} ed.]")
             print(f"--- recent sessions (since {b['since']}) ---")
             _print_rows(b["recent"], False)
+            folded = b.get("recent_folded") or {}
+            if folded:
+                print("  (also: " + ", ".join(
+                    f"{n} more from {label}" for label, n in
+                    sorted(folded.items(), key=lambda kv: -kv[1]))
+                    + " — `timeline --project <name>` lists them)")
             print("--- most salient standing knowledge ---")
             _print_rows(b["salient"], False)
             if b.get("useful"):
-                print("--- most useful so far (endorsed / recalled) ---")
+                print("--- most useful so far (endorsed / used / recalled) ---")
                 for m in b["useful"]:
                     sid = f"{m['_store']}:{m['id']}" if m.get("_store") else m["id"]
                     print(f"#{sid} [helpful x{m['helpful_count']}, "
+                          f"used x{m.get('referenced_count') or 0}, "
                           f"recalled x{m['recall_count']}]  {(m.get('gist') or '')[:80]}")
             st = consolidate_status(store)
             if st["due"]:

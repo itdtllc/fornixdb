@@ -985,16 +985,23 @@ class MemoryStore:
 
     def top_useful(self, limit: int = 5) -> list[dict]:
         """The startup rollup: live memories ranked by endorsements, then by
-        passive recall hits — what has actually proven worth surfacing. Empty
-        until something is marked helpful or recalled, so a fresh store shows
-        nothing rather than noise."""
+        pushes the model actually used, then by passive recall hits — what has
+        actually proven worth surfacing. Empty until something is marked
+        helpful, referenced or recalled, so a fresh store shows nothing rather
+        than noise.
+
+        Raw recall_count is last because a program polling the store pumps it:
+        measured 2026-09-30, two never-endorsed alert rows recalled 1000+ times
+        by an automated consumer outranked every row a model had used."""
         return [dict(r) for r in self.conn.execute(
-            """SELECT id, gist, kind, event_time, helpful_count, recall_count,
-                      last_helpful
+            """SELECT id, gist, kind, event_time, helpful_count,
+                      referenced_count, recall_count, last_helpful
                FROM memory
                WHERE superseded_time IS NULL
-                 AND (helpful_count > 0 OR recall_count > 0)
-               ORDER BY helpful_count DESC, recall_count DESC, event_time DESC
+                 AND (helpful_count > 0 OR referenced_count > 0
+                      OR recall_count > 0)
+               ORDER BY helpful_count DESC, referenced_count DESC,
+                        recall_count DESC, event_time DESC
                LIMIT ?""", (limit,))]
 
     def _negative_penalties(self, query: str, emb) -> dict[int, float]:
@@ -1938,18 +1945,47 @@ class MemoryStore:
 
     def brief(self, *, project: str | None = None, days: int = 7,
               recent_limit: int = 8, salient_limit: int = 10,
-              useful_limit: int = 5) -> dict:
+              useful_limit: int = 5, recent_per_project: int = 2) -> dict:
         """Session-start context brief: recent activity + most salient
         standing knowledge. Gist-only and capped — this is the cheap recall
         that opens every session; detail is always a `show` away."""
+        now_iso = datetime.now().isoformat()
         since = (datetime.now() - timedelta(days=days)).isoformat()
         _pc, pp = self._project_clause(project)
         pw = f"AND {_pc}" if _pc else ""
-        recent = [dict(r) for r in self.conn.execute(
-            f"""SELECT m.* FROM memory m
-                WHERE m.kind = 'episodic' AND m.event_time >= ? {pw}
-                ORDER BY m.event_time DESC LIMIT ?""",
-            [since, *pp, recent_limit])]
+        # upper bound: a reminder scheduled for next week is not a "recent
+        # session" (measured 2026-09-30: a future-dated row headed the list).
+        # Unfiltered, each project gets at most `recent_per_project` rows: one
+        # auto-capturing consumer wrote 853 episodic rows in 12 days against ~65
+        # from everything else, and newest-8 showed nothing but its scan chatter.
+        # The rows it pushes out are counted, not dropped silently.
+        cap = recent_per_project if (not project and recent_per_project) else 0
+        rank = ("ROW_NUMBER() OVER (PARTITION BY LOWER(COALESCE(m.project, '')) "
+                "ORDER BY m.event_time DESC)") if cap else "0"
+        rows = self.conn.execute(
+            f"""SELECT * FROM (
+                    SELECT m.*, {rank} AS _rn FROM memory m
+                    WHERE m.kind = 'episodic' AND m.event_time >= ?
+                      AND m.event_time <= ? {pw})
+                WHERE ? = 0 OR _rn <= ?
+                ORDER BY event_time DESC LIMIT ?""",
+            [since, now_iso, *pp, cap, cap, recent_limit]).fetchall()
+        recent = [{k: r[k] for k in r.keys() if k != "_rn"} for r in rows]
+        recent_folded: dict[str, int] = {}
+        if cap:
+            shown: dict[str, int] = {}
+            for r in recent:
+                key = (r["project"] or "").lower()
+                shown[key] = shown.get(key, 0) + 1
+            for r in self.conn.execute(
+                    """SELECT MIN(project) AS label,
+                              LOWER(COALESCE(project, '')) AS key, count(*) AS n
+                       FROM memory WHERE kind = 'episodic'
+                         AND event_time >= ? AND event_time <= ?
+                       GROUP BY key""", [since, now_iso]):
+                hidden = r["n"] - shown.get(r["key"], 0)
+                if hidden > 0 and r["key"] in shown:
+                    recent_folded[r["label"] or "-"] = hidden
         # overfetch, then rank by EFFECTIVE salience so stale high-salience
         # rows sink and reinforced ones surface (P3a decay)
         cand = [dict(r) for r in self.conn.execute(
@@ -1977,7 +2013,8 @@ class MemoryStore:
         # pointer to the current state of the active project did not make the
         # top-40 salience shortlist, so a pickup fell back to re-reading a 42k-token
         # narrative file that the chain already summarises for ~800.
-        return {"since": since[:10], "recent": recent, "salient": salient,
+        return {"since": since[:10], "recent": recent,
+                "recent_folded": recent_folded, "salient": salient,
                 "useful": useful,
                 "threads": self.status_tips(project=project)}
 

@@ -16,11 +16,15 @@ class LevelsCase(unittest.TestCase):
         self.s.close()
 
     # ---- defaults: a fresh store is at the top built rung (L5) -------------
-    def test_fresh_store_defaults_to_top_built_rung(self):
-        # capture suggest + proactive + rhythmic + parallel on are all defaults
+    def test_fresh_store_defaults_to_pull_only(self):
+        # since 1.7.0: capture suggest is on, every push rung (L3–L5) ships off,
+        # so the AI decides what to store and recall
         rung, incoherent = levels.current_rung(self.s)
-        self.assertEqual(rung, "L5")
+        self.assertEqual(rung, "L2")
         self.assertFalse(incoherent)
+        for lid in ("L3", "L4", "L5"):
+            self.assertFalse(levels.is_on(self.s, lid), lid)
+            self.assertEqual(levels.level(lid).dial_default, "off")
 
     def test_only_l0_is_locked(self):
         # L0 (the keyed store floor) is always on and cannot be turned off
@@ -99,9 +103,10 @@ class LevelsCase(unittest.TestCase):
                 levels.set_rung(self.s, lid)
 
     # ---- L5 is built and default-on (0.5.0); stepping down still works -----
-    def test_l5_default_on_and_revertible(self):
+    def test_l5_opt_in_and_revertible(self):
         from fornixdb.multistore import get_config
-        self.assertTrue(levels.is_on(self.s, "L5"))    # dial_default=on
+        self.assertFalse(levels.is_on(self.s, "L5"))   # dial_default=off
+        levels.set_rung(self.s, "L5")                   # opting in
         self.assertEqual(levels.current_rung(self.s)[0], "L5")
         levels.set_rung(self.s, "L4")                   # stepping back down
         self.assertIn(get_config(self.s, "parallel_recall"), ("off", "0", "false"))
@@ -114,6 +119,7 @@ class LevelsCase(unittest.TestCase):
 
     # ---- incoherence: a gap left by direct `config` edits -----------------
     def test_incoherent_when_high_on_low_off(self):
+        levels.set_rung(self.s, "L4")
         set_config(self.s, "capture_mode", "explicit")  # L2 off, L3/L4 still on
         rung, incoherent = levels.current_rung(self.s)
         self.assertEqual(rung, "L1")     # contiguous prefix stops at the gap
