@@ -17,7 +17,7 @@ class LevelsCase(unittest.TestCase):
 
     # ---- defaults: a fresh store is at the top built rung (L5) -------------
     def test_fresh_store_defaults_to_pull_only(self):
-        # since 1.7.0: capture suggest is on, every push rung (L3–L5) ships off,
+        # since 1.7.0 capture is on (auto since 1.9.0), every push rung (L3–L5) ships off,
         # so the AI decides what to store and recall
         rung, incoherent = levels.current_rung(self.s)
         self.assertEqual(rung, "L2")
@@ -67,7 +67,7 @@ class LevelsCase(unittest.TestCase):
 
     def test_set_rung_l2_disables_recall_autonomy_above(self):
         levels.set_rung(self.s, "L2")
-        self.assertEqual(capture_mode(self.s), "suggest")  # untouched default
+        self.assertEqual(capture_mode(self.s), "auto")  # untouched default
         self.assertFalse(levels.is_on(self.s, "L3"))
         self.assertFalse(levels.is_on(self.s, "L4"))
         self.assertEqual(levels.current_rung(self.s)[0], "L2")

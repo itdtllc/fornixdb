@@ -134,9 +134,9 @@ def _set_one(store: MemoryStore, level_id: str, on: bool) -> None:
                          f"it cannot be turned on")
     if lv.dial == "capture_mode":
         if on:
-            # don't clobber a richer choice (auto) — only lift an off state
+            # don't clobber a chosen flavor (suggest/auto) — only lift an off state
             if capture_mode(store) not in ("suggest", "auto"):
-                set_config(store, "capture_mode", "suggest")
+                set_config(store, "capture_mode", "auto")
         else:
             set_config(store, "capture_mode", "explicit")
         return

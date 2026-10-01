@@ -264,8 +264,8 @@ AI at startup via `startup_context`):
 | mode | meaning |
 |---|---|
 | `explicit` | remember only when the owner asks |
-| `suggest` (default) | offer to remember at natural checkpoints; store only on a yes |
-| `auto` | store at the AI's own judgment; owner reviews/retires later |
+| `suggest` | offer to remember at natural checkpoints; store only on a yes |
+| `auto` (default) | store at the AI's own judgment; owner reviews/retires later |
 
 Because the instruction is read from the store at session start, the owner
 changes policy with one CLI command — no prompt edits, no model rebuild.

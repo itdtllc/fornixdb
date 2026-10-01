@@ -9,6 +9,23 @@ and can change through the day.
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-10-01
+
+*Remember by default.* A fresh store now starts in `auto` capture mode: the AI
+stores what it judges worth keeping, and the owner reviews and retires memories
+later. Until now the default was `suggest`, which asked before every store, so
+an AI working on its own kept little. `explicit` and `suggest` are still one
+`config capture_mode` away.
+
+### Changed
+- **`capture_mode` defaults to `auto`.** This applies to any store that has
+  never set `capture_mode`, including existing ones; a store with an explicit
+  setting keeps it. To keep the old behavior, run
+  `fornixdb config capture_mode suggest`.
+- **`doctor` suggests `auto`.** `doctor --apply-suggested` and the `config`
+  overview recommend `auto`, `configure` offers it as the capture-style default,
+  and turning L2 back on from `explicit` lands on `auto`.
+
 ## [1.8.0] - 2026-09-30
 
 *Measure the pull, too.* Since 1.7.0 a fresh store doesn't push memories at all;

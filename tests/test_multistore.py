@@ -67,10 +67,10 @@ class TestMultiStore(unittest.TestCase):
         self.assertIs(store, self.mine)
 
     def test_config_roundtrip_and_validation(self):
-        self.assertEqual(capture_mode(self.mine), "suggest")  # default
-        set_config(self.mine, "capture_mode", "auto")
-        self.assertEqual(capture_mode(self.mine), "auto")
-        self.assertEqual(get_config(self.mine, "capture_mode"), "auto")
+        self.assertEqual(capture_mode(self.mine), "auto")  # default
+        set_config(self.mine, "capture_mode", "suggest")
+        self.assertEqual(capture_mode(self.mine), "suggest")
+        self.assertEqual(get_config(self.mine, "capture_mode"), "suggest")
         with self.assertRaises(ValueError):
             set_config(self.mine, "capture_mode", "yolo")
 

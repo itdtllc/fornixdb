@@ -46,7 +46,7 @@ class WizardCase(unittest.TestCase):
         res = wizard.run_configure(self.s, ask=sc.ask, out=sc.out, db_label="x")
         return res, sc
 
-    # this store sits at L5 with capture=suggest; the build prompts are
+    # this store sits at L5 with capture=auto; the build prompts are
     # rung, dissent (asked at L5), capture-style, session, vectors, ingest,
     # budget (no policy when off), floor-log, transcripts-path, then the
     # MCP-tools mode (keep/minimal/custom)
@@ -84,14 +84,14 @@ class WizardCase(unittest.TestCase):
         self.assertTrue(levels.is_on(self.s, "L3"))
 
     def test_decline_at_confirm_writes_nothing(self):
-        res, _ = self._run("", "", "auto", "", "", "", "", "", "", "", "n")
+        res, _ = self._run("", "", "suggest", "", "", "", "", "", "", "", "n")
         self.assertTrue(res["aborted"])
         self.assertEqual(res["applied"], [])
-        self.assertEqual(capture_mode(self.s), "suggest")  # unchanged
+        self.assertEqual(capture_mode(self.s), "auto")  # unchanged
 
     def test_change_capture_flavor(self):
-        res, _ = self._run("", "", "auto", "", "", "", "", "", "", "", "y")
-        self.assertEqual(capture_mode(self.s), "auto")
+        res, _ = self._run("", "", "suggest", "", "", "", "", "", "", "", "y")
+        self.assertEqual(capture_mode(self.s), "suggest")
         self.assertEqual(levels.current_rung(self.s)[0], "L5")  # rung untouched
 
     def test_drop_to_l1_skips_capture_flavor(self):

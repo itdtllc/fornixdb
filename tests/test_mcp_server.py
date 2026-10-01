@@ -189,7 +189,7 @@ class TestProtocol(unittest.TestCase):
         out = self._call("recall_timeline", when="today")
         self.assertIn("today's fact", out["content"][0]["text"])
         out = self._call("startup_context")
-        self.assertIn("capture mode: suggest", out["content"][0]["text"])
+        self.assertIn("capture mode: auto", out["content"][0]["text"])
 
     def test_startup_context_flags_consolidation_due(self):
         for i in range(5):

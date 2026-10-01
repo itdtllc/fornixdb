@@ -190,4 +190,4 @@ def set_config(store: MemoryStore, key: str, value: str) -> None:
 
 
 def capture_mode(store: MemoryStore) -> str:
-    return get_config(store, "capture_mode", "suggest") or "suggest"
+    return get_config(store, "capture_mode", "auto") or "auto"

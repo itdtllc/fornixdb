@@ -64,7 +64,7 @@ active development branch and can change through the day; for a stable checkout,
 install a tagged release instead:
 
 ```bash
-pip install "git+https://github.com/itdtllc/fornixdb@v1.8.0"
+pip install "git+https://github.com/itdtllc/fornixdb@v1.9.0"
 ```
 
 Releases are listed at <https://github.com/itdtllc/fornixdb/releases>; see
@@ -192,7 +192,7 @@ examples/            reference shim + runnable smoke test
 
 Memory topology is configurable, not fixed. Each AI gets its **own store** (its working memory), and every AI also reads a **machine-level shared tier** (`~/.fornixdb/shared.db`, or `$FORNIXDB_SHARED_DB`) holding owner facts and preferences all of them should know. Recall, timeline, and brief merge both automatically; write owner-level knowledge with `store --shared`. An aggregator across agent stores is the planned next level.
 
-Each store also carries an owner-settable **capture mode** (`config capture_mode explicit|suggest|auto`) that connected AIs read at startup: remember only when asked, offer to remember at checkpoints (default), or store autonomously.
+Each store also carries an owner-settable **capture mode** (`config capture_mode explicit|suggest|auto`) that connected AIs read at startup: remember only when asked, offer to remember at checkpoints, or store autonomously (default since 1.9.0).
 
 All of this is safe to run **at the same time**: a store file can be hit concurrently by several agents, several processes (MCP server, hooks, CLI), and several threads sharing one `MemoryStore` handle — writers serialize through WAL + per-store busy timeout (`config busy_timeout_ms`), schema migrations are single-winner, and reminders fire exactly once no matter how many hosts poll. Details in INTEGRATION.md §Concurrency.
 

@@ -132,7 +132,7 @@ CONFIG_DEFAULTS: dict[str, str] = {
     "operating_level": "L2 — Automatic capture (fresh-store default since "
                        "1.7.0: the AI decides what to store and recall; "
                        "`level L3|L4|L5` turns pushing on)",
-    "capture_mode": "suggest",
+    "capture_mode": "auto",
     "ingest_mode": "passive",
     "session_capture": "on",
     "proactive_recall": "off",

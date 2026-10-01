@@ -101,7 +101,7 @@ def build_plan(store, ask, out) -> list[dict]:
     # 2) capture flavor — only meaningful once auto-capture (L2) is on
     if rung_idx >= _RUNG_CHOICES.index("L2"):
         cur_cap = capture_mode(store)
-        flavor_now = cur_cap if cur_cap in ("suggest", "auto") else "suggest"
+        flavor_now = cur_cap if cur_cap in ("suggest", "auto") else "auto"
         flavor = _ask_keep(ask, out, "capture style", flavor_now, ("suggest", "auto"))
         if flavor != cur_cap:
             plan.append({"label": "capture_mode", "old": cur_cap, "new": flavor,
