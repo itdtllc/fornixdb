@@ -356,10 +356,10 @@ def suggested_settings(store) -> list[dict]:
          "current": st.get("policy", DEFAULT_POLICY),
          "satisfied": st.get("policy", DEFAULT_POLICY) == DEFAULT_POLICY,
          "why": "at the cap, refuse new memories rather than delete old ones"},
-        {"key": "capture_mode", "suggested": "suggest",
+        {"key": "capture_mode", "suggested": "auto",
          "current": capture_mode(store),
-         "satisfied": capture_mode(store) == "suggest",
-         "why": "offer to remember at checkpoints (not silent, not manual-only)"},
+         "satisfied": capture_mode(store) == "auto",
+         "why": "store at the AI's own judgment; the owner reviews/retires later"},
         # an env override (FORNIXDB_VECTORS=off) is a deliberate machine-wide
         # choice a per-store `config vectors on` can't beat — so don't suggest
         # flipping it (that would also make apply_suggested non-idempotent).

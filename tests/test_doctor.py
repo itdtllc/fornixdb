@@ -65,12 +65,20 @@ class TestSuggestedDefaults(_FileStoreCase):
 
     def test_code_defaults_report_satisfied(self):
         rows = {r["key"]: r for r in doctor.suggested_settings(self.s)}
-        for k in ("budget_policy", "capture_mode", "vectors",
-                  "session_capture"):
+        for k in ("budget_policy", "vectors", "session_capture"):
             self.assertTrue(rows[k]["satisfied"], f"{k} should be satisfied")
         # the push rungs are the owner's choice: suggesting a value would let
         # `configure` undo a `level` someone picked on purpose
         self.assertNotIn("proactive_recall", rows)
+
+    def test_capture_mode_suggests_auto(self):
+        rows = {r["key"]: r for r in doctor.suggested_settings(self.s)}
+        self.assertEqual(rows["capture_mode"]["suggested"], "auto")
+        # the out-of-box mode is `suggest`, so a fresh store is unsatisfied
+        self.assertFalse(rows["capture_mode"]["satisfied"])
+        set_config(self.s, "capture_mode", "auto")
+        rows = {r["key"]: r for r in doctor.suggested_settings(self.s)}
+        self.assertTrue(rows["capture_mode"]["satisfied"])
 
     def test_suggested_budget_is_bounded_by_ceiling(self):
         from fornixdb.db import DEFAULT_MACHINE_CAP_MAX_MB
@@ -80,8 +88,9 @@ class TestSuggestedDefaults(_FileStoreCase):
     def test_apply_suggested_sets_only_unsatisfied(self):
         applied = doctor.apply_suggested(self.s)
         self.assertTrue(any(a.startswith("disk_budget_mb") for a in applied))
-        # capture_mode was already at the default → not re-applied
-        self.assertFalse(any(a.startswith("capture_mode") for a in applied))
+        self.assertIn("capture_mode = auto", applied)
+        # budget_policy was already at the default → not re-applied
+        self.assertFalse(any(a.startswith("budget_policy") for a in applied))
         # and now the cap is actually set
         self.assertIsNotNone(get_config(self.s, "disk_budget_mb"))
         # second run is a no-op (idempotent — nothing left unsatisfied here)
