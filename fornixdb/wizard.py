@@ -141,12 +141,14 @@ def build_plan(store, ask, out) -> list[dict]:
             plan.append({"label": "budget_policy", "old": cur_pol, "new": new_pol,
                          "apply": lambda v=new_pol: set_config(store, "budget_policy", v)})
 
-    # 7) floor log — opt-in diagnostics (default off): record each proactive/cadence
-    #    pulse's cosine vs the floor it was tested against to floor_log.jsonl beside
-    #    the store, so the relevance floor can be tuned from data (read it back with
-    #    `fornixdb floor-stats`). No effect on recall behavior; just instrumentation.
+    # 7) floor log — opt-in diagnostics (default off): record each push's and each
+    #    explicit recall's cosine vs the floor it was tested against to
+    #    floor_log.jsonl beside the store, so the relevance floors can be tuned from
+    #    data (read it back with `fornixdb floor-stats --channel push|pull`). No
+    #    effect on recall behavior; just instrumentation.
     cur = _on(store, "floor_log", "off")
-    new = _ask_keep(ask, out, "floor log (pulse-cosine diagnostics)", cur, ("on", "off"))
+    new = _ask_keep(ask, out, "floor log (push + recall cosine diagnostics)", cur,
+                    ("on", "off"))
     if new != cur:
         plan.append({"label": "floor_log", "old": cur, "new": new,
                      "apply": lambda v=new: set_config(store, "floor_log", v)})

@@ -963,10 +963,11 @@ def dial_report(store: MemoryStore, scan_channels: dict | None = None,
     # push floor: is there a lossless floor? (floor log × honest scan outcomes)
     if scan_outcomes:
         try:
-            from .floor_stats import load_records, recommend_floor
+            from .floor_stats import PUSH_CHANNELS, load_records, recommend_floor
             from .floor_stats import _cos as floor_cos
             from .proactive import floor_log_path_for
-            records = load_records(floor_log_path_for(store))
+            # push channels only: L1 pull rows sit on a different floor
+            records = load_records(floor_log_path_for(store), channels=PUSH_CHANNELS)
         except Exception:
             records = []
         surfaced = [r for r in records if r.get("decision") == "surfaced"]

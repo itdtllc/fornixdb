@@ -366,16 +366,19 @@ def scan(source: str | Path, since_days: int | None = None) -> dict:
     }
 
 
-def outcomes_from_scan(scan_result: dict) -> dict:
+def outcomes_from_scan(scan_result: dict, pull: bool = False) -> dict:
     """Map each pushed id to a push-OUTCOME for the floor-stats join: "useful" if
     any of its pushes were referenced, "noise" if it was pushed but never
     referenced, else (not pushed) absent. This replaces the lifetime-recall_count
-    proxy with what actually happened to the pushes."""
+    proxy with what actually happened to the pushes. `pull=True` labels PULLED
+    ids from their pull counts instead, for the L1 floor."""
+    imp, ref = (("pull_impressions", "pull_referenced") if pull
+                else ("impressions", "referenced"))
     out: dict[int, str] = {}
     for i, c in scan_result.get("per_memory", {}).items():
-        if c["impressions"] <= 0:
+        if c.get(imp, 0) <= 0:
             continue
-        out[i] = "useful" if c["referenced"] > 0 else "noise"
+        out[i] = "useful" if c.get(ref, 0) > 0 else "noise"
     return out
 
 

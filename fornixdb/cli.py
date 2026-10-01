@@ -647,6 +647,10 @@ def main(argv: list[str] | None = None) -> int:
                           "noise outcome join uses whether each PUSH was actually "
                           "referenced downstream (usefulness-scan) instead of the "
                           "lifetime-recall_count proxy")
+    fsp.add_argument("--channel", default="push", metavar="WHICH",
+                     help="push (L3/L4/L5, the default) | pull (L1, explicit "
+                          "recall) | all | a comma list such as L1,L3. Push and "
+                          "pull have different floors, so read them apart")
 
     usp = sub.add_parser("usefulness-scan",
                          help="honest push-usefulness from session transcripts: how "
@@ -922,6 +926,8 @@ def _dispatch(p, args, store, stores) -> int:
         rows = multi_recall(stores, args.query, limit=args.limit, kind=args.kind,
                             project=args.project, since=since, until=until,
                             related=args.related, include_superseded=args.all)
+        from .proactive import log_pull_decisions
+        log_pull_decisions(store, args.query, rows)
         _print_rows(rows, args.json, args.max_chars)
 
     elif args.cmd == "brief":
@@ -1940,20 +1946,41 @@ def _dispatch(p, args, store, stores) -> int:
             print(format_report(summary, str(path) if path else None))
 
     elif args.cmd == "floor-stats":
-        from .floor_stats import (format_report, load_records,
-                                  outcomes_from_store, summarize)
+        from .floor_stats import (PULL_CHANNELS, channels_for, format_report,
+                                  load_records, outcomes_from_store, summarize)
         from .proactive import floor_log_path_for
         path = args.log or floor_log_path_for(store)
-        records = load_records(path, args.since_days)
-        ids = {r.get("id") for r in records if r.get("decision") == "surfaced"}
+        channels = channels_for(args.channel)
+        records = load_records(path, args.since_days, channels)
+        pull_ids = {r.get("id") for r in records if r.get("decision") == "surfaced"
+                    and r.get("channel") in PULL_CHANNELS}
+        push_ids = {r.get("id") for r in records if r.get("decision") == "surfaced"
+                    and r.get("channel") not in PULL_CHANNELS}
+        note = None
         if args.transcripts:
-            # honest outcome: was each PUSH actually referenced downstream, from
-            # the transcripts — not the lifetime-recall_count proxy.
+            # honest outcome: was each delivery actually referenced downstream,
+            # from the transcripts — not the lifetime-recall_count proxy. Pushes
+            # are labeled from push counts, pulls from pull counts.
             from .usefulness_scan import outcomes_from_scan, scan
-            outcomes = outcomes_from_scan(scan(args.transcripts))
+            sr = scan(args.transcripts)
+            outcomes = {}
+            if pull_ids:
+                outcomes.update(outcomes_from_scan(sr, pull=True))
+            if push_ids:
+                for i, o in outcomes_from_scan(sr).items():
+                    if outcomes.get(i) != "useful":
+                        outcomes[i] = o
         else:
-            outcomes = outcomes_from_store(store, ids)
+            # recall_count cannot label a pull: the pull itself increments it,
+            # so every pulled row would read "useful". Only pushes get the proxy.
+            outcomes = outcomes_from_store(store, push_ids)
+            if any(r.get("channel") in PULL_CHANNELS for r in records):
+                note = ("(pull rows need --transcripts for an outcome join — "
+                        "recall_count counts the pull itself)")
         summary = summarize(records, outcomes)
+        summary["channels"] = args.channel
+        if note and "outcome" not in summary:
+            summary["outcome_note"] = note
         summary["log_path"] = str(path) if path else None
         summary["outcome_source"] = "transcripts" if args.transcripts else "store_counts"
         summary["since_days"] = args.since_days

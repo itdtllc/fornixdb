@@ -30,11 +30,33 @@ def _since_cutoff(since_days: int | None) -> str | None:
 from statistics import mean, median
 
 
+# Push and pull are different gates with different floors, so a reader picks
+# one. The log held only push channels before L1 was added; "?" is the channel
+# of records written before channels were tagged, which were all pushes.
+PUSH_CHANNELS = ("L3", "L4", "L5", "?")
+PULL_CHANNELS = ("L1",)
+
+
+def channels_for(spec: str | None) -> tuple[str, ...] | None:
+    """`--channel` value -> the channels to keep, or None for all.
+    "push" (the default) | "pull" | "all" | a comma list such as "L1,L3"."""
+    spec = (spec or "push").strip()
+    if spec == "push":
+        return PUSH_CHANNELS
+    if spec == "pull":
+        return PULL_CHANNELS
+    if spec == "all":
+        return None
+    return tuple(c.strip() for c in spec.split(",") if c.strip())
+
+
 def load_records(path: str | Path | None,
-                 since_days: int | None = None) -> list[dict]:
+                 since_days: int | None = None,
+                 channels: tuple[str, ...] | None = None) -> list[dict]:
     """Parse a floor_log.jsonl into records, skipping blank/corrupt lines.
 
-    `since_days` keeps only recent records. Without it the verdict is computed
+    `channels` keeps only those channels (None = every channel); see
+    `channels_for`. `since_days` keeps only recent records. Without it the verdict is computed
     across every configuration the store has ever run under — and this log is
     the one that grows fastest, so the oldest era usually outweighs the era the
     reader is actually asking about.
@@ -61,6 +83,8 @@ def load_records(path: str | Path | None,
             if not isinstance(rec, dict):
                 continue
             if cutoff and str(rec.get("ts") or "")[:10] < cutoff:
+                continue
+            if channels is not None and rec.get("channel", "?") not in channels:
                 continue
             out.append(rec)
     return out
@@ -203,8 +227,10 @@ def format_report(s: dict) -> str:
 
     window = (f"  (last {s['since_days']} day(s))" if s.get("since_days")
               else "  (all history — no window)")
-    out = [f"floor log: {s.get('log_path', '(in-memory)')}{window}",
-           f"records: {s['records']}"]
+    out = [f"floor log: {s.get('log_path', '(in-memory)')}{window}"]
+    if s.get("channels"):
+        out.append(f"channels:  {s['channels']}")
+    out.append(f"records: {s['records']}")
     if not s["records"]:
         out.append("  (empty — enable with `config floor_log on` and let pulses run)")
         return "\n".join(out)
@@ -220,7 +246,7 @@ def format_report(s: dict) -> str:
     out.append(line("below-floor", s["below_floor_cosine"]))
     if s.get("top_surfaced_ids"):
         top = ", ".join(f"#{t['id']}×{t['times']}" for t in s["top_surfaced_ids"][:5])
-        out.append(f"top pushers:  {top}")
+        out.append(f"top surfaced: {top}")
     if "outcome" in s:
         out.append("outcome (surfaced rows joined to store use):")
         out.append(line("useful", s["outcome"]["useful"]))
@@ -232,6 +258,8 @@ def format_report(s: dict) -> str:
                       if "suggested_floor" in rec else ""))
         if rec.get("detail"):
             out.append(f"  {rec['detail']}")
+    elif s.get("outcome_note"):
+        out.append(s["outcome_note"])
     else:
         out.append("(no outcome join — pass a store to label useful vs noise)")
     return "\n".join(out)

@@ -9,6 +9,30 @@ and can change through the day.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-09-30
+
+*Measure the pull, too.* Since 1.7.0 a fresh store doesn't push memories at all;
+the AI recalls what it decides it needs. But the floor log, the diagnostic that
+lets relevance floors be chosen from evidence, only recorded push decisions, so
+a pull-only store had nothing to tune from. Explicit recalls now write to the
+same log on their own channel, and `floor-stats` reads push and pull apart. The
+log stays opt-in and off by default.
+
+### Added
+- **The floor log records pulls.** With `config floor_log on`, an explicit
+  recall (`recall`, or MCP `recall_memory`) now logs each row it returned on
+  channel `L1`: its unfloored cosine, its rank, and whether it cleared the pull
+  include floor or came in on a keyword anchor. Rows the no-answer gate held
+  back are logged as `abstained`. Until now only the push paths wrote to the
+  log, so a pull-only store (the 1.7.0 default) recorded nothing to tune its
+  floor from.
+- **`floor-stats --channel push|pull|all|L1,L3…`.** Push and pull use
+  different floors, so they are read separately. The default stays `push`, so
+  existing reports and the dream pass's push-floor check are unchanged. Pull
+  outcomes come from `--transcripts` (whether each pulled memory was cited
+  afterwards); the store's recall count can't label a pull, because the pull
+  itself increments it.
+
 ## [1.7.1] - 2026-09-30
 
 *Pull-only, not mute.* With pushing off by default since 1.7.0, a host without

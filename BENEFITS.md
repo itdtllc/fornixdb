@@ -89,7 +89,7 @@ at default settings, hard-capped by a configurable character budget, and
 session-end capture costs zero prompt tokens (it runs as a post-session OS
 process). For local models, prompt size is also response latency. FornixDB
 ships the measuring tools (`fornixdb value`, `fornixdb tokens`), output
-budgets (`max_chars`), a trimmable tool surface, and opt-in per-push
+budgets (`max_chars`), a trimmable tool surface, and opt-in push-and-pull
 logging (`config floor_log on` → `floor-stats` / `field-stats`) so the
 integration stays affordable — and auditable — on a laptop-class model.
 

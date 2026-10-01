@@ -24,7 +24,8 @@ from pathlib import Path
 
 from . import context
 from .adapters.native_memory import auto_background_enabled
-from .core import AUTO_CAPTURE_SOURCES, PROACTIVE_RECALL_COS, MemoryStore
+from .core import (AUTO_CAPTURE_SOURCES, PROACTIVE_RECALL_COS, VECTOR_MIN_COS,
+                   MemoryStore)
 from .multistore import CAPTURE_MODE_HELP, capture_mode, get_config, set_config
 
 
@@ -250,14 +251,14 @@ def _floor_log_path(store: MemoryStore) -> str | None:
 
 def _log_floor_decision(store: MemoryStore, channel: str | None, prompt: str,
                         row: dict, cos, eff_floor: float, base_floor: float,
-                        decision: str) -> None:
+                        decision: str, rank: int | None = None) -> None:
     path = _floor_log_path(store)
     if not path:
         return
     c = None if cos is None else round(float(cos), 4)
     rec = {
         "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "channel": channel or "?",        # "L3" (per-turn) | "L4" (cadence)
+        "channel": channel or "?",        # "L1" (pull) | "L3" | "L4" | "L5"
         "id": row.get("id"),
         "kind": row.get("kind"),
         "vec_cos": c,
@@ -268,11 +269,42 @@ def _log_floor_decision(store: MemoryStore, channel: str | None, prompt: str,
         "gist": (row.get("gist") or "")[:80],
         "query": (prompt or "")[:80],
     }
+    if rank is not None:
+        rec["rank"] = rank
     try:
         from .db import append_log_line
         append_log_line(path, json.dumps(rec, ensure_ascii=False))
     except Exception:
         pass
+
+
+# Pull decisions (channel L1). The push paths were the only writers, so a
+# pull-only store (the 1.7.0 default) logged nothing and its include floor could
+# not be chosen from evidence. An explicit recall logs each row it RETURNED,
+# against the pull include floor (VECTOR_MIN_COS), with its rank; rows the
+# no-answer gate withheld are logged as "abstained". The cosine is the
+# UNFLOORED one (raw_cos), so a keyword-anchored row shows how far below the
+# floor it sat. Peer-store rows are skipped: their ids would collide with this
+# store's. Readers keep push and pull apart by channel (floor_stats).
+def log_pull_decisions(store: MemoryStore, query: str, rows: list[dict], *,
+                       abstained: bool = False) -> None:
+    if not _floor_log_path(store):
+        return
+    for rank, r in enumerate(rows, 1):
+        if r.get("_store"):
+            continue
+        if "vec_cos" not in r:              # keyword-only store: no cosine at all
+            cos, decision = None, "keyword_anchor"
+        else:
+            cos = r.get("raw_cos", r["vec_cos"])
+            if abstained:
+                decision = "abstained"
+            elif float(r["vec_cos"]) >= VECTOR_MIN_COS:
+                decision = "surfaced"
+            else:
+                decision = "keyword_anchor"
+        _log_floor_decision(store, "L1", query, r, cos, VECTOR_MIN_COS,
+                            VECTOR_MIN_COS, decision, rank=rank)
 
 
 def relevant_memories(store: MemoryStore, prompt: str, *,

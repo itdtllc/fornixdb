@@ -414,7 +414,10 @@ class FornixMCP:
             since, until = s.isoformat(), e.isoformat()
         rows = multi_recall(self.stores, query, limit=int(limit),
                             since=since, until=until, related=bool(include_related))
-        if not recall_has_answer(rows):
+        answered = recall_has_answer(rows)
+        from ..proactive import log_pull_decisions
+        log_pull_decisions(self.store, query, rows, abstained=not answered)
+        if not answered:
             # honest, tool-agnostic: nothing relevant is stored. Don't pose noise
             # as an answer — the caller acts / answers from its own knowledge.
             return f"Nothing relevant is stored about '{query}'."
