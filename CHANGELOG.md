@@ -9,6 +9,22 @@ and can change through the day.
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-09-30
+
+*Pull-only, not mute.* With pushing off by default since 1.7.0, a host without
+an MCP server got only due reminders from FornixDB, so the AI never learned it could
+write to the store or what capture mode the owner had chosen. That left
+`capture_mode auto` with no effect on those hosts. The prompt hook now says so
+once per session, whatever the push setting.
+
+### Fixed
+- **Pull-only hosts are told they can write, and in which capture mode.** Under
+  the 1.7.0 default the one-line write-back hint only rode a pushed block, so a
+  host with no MCP server never learned the store was writable or that
+  `capture_mode` was `auto`. The prompt hook now sends the hint on the first
+  prompt of each session even with pushing off, and the hint names the capture
+  mode in every case.
+
 ## [1.7.0] - 2026-09-30
 
 *The AI decides what to remember.* A fresh store is now pull-only. FornixDB

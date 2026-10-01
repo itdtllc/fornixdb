@@ -25,7 +25,7 @@ from pathlib import Path
 from . import context
 from .adapters.native_memory import auto_background_enabled
 from .core import AUTO_CAPTURE_SOURCES, PROACTIVE_RECALL_COS, MemoryStore
-from .multistore import get_config, set_config
+from .multistore import CAPTURE_MODE_HELP, capture_mode, get_config, set_config
 
 
 def active_project_from_cwd(cwd: str | None) -> str | None:
@@ -142,6 +142,11 @@ HEADER = ("[FornixDB · possibly-relevant past — surfaced by topic, NOT "
 # accruing. One line naming the CLI removes it. Sent on the FIRST block of a
 # session only (the agent has it in context from then on), so the cost is ~25
 # tokens per session rather than per turn. `config writeback_hint off` disables.
+# It also names the capture mode: the MCP startup context is the only other
+# place an agent learns it, so a CLI-only host never heard `auto` and left the
+# owner's setting inert. Under pull-only (proactive_recall off, the 1.7.0
+# default) the hint rides the first prompt of a session on its own — that is
+# the exact host shape (no MCP, no pushed block) it exists for.
 def _writeback_key(session_id: str) -> str:
     return f"writeback_hint_shown_{session_id}"
 
@@ -161,7 +166,9 @@ def writeback_hint(store: MemoryStore, session_id: str | None) -> str | None:
             set_config(store, _writeback_key(session_id), "1")
         except Exception:
             return None    # can't record it -> don't risk repeating every turn
-    return (f"[FornixDB is WRITABLE — worth storing what you learn: "
+    mode = capture_mode(store)
+    return (f"[FornixDB is WRITABLE — capture mode: {mode} "
+            f"({CAPTURE_MODE_HELP.get(mode, '')}): "
             f"`{sys.executable} -m fornixdb --db {db} store --gist \"…\" "
             f"[--kind semantic|episodic|feedback|reference]`; "
             f"also `recall`, `timeline`, `jot`. Run with --help for the rest.]")
@@ -404,6 +411,12 @@ def proactive_recall(store: MemoryStore, prompt: str, *,
     from .levels import dial_default
     if get_config(store, "proactive_recall",
                   dial_default("proactive_recall")) in ("off", "0", "false"):
+        # pull-only: no memory block, but the agent still needs to know it can
+        # write (and in which capture mode) — once per session, so a session-
+        # less caller is skipped rather than told on every turn
+        hint = writeback_hint(store, session_id) if session_id else None
+        if hint:
+            return due_part + "\n" + hint if due_part else hint
         return due_part
     if not prompt or len(prompt.strip()) < MIN_PROMPT_CHARS:
         return due_part

@@ -220,7 +220,14 @@ class TestProactiveRecall(unittest.TestCase):
     def test_config_switch_disables_injection(self):
         self._seed()
         set_config(self.s, "proactive_recall", "off")
+        out = proactive_recall(self.s, self.PROMPT, session_id="s1")
+        # no memory is pushed — only the once-per-session write-back hint
+        self.assertNotIn(HEADER, out)
+        self.assertNotIn("deploy script", out)
+        self.assertIn("WRITABLE", out)
         self.assertIsNone(proactive_recall(self.s, self.PROMPT, session_id="s1"))
+        set_config(self.s, "writeback_hint", "off")
+        self.assertIsNone(proactive_recall(self.s, self.PROMPT, session_id="s2"))
 
     # ----------------------------------------------------- cross-turn dedup
 
@@ -263,6 +270,27 @@ class TestProactiveRecall(unittest.TestCase):
         # a NEW session is a new agent with no context — it gets told again
         self.assertIn("WRITABLE",
                       proactive_recall(self.s, self.PROMPT, session_id="s2"))
+
+    def test_write_back_hint_names_the_capture_mode(self):
+        self._seed()
+        for mode in ("explicit", "suggest", "auto"):
+            set_config(self.s, "capture_mode", mode)
+            block = proactive_recall(self.s, self.PROMPT, session_id=mode)
+            self.assertIn(f"capture mode: {mode}", block)
+
+    def test_pull_only_still_tells_a_cli_host_it_can_write(self):
+        # the 1.7.0 default: no pushed block, so the hint must stand alone — a
+        # host with no MCP server otherwise never learns it can write, nor the
+        # owner's capture mode
+        set_rung(self.s, "L2")
+        set_config(self.s, "capture_mode", "auto")
+        first = proactive_recall(self.s, "ok", session_id="s1")
+        self.assertIn("WRITABLE", first)
+        self.assertIn("capture mode: auto", first)
+        self.assertIn("store --gist", first)
+        self.assertIsNone(proactive_recall(self.s, self.PROMPT, session_id="s1"))
+        # session-less callers are skipped rather than told every turn
+        self.assertIsNone(proactive_recall(self.s, self.PROMPT))
 
     def test_write_back_hint_can_be_switched_off(self):
         self._seed()

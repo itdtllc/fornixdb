@@ -24,7 +24,8 @@ the PREFILL of what it adds to the prompt, not the recall itself.
 Respects the same switches as the other background automation:
   - ingest_mode=explicit  → off entirely (the "leave my background alone" switch)
   - `proactive_recall` → off by default since 1.7.0 (`level L3` turns it on);
-    when off, the hook still delivers due reminders and nothing else
+    when off, the hook still delivers due reminders and the once-per-session
+    write-back hint (naming the capture mode), and nothing else
   - cross-turn dedup: a memory already injected this session is not re-injected
 
 Wire it in Claude Code settings.json (stdout of a UserPromptSubmit hook is added
